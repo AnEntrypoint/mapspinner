@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MapSpinner | Editor</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+</head>
+
+<body>
+  <div id="root">
+    <a id="back-link" href="/" style="position:absolute;top:14px;right:14px;z-index:30;background:rgba(8,8,14,0.85);color:#cbd5e1;padding:8px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);text-decoration:none;font-family:'Segoe UI',system-ui;font-size:12px;letter-spacing:1px;">&larr; WORLD</a>
+    <div id="app"></div>
+    <div id="ui-container"></div>
+  </div>
+
+  <a id="downloadLink" style="display: none"></a>
+  <input type="file" id="fileInput" accept=".json" style="display: none" />
+
+  <script type="module" src="./editor.js"></script>
+</body>
+
+</html>
