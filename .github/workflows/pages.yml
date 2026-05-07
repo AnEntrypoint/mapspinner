@@ -19,21 +19,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-      - run: npm ci
-      - name: Build library
-        run: npm run build:lib
-      - name: Build app
-        run: npm run build:app
-        env:
-          VITE_BASE: /mapspinner/
+      - name: Stage static site
+        run: |
+          mkdir -p _site
+          cp -r index.html editor.html src vendor _site/
+          for f in *.png *.jpg *.webp *.glb *.mp3 *.ttf *.css *.ico *.webmanifest; do
+            [ -e "$f" ] && cp "$f" _site/ || true
+          done
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: ./dist
+          path: ./_site
 
   deploy:
     needs: build

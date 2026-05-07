@@ -1,31 +1,40 @@
-# This workflow will run tests using node and then publish a package to GitHub Packages when a release is created
-# For more information see: https://docs.github.com/en/actions/publishing-packages/publishing-nodejs-packages
-
-name: Node.js Package
+name: Publish to npm
 
 on:
-  release:
-    types: [created]
+  push:
+    branches: [main]
 
 permissions:
-  id-token: write # Required for OIDC
-  contents: read
+  contents: write
+  id-token: write
 
 jobs:
-  publish-npm:
+  publish:
+    if: ${{ !contains(github.event.head_commit.message, '[skip publish]') }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
         with:
-          node-version: 24
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
           registry-url: https://registry.npmjs.org/
-      - name: Install dependencies
-        run: npm install
-      - name: Build project
-        run: npm run build:lib
-      - run: npm ci
-      - run: npm run build --if-present
-      - run: npm publish
+      - name: Configure git identity
+        run: |
+          git config user.name "lanmower"
+          git config user.email "almagestfraternite@gmail.com"
+      - name: Bump patch version
+        id: bump
+        run: |
+          npm version patch -m "chore: release v%s [skip publish]"
+          echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Push version bump
+        run: |
+          git push
+          git push --tags
