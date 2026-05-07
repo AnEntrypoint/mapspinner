@@ -10,7 +10,7 @@
  */
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/Addons.js';
-import { biomeWeightsAt, dominantBiomeAt, heightAt } from './terrain';
+import { biomeWeightsAt, dominantBiomeAt, heightAt } from './terrain.js';
 
 const _ZERO_MATRIX_GRASS = new THREE.Matrix4().makeScale(0, 0, 0);
 

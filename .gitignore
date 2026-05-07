@@ -156,3 +156,10 @@ node_modules
 .codeinsight
 .gm
 .claude
+
+# mapspinner additions
+*.tgz
+.gm/
+_site/
+node_modules/
+dist/

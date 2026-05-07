@@ -1,29 +1,29 @@
 import * as THREE from 'three';
 
-import birchAo from './assets/bark/birch_ao_1k.jpg';
-import birchColor from './assets/bark/birch_color_1k.jpg';
-import birchNormal from './assets/bark/birch_normal_1k.jpg';
-import birchRoughness from './assets/bark/birch_roughness_1k.jpg';
+const birchAo = new URL('./assets/bark/birch_ao_1k.jpg', import.meta.url).href;
+const birchColor = new URL('./assets/bark/birch_color_1k.jpg', import.meta.url).href;
+const birchNormal = new URL('./assets/bark/birch_normal_1k.jpg', import.meta.url).href;
+const birchRoughness = new URL('./assets/bark/birch_roughness_1k.jpg', import.meta.url).href;
 
-import oakAo from './assets/bark/oak_ao_1k.jpg';
-import oakColor from './assets/bark/oak_color_1k.jpg';
-import oakNormal from './assets/bark/oak_normal_1k.jpg';
-import oakRoughness from './assets/bark/oak_roughness_1k.jpg';
+const oakAo = new URL('./assets/bark/oak_ao_1k.jpg', import.meta.url).href;
+const oakColor = new URL('./assets/bark/oak_color_1k.jpg', import.meta.url).href;
+const oakNormal = new URL('./assets/bark/oak_normal_1k.jpg', import.meta.url).href;
+const oakRoughness = new URL('./assets/bark/oak_roughness_1k.jpg', import.meta.url).href;
 
-import pineAo from './assets/bark/pine_ao_1k.jpg';
-import pineColor from './assets/bark/pine_color_1k.jpg';
-import pineNormal from './assets/bark/pine_normal_1k.jpg';
-import pineRoughness from './assets/bark/pine_roughness_1k.jpg';
+const pineAo = new URL('./assets/bark/pine_ao_1k.jpg', import.meta.url).href;
+const pineColor = new URL('./assets/bark/pine_color_1k.jpg', import.meta.url).href;
+const pineNormal = new URL('./assets/bark/pine_normal_1k.jpg', import.meta.url).href;
+const pineRoughness = new URL('./assets/bark/pine_roughness_1k.jpg', import.meta.url).href;
 
-import willowAo from './assets/bark/willow_ao_1k.jpg';
-import willowColor from './assets/bark/willow_color_1k.jpg';
-import willowNormal from './assets/bark/willow_normal_1k.jpg';
-import willowRoughness from './assets/bark/willow_roughness_1k.jpg';
+const willowAo = new URL('./assets/bark/willow_ao_1k.jpg', import.meta.url).href;
+const willowColor = new URL('./assets/bark/willow_color_1k.jpg', import.meta.url).href;
+const willowNormal = new URL('./assets/bark/willow_normal_1k.jpg', import.meta.url).href;
+const willowRoughness = new URL('./assets/bark/willow_roughness_1k.jpg', import.meta.url).href;
 
-import ashLeaves from './assets/leaves/ash_color.png';
-import aspenLeaves from './assets/leaves/aspen_color.png';
-import oakLeaves from './assets/leaves/oak_color.png';
-import pineLeaves from './assets/leaves/pine_color.png';
+const ashLeaves = new URL('./assets/leaves/ash_color.png', import.meta.url).href;
+const aspenLeaves = new URL('./assets/leaves/aspen_color.png', import.meta.url).href;
+const oakLeaves = new URL('./assets/leaves/oak_color.png', import.meta.url).href;
+const pineLeaves = new URL('./assets/leaves/pine_color.png', import.meta.url).href;
 
 const textureLoader = new THREE.TextureLoader();
 

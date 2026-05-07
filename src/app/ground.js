@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { GrassOptions } from './grass';
+import { GrassOptions } from './grass.js';
 
 let loaded = false;
 let _grassTexture = null;

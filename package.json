@@ -7,44 +7,31 @@
     "type": "git",
     "url": "git+https://github.com/AnEntrypoint/mapspinner.git"
   },
-  "homepage": "https://github.com/AnEntrypoint/mapspinner",
+  "homepage": "https://anentrypoint.github.io/mapspinner/",
   "bugs": {
     "url": "https://github.com/AnEntrypoint/mapspinner/issues"
   },
   "type": "module",
-  "main": "build/mapspinner.umd.js",
-  "module": "build/mapspinner.es.js",
+  "main": "./src/lib/index.js",
+  "module": "./src/lib/index.js",
   "exports": {
-    ".": {
-      "import": "./build/mapspinner.es.js",
-      "require": "./build/mapspinner.umd.js"
-    }
+    ".": "./src/lib/index.js",
+    "./*": "./src/lib/*"
   },
   "files": [
-    "build",
-    "src",
+    "src/lib",
     "LICENSE",
     "package.json",
     "README.md"
   ],
-  "types": "./build/mapspinner.es.d.ts",
   "scripts": {
-    "build:app": "vite build --config vite.app.config.js",
-    "build:lib": "vite build --config vite.lib.config.js",
-    "build:watch": "vite build --config vite.lib.config.js --watch",
-    "app": "npm run build:lib && vite --config vite.app.config.js",
-    "preview": "vite preview"
+    "serve": "python -m http.server 8000"
   },
   "devDependencies": {
-    "@types/three": "^0.169.0",
-    "prettier": "3.3.3",
-    "three": "^0.167.x",
-    "vite": "^5.0.0",
-    "vite-plugin-dts": "^3.9.1",
-    "vite-plugin-static-copy": "^1.0.5"
+    "prettier": "3.3.3"
   },
   "peerDependencies": {
-    "three": ">=0.167"
+    "three": ">=0.169"
   },
   "keywords": [
     "threejs",
@@ -52,7 +39,9 @@
     "procedural",
     "generation",
     "tree",
-    "mapspinner"
+    "mapspinner",
+    "buildless",
+    "esm"
   ],
   "dependencies": {}
 }

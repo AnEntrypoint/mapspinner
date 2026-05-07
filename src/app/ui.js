@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { BarkType, Billboard, LeafType, TreePreset, Tree, TreeType } from 'mapspinner';
-import { Environment } from './environment';
+import { Environment } from './environment.js';
 import { OrbitControls } from 'three/examples/jsm/Addons.js';
 import { version } from '../../package.json';
 

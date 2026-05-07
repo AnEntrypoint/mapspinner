@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-08XPB68R9M"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'G-08XPB68R9M');
+  </script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="./favicon-16x16.png">
+  <link rel="manifest" href="./site.webmanifest">
+  <title>MapSpinner | Procedural Tree Generator</title>
+  <meta name="description" content="MapSpinner is a procedural tree generator." />
+  <meta name="keywords" content="tree generator, 3D trees, procedural generation, threejs, mapspinner">
+  <meta name="author" content="Dan Greenheck">
+  <meta property="og:title" content="MapSpinner">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://github.com/AnEntrypoint/mapspinner">
+  <meta property="og:image" content="https://github.com/AnEntrypoint/mapspinner/raw/main/og-image.png">
+
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three/build/three.module.js",
+      "three/": "./vendor/three/",
+      "three/addons/": "./vendor/three/examples/jsm/",
+      "three/examples/jsm/": "./vendor/three/examples/jsm/",
+      "mapspinner": "./src/lib/index.js"
+    }
+  }
+  </script>
+</head>
+
+<body>
+  <div id="loading-screen">
+    <img id="logo" src="./logo.png">
+    <div id="loading-text">LOADING... 0%</div>
+  </div>
+
+  <div id="root">
+    <img id="about-icon" class="about-icon" src="./icon_about.png" onclick="showAbout()">
+    <img id="audio-status" class="audio-icon" src="./icon_playing.png" onclick="toggleAudio()">
+    <a id="editor-link" href="./editor.html" style="position:absolute;top:14px;right:80px;z-index:30;background:rgba(8,8,14,0.85);color:#cbd5e1;padding:8px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);text-decoration:none;font-family:'Segoe UI',system-ui;font-size:12px;letter-spacing:1px;">TREE EDITOR &rarr;</a>
+    <div id="app"></div>
+
+    <div id="aboutOverlay" class="overlay">
+      <div class="about-dialog">
+        <img src="./logo.png" alt="App Icon">
+        <h1>MapSpinner</h1>
+        <h2>Procedural Tree Generator</h2>
+        <h3>Made by Dan Greenheck</h3>
+        <button class="close-button" onclick="closeAbout()">CLOSE</button>
+      </div>
+    </div>
+  </div>
+
+  <audio id="background-audio" loop>
+    <source src="./ambience.mp3" type="audio/mpeg">
+  </audio>
+
+  <script type="module" src="./src/app/main.js"></script>
+  <script>
+    function showAbout() { document.getElementById('aboutOverlay').classList.add('active'); }
+    function closeAbout() { document.getElementById('aboutOverlay').classList.remove('active'); }
+  </script>
+</body>
+
+</html>

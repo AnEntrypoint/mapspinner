@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/Addons.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
-import { heightAt, biomeWeightsAt } from './terrain';
+import { heightAt, biomeWeightsAt } from './terrain.js';
 
 let loaded = false;
 let _rock1Mesh = null;

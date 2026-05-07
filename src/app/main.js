@@ -4,8 +4,8 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { Tree } from 'mapspinner';
-import { createScene } from './scene';
-import { installDebugApi } from './debugApi';
+import { createScene } from './scene.js';
+import { installDebugApi } from './debugApi.js';
 
 /*
  * GPU debug tooling
@@ -24,7 +24,7 @@ import { installDebugApi } from './debugApi';
  *   https://chrome.google.com/webstore/detail/threejs-developer-tools
  */
 
-document.addEventListener('DOMContentLoaded', async () => {
+async function __mapspinnerBoot() {
   const container = document.getElementById('app')
   // Honor ?seed=N for deterministic harness runs
   const __qp = new URLSearchParams(window.location.search);
@@ -33,7 +33,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (__qp.has('leafSize')) window.__leafSizeScale = parseFloat(__qp.get('leafSize')) || 1;
 
   // User needs to interact with the page before audio will play
-  container.addEventListener('click', toggleAudio);
+  container.addEventListener('click', () => window.toggleAudio?.());
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setClearColor(0);
@@ -533,7 +533,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   resize();
 
   document.getElementById('audio-status').style.display = 'block';
-});
+}
+
+__mapspinnerBoot();
 
 window.toggleAudio = function () {
   document.getElementById('app').removeEventListener('click', toggleAudio);

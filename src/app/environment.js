@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import { Grass } from './grass';
-import { Rocks } from './rocks';
-import { Clouds } from './clouds';
-import { TerrainSystem } from './terrain';
+import { Grass } from './grass.js';
+import { Rocks } from './rocks.js';
+import { Clouds } from './clouds.js';
+import { TerrainSystem } from './terrain.js';
 
 export class Environment extends THREE.Object3D {
   constructor(renderer) {

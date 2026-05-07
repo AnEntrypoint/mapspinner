@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Tree, TreePreset } from 'mapspinner';
-import { Environment } from './environment';
-import { heightAt, dominantBiomeAt, biomeWeightsAt } from './terrain';
+import { Environment } from './environment.js';
+import { heightAt, dominantBiomeAt, biomeWeightsAt } from './terrain.js';
 
 // Cheap 2D value noise [0,1] mirroring shader vnoise(wp*0.05) for density clustering.
 function _hash21d(x, y) {

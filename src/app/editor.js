@@ -5,9 +5,9 @@ import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Tree } from 'mapspinner';
-import { setupUI } from './ui';
+import { setupUI } from './ui.js';
 
-document.addEventListener('DOMContentLoaded', async () => {
+async function __mapspinnerEditorBoot() {
   const container = document.getElementById('app');
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -93,4 +93,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupUI(tree, environment, renderer, scene, camera, controls, __preset);
   animate();
   resize();
-});
+}
+
+__mapspinnerEditorBoot();

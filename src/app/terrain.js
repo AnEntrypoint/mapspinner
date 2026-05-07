@@ -1,16 +1,19 @@
 import * as THREE from 'three';
-import vertexShader from './shaders/terrain.vert?raw';
-import fragmentShader from './shaders/terrain.frag?raw';
-import bakeVertex from './shaders/terrainBake.vert?raw';
-import bakeHeightFrag from './shaders/terrainBakeHeight.frag?raw';
-import bakeGeomFinalFrag from './shaders/terrainBakeGeomFinal.frag?raw';
-import bakeMatFrag from './shaders/terrainBakeMat.frag?raw';
-import bakeAlbedoFrag from './shaders/terrainBakeAlbedo.frag?raw';
-import skyVertex from './shaders/terrainSky.vert?raw';
-import skyFragment from './shaders/terrainSky.frag?raw';
-import waterVertex from './shaders/terrainWater.vert?raw';
-import waterFragment from './shaders/terrainWater.frag?raw';
-import waterSimFrag from './shaders/waterSim.frag?raw';
+
+const [vertexShader, fragmentShader, bakeVertex, bakeHeightFrag, bakeGeomFinalFrag, bakeMatFrag, bakeAlbedoFrag, skyVertex, skyFragment, waterVertex, waterFragment, waterSimFrag] = await Promise.all([
+  fetch(new URL('./shaders/terrain.vert', import.meta.url)).then(r => r.text()),
+  fetch(new URL('./shaders/terrain.frag', import.meta.url)).then(r => r.text()),
+  fetch(new URL('./shaders/terrainBake.vert', import.meta.url)).then(r => r.text()),
+  fetch(new URL('./shaders/terrainBakeHeight.frag', import.meta.url)).then(r => r.text()),
+  fetch(new URL('./shaders/terrainBakeGeomFinal.frag', import.meta.url)).then(r => r.text()),
+  fetch(new URL('./shaders/terrainBakeMat.frag', import.meta.url)).then(r => r.text()),
+  fetch(new URL('./shaders/terrainBakeAlbedo.frag', import.meta.url)).then(r => r.text()),
+  fetch(new URL('./shaders/terrainSky.vert', import.meta.url)).then(r => r.text()),
+  fetch(new URL('./shaders/terrainSky.frag', import.meta.url)).then(r => r.text()),
+  fetch(new URL('./shaders/terrainWater.vert', import.meta.url)).then(r => r.text()),
+  fetch(new URL('./shaders/terrainWater.frag', import.meta.url)).then(r => r.text()),
+  fetch(new URL('./shaders/waterSim.frag', import.meta.url)).then(r => r.text())
+]);
 
 const MAX_ANCHORS = 64;
 const MAX_BIOMES = 12;
