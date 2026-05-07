@@ -31,9 +31,14 @@ jobs:
           npm version patch -m "chore: release v%s [skip publish]"
           echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
       - name: Publish to npm
-        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "NPM_TOKEN secret not set; skipping npm publish."
+            exit 0
+          fi
+          npm publish --access public
       - name: Push version bump
         run: |
           git push
