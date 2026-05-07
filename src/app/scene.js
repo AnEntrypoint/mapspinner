@@ -117,11 +117,9 @@ export async function createScene(renderer) {
   const forest = new THREE.Group();
   forest.name = 'Forest';
 
-  const logoElement = document.getElementById('logo');
   const progressElement = document.getElementById('loading-text');
 
-  logoElement.style.clipPath = `inset(100% 0% 0% 0%)`;
-  progressElement.innerHTML = 'LOADING... 0%';
+  if (progressElement) progressElement.innerHTML = 'LOADING... 0%';
 
   const treeCount = 100;
   const minDistance = 175;
