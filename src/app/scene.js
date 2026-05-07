@@ -227,8 +227,7 @@ export async function createScene(renderer) {
         forest.add(t);
         made++;
         const progress = Math.floor(100 * made / total);
-        logoElement.style.clipPath = `inset(${100 - progress}% 0% 0% 0%)`;
-        progressElement.innerText = `LOADING... ${progress}%`;
+        if (progressElement) progressElement.innerText = `LOADING... ${progress}%`;
         if (made % 8 === 0) await paintUI();
       }
     }
