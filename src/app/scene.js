@@ -79,34 +79,30 @@ export async function createScene(renderer) {
   controls.target.copy(walkState.pos);
   camera.position.set(walkState.pos.x, walkState.pos.y + 6, walkState.pos.z + 14);
   controls.update();
+  const _walkFwd = new THREE.Vector3();
+  const _walkRight = new THREE.Vector3();
+  const _walkUp = new THREE.Vector3(0, 1, 0);
+  const _walkOffset = new THREE.Vector3();
   function updateWalk(dt) {
     if (!walkState.enabled) return;
-    const speed = (keys['ShiftLeft'] || keys['ShiftRight']) ? 28 : 10;
-    // Camera-forward on the XZ plane.
-    const fwd = new THREE.Vector3();
-    camera.getWorldDirection(fwd); fwd.y = 0; fwd.normalize();
-    const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
     let ix = 0, iz = 0;
     if (keys['KeyW']) iz += 1;
     if (keys['KeyS']) iz -= 1;
     if (keys['KeyD']) ix += 1;
     if (keys['KeyA']) ix -= 1;
+    if (ix === 0 && iz === 0) return;
+    const speed = (keys['ShiftLeft'] || keys['ShiftRight']) ? 28 : 10;
+    camera.getWorldDirection(_walkFwd); _walkFwd.y = 0; _walkFwd.normalize();
+    _walkRight.crossVectors(_walkFwd, _walkUp).normalize();
     const len = Math.hypot(ix, iz);
-    if (len > 0) { ix /= len; iz /= len; }
-    const move = new THREE.Vector3();
-    move.addScaledVector(fwd, iz * speed * dt);
-    move.addScaledVector(right, ix * speed * dt);
-    walkState.pos.x += move.x;
-    walkState.pos.z += move.z;
-    // Snap y to terrain + head height so the camera target hugs the surface.
+    ix /= len; iz /= len;
+    walkState.pos.x += _walkFwd.x * iz * speed * dt + _walkRight.x * ix * speed * dt;
+    walkState.pos.z += _walkFwd.z * iz * speed * dt + _walkRight.z * ix * speed * dt;
     const groundY = heightAt(walkState.pos.x, walkState.pos.z);
-    // Don't go underwater — clamp at sea level + head height.
     walkState.pos.y = Math.max(groundY, 0) + walkState.headHeight;
-    // Slide the camera along with the target so the orbit distance stays.
-    const offset = camera.position.clone().sub(controls.target);
+    _walkOffset.copy(camera.position).sub(controls.target);
     controls.target.copy(walkState.pos);
-    camera.position.copy(walkState.pos).add(offset);
-    // Don't let the camera dip below ground or under water as the player walks.
+    camera.position.copy(walkState.pos).add(_walkOffset);
     const camGround = heightAt(camera.position.x, camera.position.z);
     const camFloor = Math.max(camGround, 0) + 0.6;
     if (camera.position.y < camFloor) camera.position.y = camFloor;
