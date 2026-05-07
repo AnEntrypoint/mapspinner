@@ -5,6 +5,7 @@ import path from 'path';
  * @type {import('vite').UserConfig}
  */
 export default {
+  base: process.env.VITE_BASE || '/',
   build: {
     emptyOutDir: true,
     outDir: '../../dist',
