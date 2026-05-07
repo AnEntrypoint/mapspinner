@@ -543,13 +543,13 @@ export async function createScene(renderer) {
     catch (e) { console.warn('[veg] bake failed', preset, e); }
     _dirtyAllPlacements = true;
     const pct = Math.floor(100 * (i + 1) / POOL_PRESETS.length);
-    progressElement.innerText = `BAKING IMPOSTORS... ${pct}%`;
+    if (progressElement) progressElement.innerText = `BAKING IMPOSTORS... ${pct}%`;
     await new Promise(r => requestAnimationFrame(r));
   }
   _streamStats.billboardsBaked = _billboardByPreset.size;
   await sleep(300);
-  logoElement.style.clipPath = `inset(0% 0% 0% 0%)`;
-  document.getElementById('loading-screen').style.display = 'none';
+  const loadingScreen = document.getElementById('loading-screen');
+  if (loadingScreen) loadingScreen.style.display = 'none';
 
   // Per-preset slot machinery lives on each entry in _billboardByPreset.
   function _bbAllocSlot(entry) {
