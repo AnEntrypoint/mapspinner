@@ -37,13 +37,13 @@ const DEFAULTS = {
     bcLowland: [0.20,0.34,0.15], bcGrass: [0.26,0.40,0.17], bcRock: [0.52,0.43,0.34],   // bcRock -> a clearly WARMER TAN-GREY (R>G>B) so it reads as ROCK when lit, not olive-green (the [0.46,0.42,0.37] near-grey read green next to the biome). state.biome OVERRIDES gl-render defaults via window.__gen.
     bcSnow: [0.92,0.94,0.97],
     bandEdgesLo: [150.0,1200.0], bandEdgesHi: [3500.0,6500.0], snowEdges: [6000.0,8500.0],   // 8000/10500->6000/8500 (user 2026-06-11 'snowy mountains disappeared' -- see gl-render snowEdges note)   // snowEdges 5200/7000->8000/10500 (user 2026-06-10 'entire terrain white': the rock-by-height fix unmasked snow gates tuned pre-4x; full snow from 5.2km whitened the 11.6km massifs; coldSnow onset = snowEdges.x*0.5 follows)   // bandEdgesHi 1600/3200->3500/6500 (user 2026-06-10 'rockface everywhere'): tuned on the pre-4x terrain; with 11.6km peaks everything above 3200m read rock BY HEIGHT alone -- rescale the treeline to the new elevation range
-    seaDepthM: 3000.0, slopeRock: [0.25,0.55],   // [0.25,0.55] USER-SET 2026-06-12
+    seaDepthM: 3000.0, slopeRock: [0.0,0.3],   // [0.0,0.3] USER-SET 2026-06-13
   },
   // REAL-WORLD LOOK overhaul (terraformable lighting/shading levers; applyShaderGlobals sets window
   // globals; gl-render reads them via _g()). Beer-Lambert ocean, biome sat, mottle, sky-fill relief,
   // terminator glow, night floor + earthshine, exposure + post-ACES Look.
   look: {
-    exposure: 1.0, skyFill: 0.45, biomeSat: 0.72, variationAmt: 0.04, colorVar: 0.5, vertexAO: 1.0,   // variationAmt 0.08->0.04 (user 2026-06-10 'blotchy': the ~50km value mottle painted light/dark patches across the massifs)
+    exposure: 1.0, skyFill: 0.45, biomeSat: 0.72, variationAmt: 0.04, colorVar: 0.5, vertexAO: 1.0,     reliefShade: 2.0,   // variationAmt 0.08->0.04 (user 2026-06-10 'blotchy': the ~50km value mottle painted light/dark patches across the massifs)
     nightFloor: 0.16, termWidth: 0.25, terminatorGlow: 0.30, lookSat: 1.15, lookContrast: 1.08,   // nightFloor 0.05->0.16: no black night terrain (2026-06-09)
     detailOverlay: 6.0, hazeMul: 0.65,   // 2026-06-10 'pale hazy + featureless': perlin-everywhere albedo+elevation fbm (user-tuned 6) + aerial-perspective strength cut
     ocean: { deep: [0.008,0.025,0.06], shallow: [0.07,0.22,0.26], k: [0.030,0.012,0.0045] },
@@ -74,6 +74,7 @@ function applyShaderGlobals(state){
     if(L.detailOverlay != null) window.__detailOverlay = L.detailOverlay;
     if(L.hazeMul != null) window.__hazeMul = L.hazeMul;
     if(L.vertexAO != null) window.__vertexAO = L.vertexAO;
+    if(L.reliefShade != null) window.__reliefShade = L.reliefShade;
     window.__terminatorGlow = L.terminatorGlow; window.__lookSat = L.lookSat; window.__lookContrast = L.lookContrast;
     // gl-render reads window['__'+uniformName] (gl-render.js o3 helper) -> the globals must carry
     // the 'u' prefix (__uOceanDeep, not __oceanDeep); the unprefixed names were dead levers.
