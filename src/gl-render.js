@@ -63,9 +63,9 @@ export async function initMapspinnerRender(gl, opts = {}) {
   let _hpfTex = null, _hpfTex2 = null, _hpfRes = 0;   // _hpfTex RG16F(seaBias,elevAmp), _hpfTex2 RG8(temp,humid) -- W12 pack
 
   // ---- compile terrain.glsl ----
-  let src = await (await fetch('/src/shaders/terrain.glsl')).text();
+  let src = await (await fetch('./src/shaders/terrain.glsl')).text();
   // Analytic Bruneton-style atmosphere helpers, shared by terrain FS + sky pass.
-  let atmoSrc = await (await fetch('/src/shaders/atmosphere.glsl')).text();
+  let atmoSrc = await (await fetch('./src/shaders/atmosphere.glsl')).text();
 
   // NON-BLOCKING COMPILE (user 2026-06-02: 'startup takes really long'). The terrain shader's
   // first (cold-cache) compile can take tens of seconds; querying COMPILE_STATUS/LINK_STATUS
@@ -198,8 +198,8 @@ export async function initMapspinnerRender(gl, opts = {}) {
   // renderer in a broken state (a failed build throws before `prog` is reassigned).
   async function recompile(){
     try {
-      const ns = await (await fetch('/src/shaders/terrain.glsl?t='+(performance.now()|0))).text();
-      const na = await (await fetch('/src/shaders/atmosphere.glsl?t='+(performance.now()|0))).text();
+      const ns = await (await fetch('./src/shaders/terrain.glsl?t='+(performance.now()|0))).text();
+      const na = await (await fetch('./src/shaders/atmosphere.glsl?t='+(performance.now()|0))).text();
       const nb = buildTerrainProgram(ns, na);
       await awaitProgramLink(nb.p, nb.vs, nb.fs, 'terrain');   // throws on compile/link error
       const newProg = nb.p;

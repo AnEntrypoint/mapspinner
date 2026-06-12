@@ -10,9 +10,9 @@
 //   - FACE_FRAME below is the SINGLE source of truth for the cube-face local frame (col0=U,
 //     col1=V, col2=center); worldToFaceLocal inverts it to put the world camera into face coords.
 
-import { Quadtree } from '/src/quadtree.js';
-import { initMapspinnerRender } from '/src/gl-render.js';
-import { createAnchorField } from '/src/anchor-field.js';
+import { Quadtree } from './quadtree.js';
+import { initMapspinnerRender } from './gl-render.js';
+import { createAnchorField } from './anchor-field.js';
 
 // MUST match the render's localToWorld3 transformation exactly (col0=U, col1=V,
 // col2=center). This is the face's local orthonormal frame: a face-local point
