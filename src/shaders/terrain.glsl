@@ -1871,7 +1871,7 @@ void main() {
     // no extra sampling, seam-safe, zero FPS cost vs the old single-term version.
     float aoAmt    = (uAoAmt > 0.0 ? uAoAmt : 1.0);
     float gorgeAO  = 0.0;   // canyon AO decoupled (user 2026-06-10: canyons impose ELEVATION only, no material/AO keying)
-    float slopeAO  = smoothstep(0.20, 0.90, slope) * 0.35;              // gentle-slope AO reveals midday relief (0.20->0.90 from 0.45->0.95, peak 0.35)
+    float slopeAO  = smoothstep(0.05, 0.55, slope) * 0.35;              // gentle-slope AO reveals midday relief (0.20->0.90 from 0.45->0.95, peak 0.35)
     float cliffAO  = 1.0 - min(gorgeAO + slopeAO, 0.75) * aoAmt;        // cap so faces never go black
     // STRONGER NORMAL-DRIVEN SHADING (user 2026-06-03: 'normals arent affecting the lit view properly').
     // The lit relief was too subtle (witnessed litON SD 6.4 vs flat 5.9 = only ~8% contrast) because
