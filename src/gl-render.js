@@ -291,6 +291,13 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // FXC unroll-defeat (2026-06-12 AMD d3d11 fix): runtime octave bound for broadShapeM; the shader
     // guards uOctMax<=0 -> 12, so this set is belt-and-braces. Live dial: window.__octMax.
     gl.uniform1i(loc('uOctMax'),        (typeof window!=='undefined' && window.__octMax!=null) ? (window.__octMax|0) : 12);
+    gl.uniform1i(loc('uInciseRidgeOcts'), (typeof window!=='undefined' && window.__inciseRidgeOcts!=null) ? (window.__inciseRidgeOcts|0) : 4);
+    gl.uniform1i(loc('uBroadLowOcts'),    (typeof window!=='undefined' && window.__broadLowOcts!=null) ? (window.__broadLowOcts|0) : 8);
+    gl.uniform1i(loc('uPeakOcts'),        (typeof window!=='undefined' && window.__peakOcts!=null) ? (window.__peakOcts|0) : 3);
+    gl.uniform1i(loc('uVtxBaseOcts'),     (typeof window!=='undefined' && window.__vtxBaseOcts!=null) ? (window.__vtxBaseOcts|0) : 6);
+    gl.uniform1i(loc('uVtxErodeOcts'),    (typeof window!=='undefined' && window.__vtxErodeOcts!=null) ? (window.__vtxErodeOcts|0) : 4);
+    gl.uniform1i(loc('uDetailFbmOcts'),   (typeof window!=='undefined' && window.__detailFbmOcts!=null) ? (window.__detailFbmOcts|0) : 3);
+    gl.uniform1i(loc('uFSDetailOcts'),    (typeof window!=='undefined' && window.__fsDetailOcts!=null) ? (window.__fsDetailOcts|0) : 3);
     // FXC fold-defeat (2026-06-12, the rock-on-flat patches): the lit-normal FD step is uniform-fed
     // so d3d11/FXC cannot constant-fold the 150/R offset. Live dial: window.__nrmStepM.
     gl.uniform1f(loc('uNrmStepM'),      g('nrmStepM', 150.0));

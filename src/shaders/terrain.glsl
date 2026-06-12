@@ -165,10 +165,22 @@ float lakeCarveM(vec3 dir){ float w; return lakeCarveM(dir, w); }
 //   differently -> the summed ridged crests run in EVERY direction, not just the x/y/z lattice H/V.
 //   The matrix rows are a fixed tilted basis (~no axis alignment); det ~= 1 so it doesn't drift scale.
 const mat3 OCT_ROT = mat3( 0.80, 0.36, -0.48,   -0.48, 0.86, -0.18,    0.36, 0.36, 0.86);
+// FXC UNROLL-DEFEAT runtime-bounded loops (2026-06-12): uniform int guards prevent FXC from
+// fully unrolling these loops (which triggers mis-translation on AMD D3D11). Each guard falls
+// back to the original octave count when the uniform is 0 or unset (e.g. probe program).
+uniform int uOctMax;            // broadShapeM octave count (12); runtime-bound to defeat FXC unrolling
+uniform int uInciseRidgeOcts;   // inciseRidgeField octave count (4); runtime-bound to defeat FXC unrolling
+uniform int uBroadLowOcts;      // broadShapeLowM octave count (8); runtime-bound to defeat FXC unrolling
+uniform int uPeakOcts;          // broadShapeM peak crest octave count (3); runtime-bound to defeat FXC unrolling
+uniform int uVtxBaseOcts;       // vtxDisplace base fBm octave count (6); runtime-bound to defeat FXC unrolling
+uniform int uVtxErodeOcts;      // vtxDisplace mountain erosion octave count (4); runtime-bound to defeat FXC unrolling
+uniform int uDetailFbmOcts;     // detailFbm octave count (3); runtime-bound to defeat FXC unrolling
+uniform int uFSDetailOcts;      // FS detail overlay octave count (3); runtime-bound to defeat FXC unrolling
 float inciseRidgeField(vec3 d, float baseFreq, float freqMul){
     vec3 p = d;
     float freq = baseFreq, amp = 1.0, sum = 0.0, norm = 0.0;
-    for (int o = 0; o < 3; o++){   // 4->3 octaves (max-speed sweep 2026-06-10: finest ~6km gullies sub-pixel at flight altitudes; -1 tap x4 calls x3 composeHeight/vertex)
+    int irOcts = (uInciseRidgeOcts > 0) ? uInciseRidgeOcts : 4;
+    for (int o = 0; o < irOcts; o++){
         sum += amp * (1.0 - abs(snoise3(p * freq)));
         norm += amp; freq *= freqMul; amp *= 0.5; p = OCT_ROT * p;   // rotate domain each octave
     }
@@ -327,7 +339,8 @@ highp float broadShapeLowM(vec3 dir){   // W7: metres (~13000) + freq (~49152) a
   if (hasHpf == 0) return 0.0;
   vec3 d = normalize(dir);
   highp float amp = 6500.0, freq = 3.0, sum = 0.0;
-  for (int o=0; o<8; o++){ sum += amp * snoise3(d*freq); amp *= (o < 6 ? 0.66 : 0.82); freq *= 2.0; }
+  int blOcts = (uBroadLowOcts > 0) ? uBroadLowOcts : 8;
+  for (int o=0; o<blOcts; o++){ sum += amp * snoise3(d*freq); amp *= (o < 6 ? 0.66 : 0.82); freq *= 2.0; }
   return sum - 900.0;
 }
 // ---- SHARED micro-relief helpers (MOVED to the common preamble, THC-Normal W1, so composeHeight()
@@ -369,13 +382,6 @@ highp vec2 faceWarp(highp vec2 p){ return defRadius * tan((p / defRadius) * 0.78
 // PERLIN-EVERYWHERE lever -- shared by the composeHeight elevation term (VS/PROBE) and the FS albedo
 // overlay, so it must be declared in ALL stages (outside the VS/PROBE guard below).
 uniform float uDetailOverlay;   // amplitude lever (user-tuned 6; 0 = off; __detailOverlay)
-// FXC UNROLL-DEFEAT (2026-06-12, 'rocks everywhere + no normals on AMD default Chrome'): ANGLE's
-// D3D11 backend runs FXC, which fully unrolls constant-bound loops and applies aggressive math
-// reordering across the unrolled body -- the long-suspected mis-translation domain (vulkan on the
-// SAME AMD GPU renders correctly; d3d11 does not). A runtime loop bound cannot be unrolled. The
-// uniform is set to 12 by gl-render; the max(...) guard keeps an unset uniform (0) from flattening
-// the planet -- worst case the loop still runs the literal octave count.
-uniform int uOctMax;            // broadShapeM octave count (12); runtime-bound to defeat FXC unrolling
 uniform float uNrmStepM;        // lit-normal FD step in metres (150); uniform-fed to defeat FXC constant folding
 #if defined(_VERTEX_) || defined(_PROBE_)
 highp float broadShapeM(vec3 dir, float reliefMul, float ridgeMul){   // W7: returns metres (~13000) -> highp
@@ -447,7 +453,8 @@ highp float broadShapeM(vec3 dir, float reliefMul, float ridgeMul){   // W7: ret
       // with the braids, the dark raw-photo far field, and the UDN normal-frame bug all fixed, the
       // original steep terrain stands.
       highp float pf = 200.0; float pa = 1.0, ps = 0.0, pn = 0.0;   // W7: pf (~4100) feeds the noise lattice -> highp
-      for (int o = 0; o < 3; o++) {   // 5->3 octaves (max-speed sweep: -6 taps/vertex in the belt; coarse 2 set the peak stance, decay 0.5->0.65 reweights)
+      int pkOcts = (uPeakOcts > 0) ? uPeakOcts : 3;
+      for (int o = 0; o < pkOcts; o++) {
         ps += pa * (1.0 - abs(snoise3(d * pf + vec3(3.3, 7.7, 1.1))));
         pn += pa; pa *= 0.65; pf *= 2.13;
       }
@@ -524,7 +531,8 @@ float vtxDisplace(highp vec2 fp, float tileM, float rugged){   // W7: fp = face-
   // A coarse leaf's 16-cell mesh simply under-samples the finest octaves (smooth interpolation, not a step);
   // the amplitude is small (amp0 8m * uHiFreqCut 0.25 * ruggedAmp) so any residual aliasing is minor and
   // far less visible than the per-patch steps it removes. (tileM kept in the signature for callers.)
-  for (int o=0; o<6; o++){
+  int vbOcts = (uVtxBaseOcts > 0) ? uVtxBaseOcts : 6;
+  for (int o=0; o<vbOcts; o++){
     float n = vnoise2(fp / wl);             // [-1,1]
     sumF += a * n;                           // smooth fBm
     float r = 1.0 - abs(n); r *= r;          // ridged: sharp crest at n=0
@@ -543,7 +551,8 @@ float vtxDisplace(highp vec2 fp, float tileM, float rugged){   // W7: fp = face-
   float mtnGate = smoothstep(0.55, 1.0, rugged);   // ramps in over the mountain belt (rugged ~ elevAmp)
   if (mtnGate > 0.0) {
     float ea = 2.5, ewl = 2880.0, esumF = 0.0, esumR = 0.0;   // user 2026-06-09: HALF the erosion elevation (5->2.5m) + 3x WIDER again (960->2880m)
-    for (int o = 0; o < 2; o++) {   // 4->2 octaves (max-speed sweep: 720/360m fine erosion sub-vertex at GRID 16; coarse 2880/1440m carry the gully shape)
+    int veOcts = (uVtxErodeOcts > 0) ? uVtxErodeOcts : 4;
+    for (int o = 0; o < veOcts; o++) {
       float en = vnoise2(fp / ewl);
       esumF += ea * en;
       float er = 1.0 - abs(en); er *= er;
@@ -561,8 +570,9 @@ float vtxDisplace(highp vec2 fp, float tileM, float rugged){   // W7: fp = face-
 // relief variation correlate, reading as one landform). World-dir keyed, seam-safe.
 highp float detailFbm(vec3 dir) {
     float ov = 0.0, oa = 0.0;
-    float fq = 150.0, am = 1.0;                 // octaves: ~42km / 8.5km (3rd 1.7km octave dropped, max-speed sweep: sub-pixel at altitude, -3 taps/vertex)
-    for (int o = 0; o < 2; o++) {
+    float fq = 150.0, am = 1.0;
+    int dfOcts = (uDetailFbmOcts > 0) ? uDetailFbmOcts : 3;
+    for (int o = 0; o < dfOcts; o++) {
         ov += am * snoise3(dir * fq + vec3(float(o) * 7.3));
         oa += am;
         fq *= 5.0; am *= 0.75;
@@ -1371,7 +1381,8 @@ vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, flo
         highp vec3 od = normalize(worldPos);
         float ov = 0.0, oa = 0.0;
         float fq = 150.0, am = 1.0;                 // octaves: ~42km / 8.5km / 1.7km features
-        for (int o = 0; o < 3; o++) {
+        int fdOcts = (uFSDetailOcts > 0) ? uFSDetailOcts : 3;
+        for (int o = 0; o < fdOcts; o++) {
             float wl = 40000000.0 / fq;             // feature wavelength (m) ~ 2*pi*R / fq
             float nyq = 1.0 - smoothstep(wl * 0.03, wl * 0.12, pxWorld);   // fade before sub-pixel
             ov += am * nyq * snoise3(od * fq + vec3(float(o) * 7.3));
