@@ -827,7 +827,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
       const eh=C('bandEdgesHi',[3500.0,6500.0]); gl.uniform2f(U('bandEdgesHi'), eh[0],eh[1]);   // [1600,3200]->[3500,6500] (2026-06-10 'rockface everywhere': tuned pre-4x; with 11.6km peaks everything above 3200m was height-rock -- rescale the treeline)
       const sn=C('snowEdges',[6000.0,8500.0]); gl.uniform2f(U('snowEdges'), sn[0],sn[1]);   // 8000/10500->6000/8500 (user 2026-06-11 'all the snowy mountains have disappeared': only ~1% of land tops 8km (probe 3000-dir sweep, over7k 1.3%), so the whiteout-era snowline left virtually every massif bare; the whiteout's other sources (pre-rescale rock gates, alpine ice bias, tundra grey) are fixed independently, so 6km onset re-caps the real mountains without re-whitening the terrain)
       gl.uniform1f(U('seaDepthM'), C('seaDepthM',3000.0));
-      const sr=C('slopeRock',[0.25,0.5]); gl.uniform2f(U('slopeRock'), sr[0],sr[1]); }   // [0.25,0.5] USER-SET 2026-06-11 (matches terrain-gen-controls persisted default)
+      const sr=C('slopeRock',[0.25,0.55]); gl.uniform2f(U('slopeRock'), sr[0],sr[1]); }   // [0.25,0.55] USER-SET 2026-06-12 (matches terrain-gen-controls persisted default)
     gl.uniform3f(U('sunDir'), sunDir[0],sunDir[1],sunDir[2]);
     gl.uniform1i(U('displayMode'), cam.displayMode||0);
     // ---- animated ocean uniforms. time advances the Gerstner waves; amp/choppy read
