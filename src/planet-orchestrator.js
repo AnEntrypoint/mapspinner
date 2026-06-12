@@ -168,7 +168,7 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
   // quadtree levels (L14/L15/L16, ~28m/~14m/~7m cells) -- the close-approach overdraw tail -- so the deepest
   // LOD is now L13 (~56m cell). Pairs with the LOD_STEP push (each region still resolves levels-finer-per-
   // distance, just capped three steps shallower). Live override window.__maxLevel.
-  const maxLevel = opts.maxLevel ?? 12;
+  const maxLevel = opts.maxLevel ?? 11;
   // splitFactor 2.0 over-subdivided ~5-20x: the baseline measured px/poly edge median
   // 0.73 (orbit) / 1.56 (lowalt), far below the user's 4-50 px target, which also
   // saturated the atlas (1920/1920) and drove tileGenMs to ~950ms. The live sweep
