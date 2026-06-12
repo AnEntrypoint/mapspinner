@@ -628,7 +628,7 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){   // W7
   // anchorpoints (low reliefMul = flat plains, non-mtn, non-wet, non-cold). Fades to zero
   // by reliefMul ~0.5 so mountains are unaffected.
   float flatGate = max(0.0, 1.0 - reliefMul * 2.0);
-  h += snoise3(dir0 * 800.0) * flatGate * uDetailOverlay * 8.0;
+  h += snoise3(dir0 * 1200.0) * flatGate * uDetailOverlay * 20.0;
   // LAKE CARVE + flat-water plane
   float lakeWetV; float lakeCarveRaw = lakeCarveM(dir0, lakeWetV);
   // uCarveWide=1 widens the carve CLIMATE gates so the gorge/lake/dune depth fades in over a wide
