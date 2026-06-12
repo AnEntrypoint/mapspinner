@@ -43,7 +43,7 @@ const DEFAULTS = {
   // globals; gl-render reads them via _g()). Beer-Lambert ocean, biome sat, mottle, sky-fill relief,
   // terminator glow, night floor + earthshine, exposure + post-ACES Look.
   look: {
-    exposure: 1.0, skyFill: 0.45, biomeSat: 0.72, variationAmt: 0.04, colorVar: 0.5, vertexAO: 1.0,     reliefShade: 2.0,   // variationAmt 0.08->0.04 (user 2026-06-10 'blotchy': the ~50km value mottle painted light/dark patches across the massifs)
+    exposure: 1.0, skyFill: 0.45, biomeSat: 0.72, variationAmt: 0.04, colorVar: 0.5, vertexAO: 1.0,     reliefShade: 2.5,   // variationAmt 0.08->0.04 (user 2026-06-10 'blotchy': the ~50km value mottle painted light/dark patches across the massifs)
     nightFloor: 0.16, termWidth: 0.25, terminatorGlow: 0.30, lookSat: 1.15, lookContrast: 1.08,   // nightFloor 0.05->0.16: no black night terrain (2026-06-09)
     detailOverlay: 6.0, hazeMul: 0.65,   // 2026-06-10 'pale hazy + featureless': perlin-everywhere albedo+elevation fbm (user-tuned 6) + aerial-perspective strength cut
     ocean: { deep: [0.008,0.025,0.06], shallow: [0.07,0.22,0.26], k: [0.030,0.012,0.0045] },
