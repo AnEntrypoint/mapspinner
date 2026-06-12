@@ -94,7 +94,7 @@ export class Quadtree {
     const near = Math.max(this._camAlt * 6.0, horizon * 0.9, 20000.0);
     // floor 0.5 (was 0.18): past the horizon the split may HALVE, not crush to ~1/5 (which was
     // collapsing near-field detail on descent). Foreground (latC<near) stays fall=1 -> full LOD.
-    const fall = 1.0 / (1.0 + Math.max(0.0, latC - near) / (near * 2.0));
+    const fall = 1.0 / (1.0 + Math.max(0.0, latC - near) / near);
     // ALTITUDE-DETAIL-GRADIENT-SWAP (user: 'above fps height, swap more near detail for far detail so the
     // higher we get the less of a detail gradient there is to the land center'). The far-coarsening floor
     // is normally 0.5 (far quads split at half the near rate = a radial detail gradient around the
@@ -104,7 +104,7 @@ export class Quadtree {
     // stays sharp (floor 0.5) so the deck keeps its near-field detail. fpsAltM live via this.fpsAltM.
     const fpsAltM = this.fpsAltM || 5000.0;
     const aboveFps = Math.min(1.0, Math.max(0.0, (this._camAlt - fpsAltM) / (fpsAltM * 8.0)));  // 0 at fps height -> 1 by ~45km
-    const floor = 0.5 + 0.5 * (aboveFps * aboveFps * (3 - 2 * aboveFps));   // 0.5 (fps deck) -> 1.0 (high alt, flat gradient)
+    const floor = 0.25 + 0.75 * (aboveFps * aboveFps * (3 - 2 * aboveFps));   // 0.25 (fps deck) -> 1.0 (high alt, flat gradient)
     const effSplit = this.splitDist * Math.max(floor, fall);
     if (dist < l * effSplit && level < this.maxLevel) {
       const hl = l / 2.0;

@@ -497,7 +497,7 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
     // ONLY to splitDist (NOT distF below): distF = sf*8.0 is the altitude-weighting term, and scaling sf
     // into BOTH compounds into ~2 levels at altitude (witnessed: base sf*2 gave mx 5->7 at 8000km). Keep
     // distF on the original sf so the push is a clean ONE step. maxLevel (16) is untouched -- no new LOD.
-    const LOD_STEP = 4.0;   // push ALL LODs out ANOTHER step (user 2026-06-09 #2, after the 1.0->2.0 first step):
+    const LOD_STEP = 8.0;   // push ALL LODs out TWO steps: compensates for maxLevel 13->12 and steeper far falloff, targets ~600 quads deck
     qt.computeSplitDist(sf * LOD_STEP, gl.drawingBufferHeight || 480, fovy);
     // DETAIL-FARTHER (user 2026-06-01h: each LOD pop should happen ~3x farther out -- 6km detail at
     // 24km, etc.). A quad subdivides when camAlt < l * splitDist * distFactor, so tripling distFactor
