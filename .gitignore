@@ -33,3 +33,4 @@ src/shaders/.gitignore
 /test-results/
 /playwright-report/
 tests/**/*-snapshots/
+.kilo/
