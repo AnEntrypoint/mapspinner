@@ -628,7 +628,7 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){   // W7
   // anchorpoints (low reliefMul = flat plains, non-mtn, non-wet, non-cold). Fades to zero
   // by reliefMul ~0.5 so mountains are unaffected.
   float flatGate = max(0.0, 1.0 - reliefMul * 2.0);
-  h += snoise3(dir0 * 1200.0) * flatGate * uDetailOverlay * 20.0;
+  h += snoise3(dir0 * 1400.0) * flatGate * uDetailOverlay * 35.0;
   // LAKE CARVE + flat-water plane
   float lakeWetV; float lakeCarveRaw = lakeCarveM(dir0, lakeWetV);
   // uCarveWide=1 widens the carve CLIMATE gates so the gorge/lake/dune depth fades in over a wide
@@ -1860,7 +1860,7 @@ void main() {
     // no extra sampling, seam-safe, zero FPS cost vs the old single-term version.
     float aoAmt    = (uAoAmt > 0.0 ? uAoAmt : 1.0);
     float gorgeAO  = 0.0;   // canyon AO decoupled (user 2026-06-10: canyons impose ELEVATION only, no material/AO keying)
-    float slopeAO  = smoothstep(0.45, 0.95, slope) * 0.40;              // steep concave faces see less sky (0.30->0.40, deeper valleys)
+    float slopeAO  = smoothstep(0.20, 0.90, slope) * 0.35;              // gentle-slope AO reveals midday relief (0.20->0.90 from 0.45->0.95, peak 0.35)
     float cliffAO  = 1.0 - min(gorgeAO + slopeAO, 0.75) * aoAmt;        // cap so faces never go black
     // STRONGER NORMAL-DRIVEN SHADING (user 2026-06-03: 'normals arent affecting the lit view properly').
     // The lit relief was too subtle (witnessed litON SD 6.4 vs flat 5.9 = only ~8% contrast) because
@@ -1883,7 +1883,7 @@ void main() {
     // W5: vShadeAO (per-vertex, from the deleted VS gradient) RECOMPUTED here from the Sobel slope (user
     // 2026-06-07 'recompute AO from Sobel'). creaseAO = slope*0.45 (steep landform -> valley/crease
     // occlusion); microAO from the fine per-pixel gslope. uVertexAO lever + the 0.45 floor preserved.
-    float fsShadeAO = clamp(1.0 - (slope * 0.45 + gslope * 0.35) * uVertexAO, 0.45, 1.0);
+    float fsShadeAO = clamp(1.0 - (slope * 0.55 + gslope * 0.40) * uVertexAO, 0.50, 1.0);
     // FADE-IN FIX (user 'a layer fades in at close distance'): vAO was mix(1.0, fsShadeAO, nearFade) where
     // nearFade rises 0->1 as pxWorld shrinks 180->8m on approach -> the Sobel crease-AO darkening animated
     // IN as the camera neared = the visible 'layer fading in'. fsShadeAO is a per-pixel SOBEL-slope quantity
@@ -2056,7 +2056,7 @@ void main() {
     // unaffected because the fill is weighted by (1-dayShade). Raised from the old earthshine 0.012/0.018/
     // 0.032 (still read as black) to a clearly-visible dim blue so framed night terrain stays legible.
     vec3 nightFill = vec3(0.06, 0.075, 0.11) * uNightLights;
-    vec3 color2 = (color * dayShade + nightFill * (1.0 - dayShade)) * limb;
+    vec3 color2 = (color * dayShade + nightFill * (1.0 - dayShade));
     // HDR -> SDR: ACES tonemap. Exposure 1.7 -> 1.25 so the N.sun + dayShade gradient SPREADS across the
     // tonemap's linear range instead of clipping flat to the bright shoulder (the orbit-flatness root).
     vec3 c = color2 * uExposure;   // exposure 1.25->uExposure(1.0): stop the bright ACES-shoulder wash
