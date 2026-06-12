@@ -461,7 +461,7 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
         // so the L8 swap can land at 700km (the <boundary ramp begins below the lowest knot).
         // (the src/lab altSplitMul mirror was deleted 2026-06-12; this is the only copy now.)
         // knots [altKm, sf]; sf log-interpolated. Outside the range clamps to the end knot.
-        const KN = [[700,0.865],[900,1.009],[1200,0.966],[1700,0.898],[2400,1.19],[3200,0.865],[5000,0.86],[7000,0.72],[13000,0.60],[40000,0.45]];
+        const KN = [[700,0.865],[900,1.009],[1200,0.966],[1700,0.898],[2400,1.19],[3200,0.865],[5000,0.86],[12000,0.72],[20000,0.60],[40000,0.45]];
         if (altKm <= KN[0][0]) { mul = KN[0][1]; }
         else if (altKm >= KN[KN.length-1][0]) { mul = KN[KN.length-1][1]; }
         else { for (let i = 1; i < KN.length; i++) { if (altKm <= KN[i][0]) {
