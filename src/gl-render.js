@@ -326,7 +326,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     const albAll = new Uint8Array(SZ * SZ * 4 * MATS.length);
     const nrmAll = new Uint8Array(SZ * SZ * 4 * MATS.length);
     for (let m = 0; m < MATS.length; m++) {
-      const [ci, di] = await Promise.all([img('/textures/' + MATS[m] + '-color.jpg'), img('/textures/' + MATS[m] + '-displacement.jpg')]);
+      const [ci, di] = await Promise.all([img('./textures/' + MATS[m] + '-color.jpg'), img('./textures/' + MATS[m] + '-displacement.jpg')]);
       const c = px(ci), d = px(di);
       // DE-SHADE (user 2026-06-11 'flat, unangled bowls of rock'): the photos carry baked large-scale
       // shading (shadowed depressions), which at a 2.4km tile pastes bowl-shaped shadows onto geometry
