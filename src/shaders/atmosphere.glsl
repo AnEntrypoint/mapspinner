@@ -1,6 +1,6 @@
 // src/shaders/atmosphere.glsl  (#version 300 es is prepended by the JS loader)
 // -----------------------------------------------------------------------------
-// WebGL2 analytic Rayleigh/Mie single-scatter atmosphere for the Proland planet.
+// WebGL2 analytic Rayleigh/Mie single-scatter atmosphere for the planet.
 //
 // PORT NOTE — what this is vs. the WebGPU path:
 //   planet.html runs the AUTHORITATIVE Bruneton model: it BAKES the transmittance/

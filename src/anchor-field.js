@@ -12,10 +12,9 @@
 // only that cell's neighbourhood -- never the whole planet.
 //
 // INTEGRATION: this is a pure-JS field (editable, serialisable). The orchestrator samples
-// it per Proland tile and pushes the result into the wasm via the existing setters + a
-// per-tile additive bias, so Proland's upsample-coherence and seamlessness are preserved
-// (the field is C0-continuous across tile edges because every tile samples the SAME global
-// quadtree partition at its own scale band). No wasm rebuild is needed to edit params.
+// it per tile and pushes the result into the terrain VS via a uniform or texture.
+// The field is C0-continuous across tile edges because every tile samples the SAME global
+// quadtree partition at its own scale band.
 //
 // PERFORMANCE (all the most-performant choices):
 //   - Param storage is a flat Float32Array per band (cache-friendly, zero object churn),
@@ -26,7 +25,7 @@
 //   - Sampling is O(bands) -- a handful of band lookups + one bilinear per band -- with no
 //     allocation on the hot path (results written into a reused scratch object).
 
-// ---- cube-face frame (mirrors proland-planet-orchestrator FACE_FRAME / render localToWorld3).
+// ---- cube-face frame (mirrors planet-orchestrator FACE_FRAME / render localToWorld3).
 // A face-local point (u,v in [-1,1], outward axis) maps to a world direction. We only need
 // the inverse (world dir -> face + uv) for sampleDir, and the forward (face,uv -> dir) for
 // the per-node procedural hash seed coordinate.
@@ -415,7 +414,7 @@ export function createAnchorField(opts = {}) {
     return _scratch;
   }
 
-  // PER-TILE sample for the orchestrator: a Proland tile (face, level, tx, ty) covers a uv
+  // PER-TILE sample for the orchestrator: a tile (face, level, tx, ty) covers a uv
   // square on its face; sample the field at the tile CENTRE (the bias is per-tile, and the
   // field is C0 across tiles because every tile samples the same global band quadtrees).
   function sampleTile(face, level, tx, ty) {

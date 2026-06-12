@@ -1,5 +1,5 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><title>TerrainView8 -- authentic Proland planet (WebGL2)</title>
+<html><head><meta charset="utf-8"><title>mapspinner — WebGL2 Terrain SDK</title>
 <style>
   html,body{margin:0;height:100%;background:#000;color:#9f9;font:12px monospace;overflow:hidden}
   canvas{display:block;width:100vw;height:100vh}
@@ -14,9 +14,9 @@
   #panel .grp{border-top:1px solid #3f3;padding-top:4px;margin-top:6px;color:#cfc}
 </style></head>
 <body>
-<!-- The authentic Proland WebGL2 path (proland-planet-orchestrator) renders here. -->
+<!-- The mapspinner WebGL2 renderer renders here. -->
 <canvas id="cwebgl" style="position:fixed;inset:0;width:100vw;height:100vh"></canvas>
-<div id="hud"><b>TerrainView8 (authentic Proland, WebGL2)</b><br>
+<div id="hud"><b>mapspinner — WebGL2 Terrain SDK</b><br>
 Controls: <b>WASD</b>/drag orbit . <b>Q/E</b>/wheel zoom . <b>R</b> reset<br>
 <span id="stats">init...</span></div>
 <div id="panel">
@@ -33,18 +33,16 @@ Controls: <b>WASD</b>/drag orbit . <b>Q/E</b>/wheel zoom . <b>R</b> reset<br>
 <div id="genPanel" style="position:fixed;left:8px;top:34px;z-index:30;display:none;max-height:88vh;overflow:auto;background:rgba(12,16,20,0.92);color:#cfe;font:10px/1.5 monospace;padding:6px 8px;border:1px solid #2a3a44;width:250px"></div>
 <div id="err"></div>
 <script type="module">
-// [P2-6 follow-up] The authentic Proland terrain + atmosphere + ocean run entirely
-// on the WebGL2 path (proland-planet-orchestrator, loaded lazily in frameLoop). The
-// legacy WebGPU device/pipelines/ocean/atmosphere + the JS quadtree + our CPU
-// proland_terrain.wasm (which only drove that dead path) have been DELETED.
+// The mapspinner terrain + atmosphere + ocean run entirely
+// on the WebGL2 path, loaded lazily in frameLoop. The
+// legacy WebGPU device/pipelines/ocean/atmosphere have been DELETED.
 const errEl=document.getElementById('err');
 const showErr=m=>{errEl.style.display='block';errEl.textContent=String(m);window.__pageErr=String(m);console.error(m)};
 window.addEventListener('error',e=>showErr(e.message||e));
 window.addEventListener('unhandledrejection',e=>showErr(e.reason?.message||e.reason||e));
 
-// [P2-6 follow-up] The legacy WebGPU render path has been DELETED. The authentic
-// Proland terrain + atmosphere + ocean all run on the WebGL2 path
-// (proland-planet-orchestrator) drawing to #cwebgl. `canvas` is the WebGL2 canvas;
+// The legacy WebGPU render path has been DELETED. All terrain + atmosphere + ocean
+// run on the WebGL2 path drawing to #cwebgl. `canvas` is the WebGL2 canvas;
 // camera event handlers + sizing read it.
 const canvas=document.getElementById('cwebgl');
 
@@ -124,8 +122,7 @@ const normalize=v=>{const r=Math.hypot(...v)||1;return [v[0]/r,v[1]/r,v[2]/r]};
 // where the camera starts (cam.pos below), not by this scalar -- RADIUS just
 // sets the units everything else is denominated in.
 const RADIUS=6371.0;
-// WebGL2 Proland overlay works in METERS (its producer generates meter-scale
-// elevation). Surface radius 6.36e6 m; the km-unit world maps to it 1 unit = this many m.
+// WebGL2 terrain works in METERS. Surface radius 6.36e6 m; the km-unit world maps to it 1 unit = this many m.
 const WEBGL2_TERRAIN_R_M = 6360000.0;
 const WEBGL2_M_PER_UNIT = WEBGL2_TERRAIN_R_M / RADIUS;
 // EXPOSE the world-scale constants as globals so a scripted browser-witness (page.evaluate runs
@@ -298,8 +295,7 @@ async function pollCmd() {
   } catch (_) {} finally { __cmdBusy = false; }
 }
 setInterval(pollCmd, 500);
-// P2-6: the authentic Proland WebGL2 terrain (proland-planet-orchestrator) is the
-// renderer. Set window.__useWebGL2Terrain=false to disable (no fallback now).
+// The mapspinner WebGL2 terrain is the renderer.
 if (window.__useWebGL2Terrain === undefined) window.__useWebGL2Terrain = true;
 const stats=document.getElementById('stats');
 // SINGLE-FLIGHT FRAME SCHEDULER (2026-06-12): every frameLoop continuation routes through here so
@@ -314,8 +310,7 @@ function frameLoop(){
   const frameMs = now - lastT;          // true inter-frame interval (for FPS)
   const dt=Math.min(0.05,(now-lastT)/1000); lastT=now;
 
-  // ---- Authentic-Proland WebGL2 terrain path. Lazily inits the compiled Proland
-  // wasm + thin WebGL2 renderer (proland-planet-orchestrator) on the #cwebgl canvas.
+  // ---- mapspinner WebGL2 terrain path. Lazily inits the renderer on the #cwebgl canvas.
   // The actual render + rAF happens AFTER the camera-update section below (so WASD/
   // drag/zoom + autopilot move the camera before the frame is drawn).
   if (window.__useWebGL2Terrain) {
@@ -546,7 +541,7 @@ function frameLoop(){
   window.__altM = heightAboveGroundM;
 
   // The camera (autopilot + free-fly + clamp) has now been fully updated this frame,
-  // so render the authentic Proland WebGL2 planet with the CURRENT camera. This is
+  // so render the planet with the CURRENT camera. This is
   // the sole render path; it advances the sun, draws via the orchestrator, updates
   // the HUD/title/diag, schedules the next frame, and returns.
   if (window.__useWebGL2Terrain && window.__planetOrch) {
@@ -705,8 +700,8 @@ cam.oceanAmplitude  = 1.0 * (0.4 + 5 / 12.0);    // == old default (windSpeed 5)
 cam.oceanChoppiness = 1.6 * (0.5 + 0.5);         // == old default (seaState 0.5)
 cam.oceanFoam       = 0.5;
 cam.oceanTimeScale  = 1.0;
-// Display-mode toggle (tv-display-modes-toggle). Skirts removed: LOD cracks are now hidden
-// by the one-cell overlap ring in the mesh (proland-gl-render), not a dropped skirt curtain.
+// Display-mode toggle. Skirts removed: LOD cracks are now hidden
+// by the one-cell overlap ring in the mesh, not a dropped skirt curtain.
 // User picking from the dropdown is an explicit action that must WIN over any stale diagnostic
 // override (window.__displayMode left set by __dbg.setDisplayMode/census/aimDir). Clear the override
 // so the menu value takes effect immediately -- otherwise the precedence pick in the render loop

@@ -24,7 +24,7 @@
 
 ## 2026-05-23
 
-- `terrain-phase2.js` (commit `d87c51b`): Add `allocateTileSlot`, `computePipelines`, `computeBindGroups` to `ProlandProducer` — stopped TypeError crash every render frame when `terrain-phase3-integration.js` called these missing methods.
+- `terrain-phase2.js` (commit `d87c51b`): Add `allocateTileSlot`, `computePipelines`, `computeBindGroups` — stopped TypeError crash every render frame when `terrain-phase3-integration.js` called these missing methods.
 - `shader-loader.js` (commit `1e61b7b` session): Fix `#if` numeric literal handling — `#if 1` was treated as a flag lookup (always false), stripping always-true blocks and causing GPU validation errors and black canvas.
 - `terrain-phase1.js`: Change `normTexArray` format from `rg32float` to `rgba8unorm` to match `normal_producer.wgsl` storageTexture output.
 - `terrain-phase2.js`: Remove unused bind group entries for upsample (b5), normal producer (b0), ortho producer (b0,b1,b2,b6) — WebGPU `layout:'auto'` strips unreachable bindings, causing validation errors when they were supplied.

@@ -1,14 +1,9 @@
-// Proland authentic terrain render shader, ported to WebGL2 (#version 300 es) from
-// vendor/proland-build/proland-git/terrain/examples/terrain2/terrainShader.glsl.
-// VS: spherical deformation + CLOD blend (zf<->zc) of the wasm-driven elevation tiles.
-// FS: sample normal + (placeholder) albedo, simple sun-lit Lambert with an ambient floor.
-// Driven by the thin WebGL2 render layer (per-quad deformation uniforms + textureTile
-// coords from the Proland wasm). No geometry/tess -> WebGL2-clean. The JS prepends
-// #version + precision and compiles _VERTEX_ / _FRAGMENT_ separately.
+// mapspinner WebGL2 terrain render shader.
+// VS: spherical deformation + direct per-vertex sphere projection.
+// FS: sample normal + albedo, sun-lit Lambert with ambient floor.
+// The JS prepends #version + precision and compiles _VERTEX_ / _FRAGMENT_ separately.
 
-// (Proland SamplerTile/textureTile atlas plumbing DELETED 2026-06-11 dead-code sweep: never set, never called.)
-
-// --- DIRECT per-vertex sphere-projection uniforms (replaces the Proland corner-blend CLOD) ------
+// --- DIRECT per-vertex sphere-projection uniforms ------
 // SINGLE INSTANCED DRAW: defOffset (ox,oy,l,level) + the face frame are PER-INSTANCE now (one
 // gl.drawElementsInstanced over the whole visible leaf set, no per-quad uniform churn). In the VS
 // they come from instance attributes (iOffset + iFace); defRadius/defViewProjRel stay uniforms
@@ -712,7 +707,7 @@ mat3 faceFrame(float f){
 // function of world dir -> replaces the old hardcoded sin/cos lobe with the editable field.
 highp float continentalBias(vec3 dir) { return hpfSample(dir).r; }   // W7: R = seaBias (meters) -> highp
 
-// ---- CONTINUOUS BROAD+MID SHAPE (LOD-uniformity fix, user-directive 2026-05-30). The Proland
+// ---- CONTINUOUS BROAD+MID SHAPE (LOD-uniformity fix). The
 // per-level g_noiseAmp cascade adds a DIFFERENT noise draw at each LOD, so consecutive levels
 // look different (1500km vs 1200km "way different"). The fix: source the broad+regional SHAPE
 // from ONE continuous fBm of WORLD DIRECTION, sampled the same at every LOD -> a finer level is
@@ -966,7 +961,8 @@ void main() {
     float dHdvN = float(hFD2 - h) / nStep;
     vNrm = normalize(uxN * (-dHduN) + uyN * (-dHdvN) + uzN);   // n = normalize([-dz/du,-dz/dv,1]) in the (ux,uy,uz) frame
     }
-    // DIRECT per-vertex sphere projection (replaces the Proland deformedCorners*alphaPrime blend,
+    // DIRECT per-vertex sphere projection (replaces the
+    deformedCorners*alphaPrime blend,
     // which bilinearly interpolated 4 deformed corners -> FLAT quad interior -> faceted at high GRID).
     // dir0 is THIS vertex's world direction (faceWarp'd, defLocalToWorld-mapped); place it on the
     // sphere at radius R+h and project. Every vertex curves -> round at any tessellation.
@@ -2076,7 +2072,7 @@ void main() {
 // ---- HEIGHT PROBE (collision): compute the EXACT rendered terrain height for one world dir,
 // reusing the same hpfSample + broadShapeM the mesh VS uses, so the free-fly collision floor
 // can never diverge from the rendered surface (user-chosen: read px from the GPU, not a CPU
-// mirror). Paired with a 1-point VS in proland-gl-render.js; writes height (metres) to R32F.
+// mirror). Paired with a 1-point VS in gl-render.js; writes height (metres) to R32F.
 #ifdef _PROBE_
 uniform vec3 probeDir;     // world direction under the camera (normalized)
 out vec4 probeOut;

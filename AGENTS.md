@@ -33,7 +33,7 @@ camera you can't aim. Use the DATA diagnostics — `__diag.pxPerPoly()` (on-scre
 ## The terrain pipeline in one page (read this before touching terrain)
 
 Earth-scale terrain SDK, WebGL2, served at `http://localhost:8080/` (entry `planet.html`, `server.js`).
-GPU one-fractal: no Proland tile producer, no cascade. A finer
+GPU one-fractal: no tile producer. A finer
 LOD is a denser sample of the SAME field. The procedural broadShapeM fractal is the LIVE render
 path (hasAtlas==0, the default). The baked atlas is opt-in (planet-orchestrator.js opts.atlas===true;
 live `window.__toggleAtlas(on)` / `__forceAtlas`); its bake is CLI-validated faithful (atlas-bake.mjs
@@ -58,7 +58,7 @@ probes, and `window.__diag.reloadShaders()` hot-reload through `/cmd` — no pag
 
 Data flow, each stage names its one file:
 1. QUADTREE picks which cube-sphere patches to draw per camera altitude — `src/quadtree.js`
-   (cube-sphere quadtree in JS, ported from the deleted Proland C++), driven per frame by
+   (cube-sphere quadtree in JS), driven per frame by
    `src/planet-orchestrator.js`.
 2. MESH per patch is a GRID+2 grid (`src/gl-render.js`) whose outer ring is a SKIRT (terrain.glsl
    drops `vertex.z>0.5` verts radially below the surface) hiding LOD T-junction cracks. The outer
@@ -70,7 +70,7 @@ Data flow, each stage names its one file:
    `inciseRidgeField`. Collision = a GPU `_PROBE_` variant of the SAME shader (1px readback,
    `gl-render.sampleGroundM`), no CPU mirror. — full design: recall "TV8 GPU-TERRAIN ARCHITECTURE
    DECISION" in rs-learn.
-4. DEFORM: direct per-vertex sphere projection — `vWorld = dir0 * (R + h)` (replaced the Proland
+4. DEFORM: direct per-vertex sphere projection — `vWorld = dir0 * (R + h)`
    corner-blend deform; round at any tessellation, no flat patches at high GRID).
 5. FS shades from height+slope+climate (`terrainAlbedoClimate`) + per-vertex seamless normal +
    ocean/lake/river. No FS detail TEXTURE (a tiled image would moire + UV-scroll); closeup MACRO

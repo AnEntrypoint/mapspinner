@@ -202,7 +202,7 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
 
   // ---- HIERARCHICAL PARAMETER FIELD (HPF) ----------------------------------------
   // The anchor field drives generation as a CONTINUOUS function of world direction. To keep
-  // Proland upsample-coherence + seamlessness we feed it to the terrain VS as a TEXTURE (a
+  // For seamlessness we feed it to the terrain VS as a TEXTURE (a
   // continuous C0 field via LINEAR filtering) rather than a per-tile constant (a per-tile
   // step would reintroduce seams -- see the CLOD mean-drift / edge-equality lessons). We bake
   // the field's continental band into a per-face HPF_RES^2 RGBA32F 2D-array (seaBias, elevAmp,
@@ -414,7 +414,7 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
                fallbackCount: c.fallbackCount, maxFallbackLevel: c.maxFallbackLevel, frontFallback: c.frontFallback, cached: true };
     }
 
-    // configure the authentic Proland quadtree once (meter units; root l=2R).
+    // configure the quadtree once (meter units; root l=2R).
     // splitFactor is LIVE-TUNABLE via window.__splitFactor so the px/poly target
     // (4-50 px per triangle edge) can be calibrated in-browser with one dispatch
     // (no wasm rebuild / reload) -- the efficiency analog of __diag.setGen. A SMALLER

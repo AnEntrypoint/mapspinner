@@ -561,7 +561,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
   const instBuf=gl.createBuffer();   // per-instance [ox,oy,l,level,face] (filled per frame in render())
 
   // per-face local->world (cube face -> sphere local frame). Column-major mat3 packed
-  // into a Float32Array(9). Matches prolandProducers.buildLocalToWorld convention:
+  // into a Float32Array(9). Matches localToWorld3 convention:
   // col0 = U/rs, col1 = faceCenter, col2 = V/rs. rootQuadSize=2 -> face spans [-1,1].
   function localToWorld3(face) {
     // face axes (cube): for face 3 (+Z) U=+X, V=+Y, center=+Z. Generic table:

@@ -1,7 +1,4 @@
-// quadtree.js -- the cube-face terrain quadtree LOD selection, ported from the deleted
-// proland_terrain.cpp (TerrainNode/TerrainQuad subdivision + SphericalDeformation + the
-// pixel-calibrated split distance). This is the ONE piece of the old C++/wasm the render
-// needed; everything else (the elevation/normal/ortho atlas producer + cascade) is gone --
+// quadtree.js -- the cube-face terrain quadtree LOD selection.
 // terrain shape is the single GPU fractal (broadShapeM in terrain.glsl), evaluated per-vertex.
 //
 // Pure JS, no wasm, no allocation per frame beyond the leaf array. One Quadtree instance per
