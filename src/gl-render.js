@@ -792,7 +792,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(U('uTexTileM'),   _g('texTile', 2400.0));  // metres per repeat (user: 24m read as noise/rock -- 100x bigger)
     gl.uniform1f(U('uTexNrmK'),    _g('texNrmK', 3.0));     // 0.8 -> 3.0 (user 2026-06-11 'displacement normals must be THE texture normals': A/B-measured -- 0.8 was visually NIL (0% of px changed >10 on toggle), 2.0 gave 1.3%, 5.0 gave 22%; the normalize(nLit+texDn) compresses the response so visibility is non-linear in K. 3.0 makes the displacement-derived relief clearly read; the loader's per-texel 0.9 tilt cap keeps the historical saturation/scramble class structurally impossible at any apply strength)
     gl.uniform1f(U('uTexMix'),     _g('texMix', 0.85));     // splat blend amount (0 = off)
-    gl.uniform1f(U('uTexWarp'),    _g('texWarp', 0.25));    // anti-repetition warp amplitude (halved from 0.5 per user)
+    gl.uniform1f(U('uTexWarp'),    _g('texWarp', 0.325));   // anti-repetition warp amplitude (+30% from 0.25, grass needed more visible warping)
     gl.uniform1f(U('uTexPhoto'),   _g('texPhoto', 0.0));    // raw photo-color fraction (0 = patch matches the macro shade exactly)
     gl.uniform1f(U('uTexPhotoNear'), _g('texPhotoNear', 0.45));  // near-field material identity (photo hue at macro luminance; user 2026-06-12 'must be either grass or sand')
     gl.uniform4f(U('uSurfMeanL'), _surfMeanL[0], _surfMeanL[1], _surfMeanL[2], _surfMeanL[3]);   // per-layer mean linear luminance (shade-match divisor)
