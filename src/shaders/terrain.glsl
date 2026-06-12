@@ -974,12 +974,10 @@ void main() {
     // visible curtain through the transparent shallows.
     highp float skirt = (vertex.z > 0.5 && uIsWater < 0.5) ? max(defOffset.z * 0.12, 60.0) : 0.0;   // W7: metres (tile-size scaled) -> highp
     vWorld = dir0 * (R + hR - skirt);   // ABSOLUTE world pos (RENDER height: ocean top flat) -> FS lighting/atmosphere
-    // TEXTURE DOMAIN WARP -- VS-side, HALVED frequencies (user 2026-06-12 'halve the warp frequency' +
-    // 'as performant as possible'): lattice 900/3600/14000 -> 450/1800/7000 (waves 2x larger: ~88km/22km/5.6km
-    // at the same +/-1.2/0.6/0.3-tile amplitudes). Moved out of the per-pixel FS (-9 snoise3/pixel); dir0 is
-    // the same normalize(vWorld) the FS used, so the field is identical, just vertex-sampled.
+    // TEXTURE DOMAIN WARP -- VS-side, HALVED AGAIN (user 2026-06-12): lattice 450/1800/7000 -> 225/900/3500
+    // (waves 2x larger again: ~176km/44km/11km).
     {
-        highp vec3 w0 = dir0 * 450.0, w1 = dir0 * 1800.0, w2 = dir0 * 7000.0;
+        highp vec3 w0 = dir0 * 225.0, w1 = dir0 * 900.0, w2 = dir0 * 3500.0;
         vTexWarp = vec3(snoise3(w0), snoise3(w0 + vec3(7.3)), snoise3(w0 + vec3(23.9))) * 1.2
                  + vec3(snoise3(w1), snoise3(w1 + vec3(13.7)), snoise3(w1 + vec3(31.1))) * 0.6
                  + vec3(snoise3(w2), snoise3(w2 + vec3(5.1)), snoise3(w2 + vec3(17.9))) * 0.3;
