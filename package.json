@@ -1,6 +1,6 @@
 {
   "name": "mapspinner",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "WebGL2 Earth-scale terrain rendering SDK for interactive globe applications",
   "main": "src/index.js",
   "exports": {
@@ -15,7 +15,14 @@
     "type": "git",
     "url": "https://github.com/AnEntrypoint/mapspinner.git"
   },
-  "keywords": ["WebGL2", "terrain", "rendering", "SDK", "globe", "3D"],
+  "keywords": [
+    "WebGL2",
+    "terrain",
+    "rendering",
+    "SDK",
+    "globe",
+    "3D"
+  ],
   "author": "",
   "license": "MIT"
 }
