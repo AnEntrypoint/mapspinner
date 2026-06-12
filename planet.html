@@ -378,7 +378,7 @@ function frameLoop(){
       // We drive it in meter-space and scale the km-unit camera into meters via
       // WEBGL2_M_PER_UNIT below.
       import('./src/planet-orchestrator.js')
-        .then(m => m.initProlandPlanet(glw, { radius: WEBGL2_TERRAIN_R_M, frustumCull: false }))
+        .then(m => m.initMapspinnerPlanet(glw, { radius: WEBGL2_TERRAIN_R_M, frustumCull: false }))
         .then(orch => { window.__planetOrch = orch; window.__planetOrchGL = glw; window.__planetOrchStatus='ready';
           import('./src/terrain-gen-controls.js').then(()=>{ try{ window.__gen && window.__gen.apply(); }catch(_){} }).catch(e=>console.warn('gen-controls',e)); })
         .catch(e => { window.__planetOrchStatus='error:'+(e.message||e); console.error('orch init',e); });
