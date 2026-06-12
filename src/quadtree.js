@@ -91,7 +91,7 @@ export class Quadtree {
     // 20km). Shrinking the penalty-free near radius lets the far-LOD falloff coarsen MORE of the
     // off-screen / past-horizon field, cutting peak visible leaves toward ~600-900 (precondition
     // for the 512 layer cap). These are THE only values -- no device tier.
-    const near = Math.max(this._camAlt * 4.0, horizon * 0.5, 20000.0);
+    const near = Math.max(this._camAlt * 2.0, horizon * 0.4, 20000.0);
     // floor 0.5 (was 0.18): past the horizon the split may HALVE, not crush to ~1/5 (which was
     // collapsing near-field detail on descent). Foreground (latC<near) stays fall=1 -> full LOD.
     const fall = 1.0 / (1.0 + Math.max(0.0, latC - near) / near);
@@ -102,10 +102,11 @@ export class Quadtree {
     // altitude climbs, so far and near refine at the same rate = the gradient FLATTENS the higher we get
     // (detail budget spreads from the near foreground out to the far field). Below fps height the gradient
     // stays sharp (floor 0.5) so the deck keeps its near-field detail. fpsAltM live via this.fpsAltM.
-    const fpsAltM = this.fpsAltM || 5000.0;
-    const aboveFps = Math.min(1.0, Math.max(0.0, (this._camAlt - fpsAltM) / (fpsAltM * 8.0)));  // 0 at fps height -> 1 by ~45km
-    const maxFloor = 0.7;
-    const floor = 0.25 + (maxFloor - 0.25) * (aboveFps * aboveFps * (3 - 2 * aboveFps));   // 0.25 deck -> 0.7 high alt, always some far coarsening
+    // FLOOR: starts at 0.6 at deck (preserves near-field detail where the user sees it),
+    // drops logarithmically with altitude toward ~0.3 at orbital height, so far coarsening
+    // engages progressively at every altitude -- no more one-step jump at ~45km.
+    const altLog = Math.log2(Math.max(this._camAlt, 5000.0) / 5000.0);
+    const floor = Math.max(0.30, Math.min(0.60, 0.60 - altLog * 0.05));
     const effSplit = this.splitDist * Math.max(floor, fall);
     if (dist < l * effSplit && level < this.maxLevel) {
       const hl = l / 2.0;
