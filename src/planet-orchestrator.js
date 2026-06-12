@@ -497,7 +497,7 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
     // ONLY to splitDist (NOT distF below): distF = sf*8.0 is the altitude-weighting term, and scaling sf
     // into BOTH compounds into ~2 levels at altitude (witnessed: base sf*2 gave mx 5->7 at 8000km). Keep
     // distF on the original sf so the push is a clean ONE step. maxLevel (16) is untouched -- no new LOD.
-    const LOD_STEP = 3.0;   // push ALL LODs 0.75 step (reduced from 4.0 to target ~600 quads at all alts):
+    const LOD_STEP = 2.3;   // push ALL LODs ~0.6 step (reduced from 3.0 to target ~600 quads at all alts):
     qt.computeSplitDist(sf * LOD_STEP, gl.drawingBufferHeight || 480, fovy);
     // DETAIL-FARTHER (user 2026-06-01h: each LOD pop should happen ~3x farther out -- 6km detail at
     // 24km, etc.). A quad subdivides when camAlt < l * splitDist * distFactor, so tripling distFactor
@@ -549,6 +549,12 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
     }
     const _maxLevelOverridden = (typeof window !== 'undefined' && window.__maxLevel != null);
     if (!_maxLevelOverridden && altKm < DECK_CAP_ALT_KM && mxl > DECK_CAP_LEVEL) mxl = DECK_CAP_LEVEL;
+    // HIGH-ALT LOD DROP (user 2026-06-13): at 30km+ the finest LOD is sub-pixel.
+    // Drop 1 level at 30km, 2 levels at 700km+ so the next-coarser LOD naturally expands
+    // (cells 2x larger). Skipped when window.__maxLevel is set.
+    if (!_maxLevelOverridden && altKm >= 30 && mxl > 4) {
+      mxl -= (altKm >= 700) ? 2 : 1;
+    }
     qt.setConfig(R, mxl, distF);
     const splitDist = sf + 1.0;
 
