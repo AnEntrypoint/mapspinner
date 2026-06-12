@@ -961,9 +961,8 @@ void main() {
     float dHdvN = float(hFD2 - h) / nStep;
     vNrm = normalize(uxN * (-dHduN) + uyN * (-dHdvN) + uzN);   // n = normalize([-dz/du,-dz/dv,1]) in the (ux,uy,uz) frame
     }
-    // DIRECT per-vertex sphere projection (replaces the
-    deformedCorners*alphaPrime blend,
-    // which bilinearly interpolated 4 deformed corners -> FLAT quad interior -> faceted at high GRID).
+    // DIRECT per-vertex sphere projection (replaces the old corner-blend deform, which
+    // bilinearly interpolated 4 deformed corners -> FLAT quad interior -> faceted at high GRID).
     // dir0 is THIS vertex's world direction (faceWarp'd, defLocalToWorld-mapped); place it on the
     // sphere at radius R+h and project. Every vertex curves -> round at any tessellation.
     // SKIRT: outer-ring verts (vertex.z==1, xy clamped to the true edge) drop radially below the
