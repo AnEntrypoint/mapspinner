@@ -168,7 +168,7 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
   // quadtree levels (L14/L15/L16, ~28m/~14m/~7m cells) -- the close-approach overdraw tail -- so the deepest
   // LOD is now L13 (~56m cell). Pairs with the LOD_STEP push (each region still resolves levels-finer-per-
   // distance, just capped three steps shallower). Live override window.__maxLevel.
-  const maxLevel = opts.maxLevel ?? 13;
+  const maxLevel = opts.maxLevel ?? 12;
   // splitFactor 2.0 over-subdivided ~5-20x: the baseline measured px/poly edge median
   // 0.73 (orbit) / 1.56 (lowalt), far below the user's 4-50 px target, which also
   // saturated the atlas (1920/1920) and drove tileGenMs to ~950ms. The live sweep
@@ -541,11 +541,11 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
     // subdivide to L16 (~7m cells, the vtxDisplace floor) while flat tiles stay capped at L14 -> the
     // polygon budget follows the relief, within the existing quadtree spatial index. nadir-only sample
     // so the foreground the user is descending toward drives it.
-    let DECK_CAP_LEVEL = 14;
+    let DECK_CAP_LEVEL = 12;
     if (hpf && hpf.sampleDir) {
       const nA = hpf.sampleDir([camWorldPos[0]/camDist, camWorldPos[1]/camDist, camWorldPos[2]/camDist]);
       const mtn = Math.max(0, Math.min(1, (nA.elevAmp - 16.8) / (18.6 - 16.8)));   // mountain-belt weight 0..1
-      DECK_CAP_LEVEL = 14 + Math.round(2 * mtn);   // flat L14 -> rugged L16, adaptive
+      DECK_CAP_LEVEL = 12 + Math.round(2 * mtn);   // flat L12 -> rugged L14, adaptive
     }
     const _maxLevelOverridden = (typeof window !== 'undefined' && window.__maxLevel != null);
     if (!_maxLevelOverridden && altKm < DECK_CAP_ALT_KM && mxl > DECK_CAP_LEVEL) mxl = DECK_CAP_LEVEL;
