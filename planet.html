@@ -477,9 +477,9 @@ function frameLoop(){
   // take the existing CPU-mirror fallback. Below 20km (where collision is load-bearing) keep GPU-exact.
   const _altRoughKm = _camLenMv - RADIUS;
   const _gpuGM = (_altRoughKm < 20.0 && _orchMv && _orchMv.render && _orchMv.render.sampleGroundM) ? _orchMv.render.sampleGroundM(_camDirMv) : null;
-  const _surfM = (_gpuGM != null && isFinite(_gpuGM)) ? Math.max(0, _gpuGM)
-               : Math.max(0, jsBroadShape(cam.pos[0],cam.pos[1],cam.pos[2]));
-  const altSurfElev = Math.max(0, Math.min(_surfM, 9500.0)) / WEBGL2_TERRAIN_R_M;
+  const _surfM = (_gpuGM != null && isFinite(_gpuGM)) ? _gpuGM
+               : jsBroadShape(cam.pos[0],cam.pos[1],cam.pos[2]);
+  const altSurfElev = Math.min(_surfM, 9500.0) / WEBGL2_TERRAIN_R_M;
   const altKmAbove = Math.max(1e-3, (Math.hypot(...cam.pos) - RADIUS*(1.0 + altSurfElev)));
   // CAMERA MOVE-STEP. NO ELEVATION SLOWDOWN (user 2026-06-05: 'get rid of the camera slowdown code').
   // The step scales with altitude-above-surface ONLY so the scene still moves at orbit (a constant step
@@ -522,14 +522,12 @@ function frameLoop(){
   // a height above an inflated reference -> the eye was really ground+margin+2m, not 2m.) The mirror
   // fallback keeps a small +3m only because the CPU jsBroadShape can under-predict vs the GPU.
   if (gpuM != null && isFinite(gpuM)) {
-    renderedM = Math.max(0, gpuM);   // GPU-exact rendered height; no margin
+    renderedM = gpuM;   // GPU-exact rendered height (may be negative = seabed)
   } else {
-    renderedM = Math.max(0, jsBroadShape(cam.pos[0], cam.pos[1], cam.pos[2])) + 3.0;  // mirror fallback (CPU under-predicts)
+    renderedM = jsBroadShape(cam.pos[0], cam.pos[1], cam.pos[2]) + 3.0;  // mirror fallback (CPU under-predicts)
   }
-  // cap = composeHeight's true ceiling CMAX=15000 (terrain.glsl:448), NOT 11000: the GPU probe
-  // renderedM is honest up to 15km, but re-capping at 11000 before minR let the camera floor sit
-  // BELOW visible 11-15km peaks -> tunnel through the rendered geometry (collision-elev-margin, wb4syopmo).
-  const surfElev = Math.max(0.0, Math.min(renderedM, 15000.0)) / WEBGL2_TERRAIN_R_M;  // fraction of R (match CMAX)
+  // cap to composeHeight's CMAX=15000; allow negative for seabed
+  const surfElev = Math.min(renderedM, 15000.0) / WEBGL2_TERRAIN_R_M;
   const eyeHeight = 2.0 / WEBGL2_M_PER_UNIT;   // EXACTLY 2.0 m above ground (km-units = 2m / m-per-unit)
   const minR = RADIUS * (1.0 + surfElev) + eyeHeight;
   if (r < minR) { const s = minR/r; cam.pos[0]*=s; cam.pos[1]*=s; cam.pos[2]*=s; }
@@ -537,7 +535,7 @@ function frameLoop(){
   if (r > maxR) { const s = maxR/r; cam.pos[0]*=s; cam.pos[1]*=s; cam.pos[2]*=s; }
 
   // height of the eye above the local ground, in metres (for the HUD readout).
-  const heightAboveGroundM = (Math.hypot(...cam.pos) - RADIUS*(1.0 + Math.max(0,surfElev))) * 1000;
+  const heightAboveGroundM = (Math.hypot(...cam.pos) - RADIUS*(1.0 + surfElev)) * 1000;
   window.__altM = heightAboveGroundM;
 
   // The camera (autopilot + free-fly + clamp) has now been fully updated this frame,

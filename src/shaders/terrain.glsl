@@ -206,6 +206,7 @@ uniform float uVertexAO;                   // per-vertex shading/AO strength lev
 // blended over the seabed). One program + a uniform flag = no second cold compile, no duplicated
 // per-frame uniform churn, and the branch is uniform-coherent (free on the GPU).
 uniform float uIsWater;                    // 0 = terrain pass, 1 = water-surface pass
+uniform float uUnderwater;                 // 0 = camera above water, 1 = camera below sea level
 uniform float uBeachTopM;                  // beach ceiling (m): below this, grass/snow yield to sand (window.__beachTop; 30 default)
 uniform float uHiFreqCut;                  // hi-freq elevation-noise attenuation, applied to ALL hi-freq sources:
                                            // broadShapeM/MD fine octaves (o>=6) + vtxDisplace micro-relief
@@ -1452,6 +1453,34 @@ void main() {
     // none of the terrain material/atmosphere work below runs for water fragments.
     if (uIsWater > 0.5) {
         if (vH > 1.0) discard;                       // surface under land: depth test culls it anyway; discard kills shoreline shimmer
+        // UNDERWATER WATER SURFACE (camera below sea level): render the surface from below as
+        // opaque deep blue with Gerstner wave animation. No sky reflection, no Fresnel (TIR from
+        // below = mostly opaque deep water), no Beer-Lambert (there is no seabed above the camera).
+        if (uUnderwater > 0.5) {
+            highp vec3 wOriginW = floor(camWorld / 1024.0) * 1024.0;
+            highp vec2 wpW = vec2(dot(vWorld - wOriginW, ux), dot(vWorld - wOriginW, uy));
+            vec2 slopeW = oceanWaveSlope(wpW, oceanTime);
+            highp float wDistW = length(camWorld - vWorld);
+            slopeW *= clamp(1.0 - wDistW / 4000.0, 0.0, 1.0);
+            vec3 wn = normalize(uz - ux * slopeW.x - uy * slopeW.y);
+            vec3 viewW = normalize(camWorld - vWorld);
+            float ndl = max(dot(wn, sunDir), 0.0);
+            // Sunlight attenuated through the water column; deep blue ambient
+            float depthAtten = exp(-max(0.0, terrainR - length(camWorld)) * 0.0005);
+            vec3 sunUnder = vec3(1.0, 0.6, 0.3) * depthAtten * ndl;
+            vec3 deepBlue = vec3(0.005, 0.06, 0.18);
+            vec3 waveBright = vec3(0.0, 0.02, 0.06) * length(slopeW);
+            vec3 wcol = deepBlue + sunUnder * 0.4 + waveBright;
+            float macroMuW = dot(uz, sunDir);
+            float dayShadeW = mix(uNightFloor, 1.0, smoothstep(-uTermWidth, uTermWidth, macroMuW));
+            vec3 cW = wcol * dayShadeW * uExposure;
+            vec3 mappedW = clamp((cW * (2.51 * cW + 0.03)) / (cW * (2.43 * cW + 0.59) + 0.14), 0.0, 1.0);
+            float lumW = dot(mappedW, vec3(0.2126, 0.7152, 0.0722));
+            mappedW = mix(vec3(lumW), mappedW, uLookSat);
+            mappedW = clamp((mappedW - 0.5) * uLookContrast + 0.5, 0.0, 1.0);
+            fragColor = vec4(pow(mappedW, vec3(1.0 / 2.2)), 1.0);
+            return;
+        }
         highp float depthM = max(-vH, 0.0);
         highp vec3 wOriginW = floor(camWorld / 1024.0) * 1024.0;   // snapped anchor (fp32 wave-phase fix, same as the old branch)
         highp vec2 wpW = vec2(dot(vWorld - wOriginW, ux), dot(vWorld - wOriginW, uy));
@@ -1840,7 +1869,18 @@ void main() {
     // blended over this seabed. Sea ice still keys the seabed albedo near the poles.
 
     vec3 skyIrr;
-    vec3 sunIrr = atm_sunSkyIrradiance(pAtm, nAtm, sunDir, skyIrr);
+    vec3 sunIrr;
+    if (uUnderwater > 0.5) {
+        // Underwater terrain (seabed): sun attenuated through water column, blue ambient, no
+        // atmospheric Rayleigh/Mie scattering. Sun colour shifts toward green-blue with depth.
+        float depth = max(0.0, terrainR - length(camWorld));
+        float atten = exp(-depth * 0.0004);
+        float ndl = max(dot(nAtm, sunDir), 0.0);
+        sunIrr = vec3(1.0, 0.65, 0.35) * atten * ndl * 0.7;
+        skyIrr = vec3(0.02, 0.07, 0.18);
+    } else {
+        sunIrr = atm_sunSkyIrradiance(pAtm, nAtm, sunDir, skyIrr);
+    }
     // The Rayleigh sky irradiance is strongly blue; at full strength it tints the lit
     // CONTINENTS blue-grey from orbit (witnessed: lit mean [83,95,112] vs warm albedo
     // [90,83,74] at 2000km -- the blue is the sky-irradiance term, NOT aerial inscatter).
@@ -1986,6 +2026,20 @@ void main() {
             hazed += uTerminatorGlow * graze * termDay * vec3(1.0, 0.55, 0.34) * apGate;
             color = mix(lit, hazed, apGate * uHazeMul);   // uHazeMul lever (2026-06-10 'pale hazy': full-strength haze milked the midground)
         }
+    }
+    // UNDERWATER FOG (camera below sea level): replace the air-based Aerial Perspective with
+    // absorption/scattering through water. Fog colour deepens with camera depth so the seabed
+    // fades to blue-green with distance, red absorbed first. Applied only to terrain (uIsWater<0.5).
+    if (uUnderwater > 0.5 && uIsWater < 0.5) {
+        highp vec3 camA  = atmPos(camWorld, terrainR);
+        highp vec3 segKm = pAtm - camA;
+        highp float dKm  = length(segKm);
+        float depth = max(0.0, terrainR - length(camWorld));
+        // Water absorption coefficients (per km): red attenuates fastest, blue slowest.
+        vec3 absorb = vec3(4.0, 0.8, 0.3) * (1.0 + depth * 0.0003);
+        vec3 uwTrans = exp(-absorb * dKm);
+        vec3 uwFog = vec3(0.002, 0.06, 0.16) + vec3(0.0, 0.02, 0.04) * depth / 1000.0;
+        color = mix(color * uwTrans + uwFog * (1.0 - uwTrans), uwFog, smoothstep(50.0, 500.0, dKm * 1000.0));
     }
     // RIVERS post-lighting (witnessed browser-2115/2118: the river-blue in ALBEDO is multiplied
     // by the warm sun irradiance (sunIrr.b is low) so land rivers lose their blue in the lit

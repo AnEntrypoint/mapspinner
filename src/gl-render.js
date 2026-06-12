@@ -870,6 +870,10 @@ export async function initMapspinnerRender(gl, opts = {}) {
       gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 4, gl.FLOAT, false, STRIDE, 0);          gl.vertexAttribDivisor(1, 1);  // iOffset
       gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 1, gl.FLOAT, false, STRIDE, 4 * 4);      gl.vertexAttribDivisor(2, 1);  // iFace
       gl.uniform1f(U('uIsWater'), 0.0);
+      // UNDERWATER DETECTION: camera below sea level enables underwater shading + water surface
+      // rendering from below. Set before the terrain draw so the FS can apply underwater fog.
+      const _uw = camDist < R - 2.0;
+      gl.uniform1f(U('uUnderwater'), _uw ? 1.0 : 0.0);
       gl.drawElementsInstanced(gl.TRIANGLES, indices.length, gl.UNSIGNED_INT, 0, n);
       // SEPARATE WATER SURFACE (user 2026-06-11): second instanced draw with uIsWater=1 -- the VS
       // pins the mesh to sea level, the FS shades animated water and alpha-blends it over the
@@ -901,9 +905,14 @@ export async function initMapspinnerRender(gl, opts = {}) {
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(wl), gl.DYNAMIC_DRAW);
         gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 4, gl.FLOAT, false, STRIDE, 0);     gl.vertexAttribDivisor(1, 1);
         gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 1, gl.FLOAT, false, STRIDE, 4 * 4); gl.vertexAttribDivisor(2, 1);
-        gl.enable(gl.BLEND);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-        gl.depthMask(false);
+        if (_uw) {
+          gl.disable(gl.BLEND);
+          gl.depthMask(true);
+        } else {
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+          gl.depthMask(false);
+        }
         gl.uniform1f(U('uIsWater'), 1.0);
         gl.drawElementsInstanced(gl.TRIANGLES, indices.length, gl.UNSIGNED_INT, 0, wn);
         gl.uniform1f(U('uIsWater'), 0.0);
