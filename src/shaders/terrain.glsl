@@ -1608,7 +1608,8 @@ void main() {
     vec3 texDn = vec3(0.0);   // photo-texture WORLD-SPACE normal perturbation, applied after uReliefShade
     // SPLAT RUNS UNDERWATER TOO (user 2026-06-11 'continue under water as sand and rock'): the old
     // vH > -2 gate cut the photo textures at the waterline, leaving the seabed flat-colored.
-    if (uHasSurfTex > 0.5 && uTexMix > 0.001) {
+    float texFarFade = 1.0 - smoothstep(8000.0, 10000.0, pxWorld);
+    if (uHasSurfTex > 0.5 && uTexMix > 0.001 && texFarFade > 0.001) {
         // material weights from the existing gates (climate = vClimate: z=temp, w=humid)
         // SAND GATE = THE MACRO DESERT GATE (user 2026-06-11 'all the grassy areas need to have the
         // grass texture'): the old humid<0.42 band splatted SAND across savanna/steppe/meadow-edge
@@ -1695,7 +1696,7 @@ void main() {
             texAlb = mix(albB, albA, bSharp);
             texNrm = mix(nrmB, nrmA, bSharp);
         }
-        float k = uTexMix;
+        float k = uTexMix * texFarFade;
         // macro-tinted detail (user 2026-06-10 'the textured patch must be tinted to the same shade
         // as the spot its replacing'): the texture contributes STRUCTURE + relative chroma only,
         // luminance-normalized onto the macro biome/climate color, so the splat never shifts the
