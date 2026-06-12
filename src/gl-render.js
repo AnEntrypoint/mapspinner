@@ -799,7 +799,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(U('uTexTileM'),   _g('texTile', 2400.0));  // metres per repeat (user: 24m read as noise/rock -- 100x bigger)
     gl.uniform1f(U('uTexNrmK'),    _g('texNrmK', 1.5));     // 0.8 -> 3.0 (user 2026-06-11 'displacement normals must be THE texture normals'), 3.0->1.5 (2026-06-13 'texture displacement far too obvious vs elevation')
     gl.uniform1f(U('uTexMix'),     _g('texMix', 0.85));     // splat blend amount (0 = off)
-    gl.uniform1f(U('uTexWarp'),    _g('texWarp', 0.325));   // anti-repetition warp amplitude (+30% from 0.25, grass needed more visible warping)
+    gl.uniform1f(U('uTexWarp'),    _g('texWarp', 0.23));    // anti-repetition warp amplitude (-30% from 0.325, grass warp too intense)
     gl.uniform1f(U('uTexPhoto'),   _g('texPhoto', 0.0));    // raw photo-color fraction (0 = patch matches the macro shade exactly)
     gl.uniform1f(U('uTexPhotoNear'), _g('texPhotoNear', 0.45));  // near-field material identity (photo hue at macro luminance; user 2026-06-12 'must be either grass or sand')
     gl.uniform4f(U('uSurfMeanL'), _surfMeanL[0], _surfMeanL[1], _surfMeanL[2], _surfMeanL[3]);   // per-layer mean linear luminance (shade-match divisor)
