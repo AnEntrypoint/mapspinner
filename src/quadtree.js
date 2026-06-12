@@ -91,7 +91,7 @@ export class Quadtree {
     // 20km). Shrinking the penalty-free near radius lets the far-LOD falloff coarsen MORE of the
     // off-screen / past-horizon field, cutting peak visible leaves toward ~600-900 (precondition
     // for the 512 layer cap). These are THE only values -- no device tier.
-    const near = Math.max(this._camAlt * 2.0, horizon * 0.4, 20000.0);
+    const near = Math.max(this._camAlt * 2.0, horizon * 0.2, 10000.0);
     // floor 0.5 (was 0.18): past the horizon the split may HALVE, not crush to ~1/5 (which was
     // collapsing near-field detail on descent). Foreground (latC<near) stays fall=1 -> full LOD.
     const fall = 1.0 / (1.0 + Math.max(0.0, latC - near) / near);
