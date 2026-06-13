@@ -1339,7 +1339,8 @@ vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, flo
     // must stop and become sand, which continues under the water'): below uBeachTopM the biome/
     // grass/snow color yields to shore sand (the same bcShore the underwater bed starts from, so the
     // material is continuous through the waterline). Steep coastal cliffs keep their rock.
-    float beachM = (1.0 - smoothstep(uBeachTopM * 0.6, uBeachTopM, h))
+    // WIDENED TRANSITION (2026-06-13): 0.6->0.3 softens the grass-sand boundary from 12m to 21m.
+    float beachM = (1.0 - smoothstep(uBeachTopM * 0.3, uBeachTopM, h))
                  * (1.0 - smoothstep(slopeRock.x, slopeRock.y, rockSlope));
     c = mix(c, bcShore, beachM);
     // INLAND WATER -- COLOUR GATED BY THE CARVE FIELD (alignment + no-fade fix, browser-2705/2699).
@@ -1662,18 +1663,29 @@ void main() {
         float dryHot = smoothstep(0.60, 0.85, 1.0 - climate.w) * smoothstep(0.42, 0.62, climate.z);
         // BEACH (user 2026-06-10 'the beaches should be sand'): the shore profile eases over the
         // first ~60m of elevation, so low gentle land near sea level splats sand regardless of climate.
-        float beach = (1.0 - smoothstep(10.0, 80.0, vH)) * (1.0 - smoothstep(0.22, 0.42, slope));
+        // NOISE-VARIED THRESHOLDS (2026-06-13): vTexWarp.x adds an irregular wavy line so the sand
+        // doesn't follow a strict elevation contour — reads as a natural beach, not a cut.
+        float _bn = vTexWarp.x * 0.5;
+        float beach = (1.0 - smoothstep(10.0 + _bn * 30.0, 80.0 + _bn * 50.0, vH))
+                    * (1.0 - smoothstep(0.15 + _bn * 0.08, 0.35 + _bn * 0.12, slope));
+        // SAND BLEED (2026-06-13): patchy sand spills above the main beach line, modulated by VS
+        // warp noise so the edge reads as wind-blown pockets, not a strict elevation cut. At peak it
+        // adds ~0.3 sand weight far above the beach, creating a natural dappled transition.
+        float sandBleed = max(0.0, vTexWarp.y) * 0.35 * max(0.0, 1.0 - smoothstep(30.0, 200.0, vH));
         // SAND REGIONS SUPPRESS ROCK (user 2026-06-10 'rock being used instead of sand'): in
         // deserts/dunes/beaches sand drapes moderate slopes; rock only wins on genuinely steep faces
         // there (gate shifted toward 0.5-0.7 inside sand regions instead of slopeRock 0.28-0.55).
-        float sandRegion = clamp(max(max(dryHot, beach), smoothstep(0.0, 0.25, vDuneCrest)), 0.0, 1.0);
+        float sandRegion = clamp(max(max(dryHot, max(beach, sandBleed)), smoothstep(0.0, 0.25, vDuneCrest)), 0.0, 1.0);
         // SPLAT ROCK GATE DECOUPLED from the macro slopeRock (user 2026-06-11 'a lot of grass turning
         // into rocky patches again'): the user-calibrated global soft blend slopeRock [-0.6,1] puts
         // ~37% ROCK LAYER weight on perfectly flat ground, and the displacement-sharpened top-2
         // crossfade then flips whole displacement blobs to the rock PHOTO on grassland. The macro
         // color blend keeps the calibrated tone; the rock TEXTURE layer needs real slope: floor the
         // splat gate at 0.18 so flat/gentle land splats grass, rock starts on genuine slopes.
-        float srLo = max(slopeRock.x, 0.18), srHi = max(slopeRock.y, srLo + 0.2);
+        // WIDENED TRANSITION (2026-06-13): srLo+0.2 -> srLo+0.4 so rock/grass and rock/sand/snow
+        // boundaries have a wider blend band — the slope gradient between materials is no longer
+        // a ~0.2-unit hard step but a ~0.4-unit gradual fade.
+        float srLo = max(slopeRock.x, 0.18), srHi = max(slopeRock.y, srLo + 0.4);
         float wRock = smoothstep(mix(srLo, 0.50, sandRegion), mix(srHi, 0.70, sandRegion), rockSlope);
         float snowHi   = smoothstep(snowEdges.x, snowEdges.y, vH);
         float snowCold = (1.0 - smoothstep(0.30, 0.75, climate.z)) * smoothstep(snowEdges.x * 0.5, snowEdges.x, vH);
@@ -1686,13 +1698,14 @@ void main() {
                                         - 0.18 * (abs(lat2) / 1.5708) * uBiomeBandBias, 0.0, 1.0);
         float iceClimate = (1.0 - smoothstep(0.10, 0.20, tempEff2)) * step(0.0, vH);   // no snow layer on the seabed
         float wSnow = clamp(snowHi + 0.7 * snowCold + iceClimate, 0.0, 1.0) * (1.0 - 0.6 * wRock);
-        float wSand = sandRegion * (1.0 - wRock) * (1.0 - wSnow) * (1.0 - smoothstep(0.40, 0.60, slope));
+        float wSand = sandRegion * (1.0 - wRock) * (1.0 - wSnow) * (1.0 - smoothstep(0.30, 0.70, slope));
         float wGrass = max(1.0 - wRock - wSnow - wSand, 0.0);
         vec4 w4 = vec4(wGrass, wRock, wSand, wSnow);   // layers 0..3 = grass,rock,sand,snow
         // BEACH BAND + UNDERWATER in one mask (user 2026-06-11): sand owns everything below the
         // beach ceiling uBeachTopM -- grass/snow weight folds into sand continuously through h=0 to
         // the seabed, so no vegetation can ever splat at or below the waterline (structural).
-        float uwM = 1.0 - smoothstep(uBeachTopM * 0.6, uBeachTopM, vH);
+        // WIDENED (2026-06-13): 0.6->0.3 to match the macro beach transition, softer fade-out.
+        float uwM = 1.0 - smoothstep(uBeachTopM * 0.3, uBeachTopM, vH);
         w4.z += (w4.x + w4.w) * uwM; w4.x *= 1.0 - uwM; w4.w *= 1.0 - uwM;
         w4 /= (w4.x + w4.y + w4.z + w4.w + 1e-4);
         // top-2 layer pick: 4-way blending would cost 24 taps; the gates are spatially near-exclusive,
@@ -1734,7 +1747,10 @@ void main() {
             // displacement term 0.8 -> 0.3 (user 2026-06-11 'still see bowls of rock texture'):
             // 0.8 still let the displacement photo's bowl-shaped blobs flip whole patches to rock
             // inside the transition band; 0.3 only feathers the seam edge.
-            float bSharp = clamp((bAB * 2.0 - 1.0) * 3.0 + (albA.a - albB.a) * 0.3 + 0.5, 0.0, 1.0);
+            // SOFTENED (2026-06-13): transition sharpening reduced 3->1 so grass/rock/sand/snow
+            // boundaries hold a natural blend band instead of a hard die-cut line. The 1.0 slope
+            // still prefers the dominant layer but leaves a visible transition zone.
+            float bSharp = clamp((bAB * 2.0 - 1.0) * 1.0 + (albA.a - albB.a) * 0.3 + 0.5, 0.0, 1.0);
             texAlb = mix(albB, albA, bSharp);
             texNrm = mix(nrmB, nrmA, bSharp);
         }
