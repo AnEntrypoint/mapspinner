@@ -1850,7 +1850,16 @@ void main() {
     // GENTLE-SLOPE RELIEF SHADING (user 2026-06-10 'even gentle slopes shaded so terrain elevation
     // is obvious'): exaggerate the tangential tilt of the LIT normal only -- the material gates keep
     // the true geometric n, so placement is unchanged; lighting contrast on rolling ground increases.
-    if (vH > -2.0 && uReliefShade > 1.0) nLit = normalize(uz + (nLit - uz) * uReliefShade);
+    if (vH > -2.0 && uReliefShade > 1.0) {
+      // SCREEN-SPACE HEIGHT GRADIENT relief shading: dFdx/dFdy of the world height gives a
+      // direct per-pixel slope signal that works even when the analytic normal nLit≈uz (gentle
+      // rolling ground). The gradient is normalised by fwidth(vH) so amplitude is view-distance
+      // invariant, then blended with the classic uz-exaggeration formula. Without this term,
+      // nLit = normalize(uz + (nLit-uz)*k) is identity on flat ground because nLit-uz ≈ 0.
+      highp vec2 hGrad = vec2(dFdx(vH), dFdy(vH));
+      highp float hMag = max(fwidth(vH), 0.1);
+      nLit = normalize(uz + (nLit - uz) * uReliefShade + vec3(-hGrad.x/hMag, -hGrad.y/hMag, 0.0) * 0.3);
+    }
     // photo-texture detail normal at its calibrated amplitude, OUTSIDE the relief exaggeration.
     // ADDED in world space (the old `- ux*dn.x - uy*dn.y` subtracted an already-negated Sobel
     // normal in a frame the triplanar RG was never expressed in -- the fundamental both-at-once

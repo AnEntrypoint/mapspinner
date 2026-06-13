@@ -632,7 +632,11 @@ export async function initMapspinnerRender(gl, opts = {}) {
     const alt = Math.max(0.0, camDist - R);
     const horizon = Math.sqrt(Math.max(0.0, camDist*camDist - R*R));
     const near = Math.max(1.0, alt * 0.1);
-    const far  = Math.max(horizon * 1.5, alt * 8.0) + R * 0.25;
+    // ALTITUDE-BLENDED FAR PLANE: at low altitude (<1km) use the tighter horizon*1.5 for
+    // depth precision + GPU culling at the deck where FPS is worst; blend to full camDist
+    // at high altitude (>200km) so the full globe is visible. No +R*0.25 floor.
+    const _fBlend = Math.min(1.0, Math.max(0.0, (alt - 1000.0) / 200000.0));
+    const far  = Math.max(horizon * 1.5, alt * 8.0) * (1.0 - _fBlend) + camDist * _fBlend;
     const proj = M4.perspective(cam.fovy||0.785, aspect, near, far);
     const eye = cam.eye;
     const viewRel = M4.lookAt([0,0,0], [cam.center[0]-eye[0], cam.center[1]-eye[1], cam.center[2]-eye[2]], cam.up||[0,1,0]);
@@ -661,7 +665,8 @@ export async function initMapspinnerRender(gl, opts = {}) {
     const alt = Math.max(0.0, camDist - R);
     const horizon = Math.sqrt(Math.max(0.0, camDist*camDist - R*R));
     const near = Math.max(1.0, alt * 0.1);
-    const far  = Math.max(horizon * 1.5, alt * 8.0) + R * 0.25;
+    const _fBlend = Math.min(1.0, Math.max(0.0, (alt - 1000.0) / 200000.0));
+    const far  = Math.max(horizon * 1.5, alt * 8.0) * (1.0 - _fBlend) + camDist * _fBlend;
     const proj = M4.perspective(cam.fovy||0.785, aspect, near, far);
     const view = M4.lookAt(cam.eye, cam.center, cam.up||[0,1,0]);
     const viewProj = M4.mul(proj, view);
@@ -922,8 +927,10 @@ export async function initMapspinnerRender(gl, opts = {}) {
       }
     }
     if (typeof window !== 'undefined') window.__lastDrawCalls = (n > 0) ? 2 : 0;
-    return gl.getError();
+    return 0;   // glError is checked via checkGlError() once per frame after quadtree (CPU/GPU pipelining)
   }
+
+  function checkGlError() { return gl.getError(); }
 
   // ---- DEBUG PROBE: replicate the VS clip-space transform on the CPU for a quad's 4
   // corners (vertex.xy in {0,1}^2) so we can see which quads project off-screen.
@@ -956,5 +963,5 @@ export async function initMapspinnerRender(gl, opts = {}) {
     return out;
   }
   function setHpf(tex, res, tex2) { _hpfTex = tex; _hpfRes = res|0; _hpfTex2 = tex2 || null; }   // tex2 = RG8(temp,humid) pack (W12)
-  return { get prog(){ return prog; }, render, probe, sampleGroundM, cullMatrix, recompile, setHpf, GRID, indexCount: indices.length, M4 };
+  return { get prog(){ return prog; }, render, checkGlError, probe, sampleGroundM, cullMatrix, recompile, setHpf, GRID, indexCount: indices.length, M4 };
 }

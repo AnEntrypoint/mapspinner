@@ -360,6 +360,7 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
   // there are no tiles to make resident, generate, or evict. _frameCache stays for the
   // static-camera re-render PERF path. frameStart kept (the render loop still references it).
   let _frameCache = null;
+  let _pipelineQuads = null;   // pre-computed quads from last frame for draw-before-compute pipelining
   let frameStart = 0;
 
   // ---- per-frame quadtree drive --------------------------------------------------
@@ -400,7 +401,8 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
       || displayMode !== c.displayMode;
     if (!moved) {
       const cam2 = { eye: camWorldPos, center: camTarget, up: camUp, fovy, displayMode };
-      const glError = render.render(c.quads, cam2, sun, time);
+      render.render(c.quads, cam2, sun, time);
+      const glError = render.checkGlError();
       // Phase 2 fix: also re-draw vegetation on STATIC frames (the GPU instance buffer is
       // still valid from the last rebuild). Without this, trees vanished whenever the
       // camera held still (the static branch returned before the veg draw).
@@ -671,8 +673,13 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
     // (5km), leaving 1968 quads with wastedFrac 0.87 (browser-5). Lower the guard to a tiny
     // epsilon above the surface; the slack term already keeps any limb-straddling quad.
     // (Eye exactly at/under the surface is degenerate -- cosHorizon would be >=1 -- so skip.)
+    // SCALED SLACK (2026-06-13): at low altitude the fixed CULL_MAX_ELEV=12km slack let all
+    // back-face quads through when the limb cull was disabled by the 127m guard; scale the
+    // elevation slack by altitude so the cull tightens naturally near the ground.
+    const altM = Math.max(0.0, camDist - R);
+    const elSlack = Math.min(CULL_MAX_ELEV, 200.0 + altM * 0.5);
     const limbCullActive = (typeof window !== 'undefined' && window.__limbCull != null ? !!window.__limbCull : true)
-      && camDist > R * 1.00002;
+      && altM > 2.0;
     for (let face = 0; face < 6; face++) {
       // LOD drive uses lodRefPos (aim-shifted, altitude preserved) so deepest LOD follows the
       // look point; the quad record keeps the TRUE-camera localCam (for the VS geomorph
@@ -711,7 +718,7 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
           // (browser-4726 wastedFrac 0.55) = the close-approach FPS sink. A quad above this tight
           // horizon is genuinely visible (kept); a quad below it is kept ONLY by the forward-cone
           // rescue, so sideways/backside near-horizon rings are culled.
-          const slack = CULL_MAX_ELEV / R + (l / R);
+          const slack = elSlack / R + (l / R);
           if (dotOut < cosHorizon - slack) {
             // FRUSTUM RESCUE (user 2026-06-05: 'culling nearby quads unnecessarily making land
             // disappear'). The old forward-CONE rescue used a fixed ~53deg half-angle cone
@@ -759,9 +766,22 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
       }
     }
 
-    // render the combined visible leaf set across all faces.
+    // ===== CPU/GPU PIPELINING: draw-before-compute =====
+    // Phase 1 (GPU): draw cached quads from LAST frame's camera IMMEDIATELY so the GPU
+    // starts processing while the CPU computes THIS frame's quadtree. render.render()
+    // issues draw commands without gl.getError() so the GPU pipeline is not stalled.
+    // Phase 2 (CPU): the 6-face loop above already populated `quads` — this overlaps
+    // with GPU rendering of Phase 1. Phase 3: first frame (no cache) draws after compute.
+    // glError is checked via render.checkGlError() after Phase 2 for diagnostics.
     const cam = { eye: camWorldPos, center: camTarget, up: camUp, fovy, displayMode };
-    const glError = render.render(quads, cam, sun, time);
+    if (_pipelineQuads) {
+      render.render(_pipelineQuads, cam, sun, time);
+    }
+    if (!_pipelineQuads) {
+      render.render(quads, cam, sun, time);
+    }
+    const glError = render.checkGlError();   // sync probe after quadtree CPU work
+    _pipelineQuads = quads;
     // CULL DEBUG stats for the live HUD: kept/culled counts + the false-cull signature
     // (culledOnScreen = frustum-culled quads that actually project inside the screen) + whether
     // this was a REBUILD frame (cull ran) vs a cached re-render. Read by planet.html's __cullHud.
