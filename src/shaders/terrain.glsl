@@ -208,6 +208,7 @@ uniform float uVertexAO;                   // per-vertex shading/AO strength lev
 uniform float uIsWater;                    // 0 = terrain pass, 1 = water-surface pass
 uniform float uUnderwater;                 // 0 = camera above water, 1 = camera below sea level
 uniform float uBeachTopM;                  // beach ceiling (m): below this, grass/snow yield to sand (window.__beachTop; 30 default)
+uniform float uBeachShelfM;                // land coastal-shelf top (m): h<this is eased (h*h/S) so the coast rises gently from the waterline = wide beach (window.__beachShelf; 300 default). GEOMETRY (composeHeight+vH).
 uniform float uHiFreqCut;                  // hi-freq elevation-noise attenuation, applied to ALL hi-freq sources:
                                            // broadShapeM/MD fine octaves (o>=6) + vtxDisplace micro-relief
                                            // (window.__hiFreqCut; default 0.25 = the user's 4x reduction, 2026-06-06)
@@ -450,10 +451,10 @@ highp float broadShapeM(vec3 dir, float reliefMul, float ridgeMul){   // W7: ret
       int pkOcts = (uPeakOcts > 0) ? uPeakOcts : 3;
       for (int o = 0; o < pkOcts; o++) {
         ps += pa * (1.0 - abs(snoise3(d * pf + vec3(3.3, 7.7, 1.1))));
-        pn += pa; pa *= 0.65; pf *= 2.4;   // 2.13->2.4: octaves spread to finer crests = more sub-ridges (user 2026-06-14)
+        pn += pa; pa *= 0.65; pf *= 2.13;
       }
       float crest = ps / pn;
-      sum += base * pow(crest, 3.5) * 8400.0 * mtnAmp;   // pow 4.5->3.5 (user 2026-06-14: broader rugged shoulders engage more of the massif = rock spires not rolling swell); amp 8400 kept
+      sum += base * pow(crest, 4.5) * 8400.0 * mtnAmp;   // pow 4.5: sharp steep peaks that engage the rock-face slope gate (3.5 rounded them flat -- user 2026-06-14 regression revert)
     }
   }
   // SOFT ELEVATION CEILING (mob-w8-ceiling 2026-06-08: 'peaks come to points, no flat plateau'). Even at
@@ -545,7 +546,7 @@ float vtxDisplace(highp vec2 fp, float tileM, float rugged){   // W7: fp = face-
   float mtnGate = smoothstep(0.30, 0.70, rugged);   // ramps in as soon as the massif lifts so ALL mountains get erosive perlin (user 2026-06-14); was (0.40,0.85)
   float eros = 0.0;   // mountain erosive relief, kept SEPARATE from the uHiFreqCut trim (see return)
   if (mtnGate > 0.0) {
-    float ea = 4.0, ewl = 1920.0, esumF = 0.0, esumR = 0.0;   // ewl 2880->1920 = sharper ravine grain at the deck. Decoupled from uHiFreqCut so 4.0 lands full-strength (was 6.0*0.25=1.5m effective).
+    float ea = 8.0, ewl = 1440.0, esumF = 0.0, esumR = 0.0;   // ea 4->8 + ewl 1920->1440: stronger, sharper rugged ravine relief so mountains read ROCKY (engage the rockSlope gate), not round/smooth (user 2026-06-14). Decoupled from uHiFreqCut so it lands full-strength.
     int veOcts = (uVtxErodeOcts > 0) ? uVtxErodeOcts : 4;
     for (int o = 0; o < veOcts; o++) {
       float en = vnoise2(fp / ewl);
@@ -624,6 +625,15 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){   // W7
       highp float d = -h;
       h = -(min(d, 500.0) * 0.24 + max(d - 500.0, 0.0) * 1.19);
       h = max(h, -11000.0);   // cap depth at Mariana Trench (~11km)
+  } else {
+      // LAND COASTAL SHELF (user 2026-06-14: 'beaches not wide enough'): the underwater shelf above
+      // gives a gentle seabed; mirror it on the LAND side so the coast rises GENTLY from the waterline
+      // = a wide beach. h*h/S is flat at the waterline (derivative 0) and identity at h=S, so high land
+      // is unchanged (no drowning) and only the low coastal band is stretched horizontally. Pure fn of
+      // the field -> seam-safe + the collision probe shares it. GUARD: a stale/unset uniform (0) would
+      // disable the shelf -> default 600 so it always applies. window.__beachShelf dials S live.
+      highp float bShelf = uBeachShelfM > 1.0 ? uBeachShelfM : 600.0;
+      if (h < bShelf) h = h * h / bShelf;
   }
   // displacement now continues UNDERWATER (the old land-only gate served the flat-clamped ocean,
   // gone since 026d530): the seabed carries the same micro-relief as land = realistic continuation.
@@ -817,6 +827,9 @@ void main() {
         highp float dSea = -vH;
         vH = -(min(dSea, 500.0) * 0.24 + max(dSea - 500.0, 0.0) * 1.19);
         vH = max(vH, -11000.0);   // cap depth at Mariana Trench (~11km)
+    } else {
+        highp float bShelf = uBeachShelfM > 1.0 ? uBeachShelfM : 600.0;   // LAND COASTAL SHELF -- mirror composeHeight exactly (wide beach, user 2026-06-14); guard stale/unset uniform
+        if (vH < bShelf) vH = vH * vH / bShelf;
     }
     vH += vDisp;
     vH += detailFbm(dir0) * uDetailOverlay * 30.0 * step(0.0, vH);
@@ -929,35 +942,36 @@ void main() {
     // VERTEX NORMALS: interior vertices use the mesh-based edge cross product (ordinary
     // face normals). Tile-edge vertices use the tangent-frame finite difference so both
     // sides of a seam share the same dir0/tangent frame -> consistent normals, no row artifact.
-    float gridDu = (uGrid > 0.0) ? (1.0 / uGrid) : (1.0 / 16.0);
-    bool bInterior = (vertex.x > gridDu && vertex.x < 1.0 - gridDu && vertex.y > gridDu && vertex.y < 1.0 - gridDu);
-    vec3 refAxisN = (abs(dir0.y) < 0.99) ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
-    vec3 uxN = normalize(cross(refAxisN, dir0));
-    vec3 uyN = cross(dir0, uxN);
-    highp float nStepFD = (uNrmStepM > 0.0) ? uNrmStepM : 150.0;
-    highp float hN0 = 0.0, hN1 = 0.0, hN2 = 0.0;
-    highp vec3 dN1 = dir0, dN2 = dir0;
+    highp float hN0 = 0.0;
+    highp vec3 vN = dir0;
     if (uIsWater < 0.5) {
-        int fdIters = (uGrid >= 0.0) ? 3 : 1;   // FXC-DEFEAT (do NOT make constant 3): uGrid is a uniform so this bound is runtime-valued -> FXC cannot unroll/split the 3 composeHeight FD taps into divergent per-callsite copies (the rocks-everywhere triad). Same defeat class as uOctMax/uNrmStepM.
+        hN0 = composeHeight(dir0, faceLocal, defOffset.z);   // center = the geometry height h
+        // VERTEX NORMAL = CENTRAL DIFFERENCE in PARAMETRIC MESH SPACE over the FULL composeHeight (2026-06-14
+        // jagged-normal fix). Two earlier methods both jagged: (a) interior FORWARD mesh-cell cross product
+        // = each vertex got its forward triangle's FACE normal (faceted) at a vertex-spacing step (noisy);
+        // (b) the tangent-frame FD passed the SAME faceLocal to every tap, so vtxDisplace CANCELLED in the
+        // differences -> the normal ignored the bumps the geometry has -> smooth normal on a bumpy mesh =
+        // facets show through. THIS evaluates the full field (incl vtxDisplace) at +/-du/+/-dv in parametric
+        // space (faceWarp gives BOTH the dir and faceLocal at each offset, so vtxDisplace varies correctly)
+        // and takes a CENTRAL (symmetric) world-space cross product = smooth AND matches the displaced
+        // surface. ONE formula for every vert (no interior/edge split = no discontinuity); seam-safe because
+        // adjacent same-LOD tiles sample the identical world offsets (the field is a pure fn of world pos).
+        highp float duP = 1.5 / ((uGrid > 0.0) ? uGrid : 16.0);   // +/- ~1.5 mesh cells: smooth yet follows mesh relief
+        highp float hPU = 0.0, hMU = 0.0, hPV = 0.0, hMV = 0.0;
+        highp vec3 dPU = dir0, dMU = dir0, dPV = dir0, dMV = dir0;
+        int fdIters = (uGrid >= 0.0) ? 4 : 1;   // 4 offset taps; runtime-bounded (FXC unroll-defeat, see uOctMax)
         for (int i = 0; i < fdIters; i++) {
-            highp vec3 dd;
-            highp vec2 fl;
-            if (i == 0) {
-                dd = dir0;
-                fl = faceLocal;
-            } else if (bInterior) {
-                highp vec2 off = (i == 1) ? vec2(gridDu, 0.0) : vec2(0.0, gridDu);
-                highp vec2 npos = vertex.xy + off;
-                fl = faceWarp(npos * defOffset.z + defOffset.xy);
-                dd = normalize(defLocalToWorld * vec3(fl, defRadius));
-                if (i == 1) dN1 = dd; else dN2 = dd;
-            } else {
-                dd = normalize(dir0 + ((i == 1) ? uxN : uyN) * (nStepFD / defRadius));
-                fl = faceLocal;
-            }
-            highp float hi = composeHeight(dd, fl, defOffset.z);
-            if (i == 0) hN0 = hi; else if (i == 1) hN1 = hi; else hN2 = hi;
+            highp vec2 off = (i == 0) ? vec2(duP, 0.0) : (i == 1) ? vec2(-duP, 0.0) : (i == 2) ? vec2(0.0, duP) : vec2(0.0, -duP);
+            highp vec2 fl = faceWarp((vertex.xy + off) * defOffset.z + defOffset.xy);
+            highp vec3 dd = normalize(defLocalToWorld * vec3(fl, defRadius));
+            highp float hh = composeHeight(dd, fl, defOffset.z);
+            if (i == 0) { hPU = hh; dPU = dd; } else if (i == 1) { hMU = hh; dMU = dd; }
+            else if (i == 2) { hPV = hh; dPV = dd; } else { hMV = hh; dMV = dd; }
         }
+        highp vec3 wPU = dPU * (defRadius + hPU), wMU = dMU * (defRadius + hMU);
+        highp vec3 wPV = dPV * (defRadius + hPV), wMV = dMV * (defRadius + hMV);
+        vN = normalize(cross(wPU - wMU, wPV - wMV));
+        if (dot(vN, dir0) < 0.0) vN = -vN;   // keep it outward (terrain has no overhangs)
     }
     highp float h = hN0;
     // OCEAN TOP = A SEPARATE, ELEVATION-BASED SURFACE (user 2026-06-10: 'terrain should extend into
@@ -973,21 +987,8 @@ void main() {
     // and shades it as the animated ocean, alpha-blended over the seabed (depth test keeps it
     // behind land).
     highp float hR = (uIsWater > 0.5) ? 0.0 : h;
-    // VERTEX NORMALS: mesh-based cross product for interior (ordinary face normals);
-    // tangent-frame FD for tile-edge vertices (seam-consistent across tile boundaries).
-    if (uIsWater > 0.5) {
-        vNrm = dir0;   // water surface: radial normal; waves perturb it per-pixel in the FS
-    } else if (bInterior) {
-        highp float cSkirt = (vertex.z > 0.5) ? max(defOffset.z * 0.12, 60.0) : 0.0;
-        highp vec3 wC = dir0 * (R + hN0 - cSkirt);
-        highp vec3 wU = dN1 * (R + hN1);
-        highp vec3 wV = dN2 * (R + hN2);
-        vNrm = normalize(cross(wU - wC, wV - wC));
-    } else {
-        float dHduN = float(hN1 - hN0) / nStepFD;
-        float dHdvN = float(hN2 - hN0) / nStepFD;
-        vNrm = normalize(uxN * (-dHduN) + uyN * (-dHdvN) + dir0);
-    }
+    // VERTEX NORMAL: central-difference (computed above) for land; radial for water.
+    vNrm = (uIsWater > 0.5) ? dir0 : vN;
     // DIRECT per-vertex sphere projection (replaces the old corner-blend deform, which
     // bilinearly interpolated 4 deformed corners -> FLAT quad interior -> faceted at high GRID).
     // dir0 is THIS vertex's world direction (faceWarp'd, defLocalToWorld-mapped); place it on the
@@ -1668,9 +1669,16 @@ void main() {
         // first ~60m of elevation, so low gentle land near sea level splats sand regardless of climate.
         // NOISE-VARIED THRESHOLDS (2026-06-13): vTexWarp.x adds an irregular wavy line so the sand
         // doesn't follow a strict elevation contour — reads as a natural beach, not a cut.
-        float _bn = vTexWarp.x * 0.5;
-        float beach = (1.0 - smoothstep(10.0 + _bn * 30.0, 80.0 + _bn * 50.0, vH))
-                    * (1.0 - smoothstep(0.15 + _bn * 0.08, 0.35 + _bn * 0.12, slope));
+        // SHARED biome-band warp pattern (user 2026-06-14: the SAME warping on snow/rock bands AND the
+        // beach->land crossover). 2-oct world-dir noise, 1/4 freq (~13km + ~5km waves). Computed once
+        // here; the snow/rock bandWarp below reuses warpN. highp dir for the lattice precision.
+        highp vec3 bwDir = normalize(vWorld);
+        float warpN = snoise3(bwDir * 3325.0) + 0.5 * snoise3(bwDir * 7750.0);   // ~ +/-1.5
+        // BEACH sand gate tied to uBeachTopM (so the sand TEXTURE scales with the wide beach, not a
+        // hardcoded 80m strip) + the shared warp on its LAND edge so the beach->grass line is irregular.
+        float beachW = warpN * uBeachTopM * 0.30;   // warp amplitude scales with the beach band height
+        float beach = (1.0 - smoothstep(uBeachTopM * 0.12 + beachW, uBeachTopM + beachW, vH))
+                    * (1.0 - smoothstep(0.15, 0.42, slope));
         // SAND BLEED (2026-06-13): patchy sand spills above the main beach line, modulated by VS
         // warp noise so the edge reads as wind-blown pockets, not a strict elevation cut. At peak it
         // adds ~0.3 sand weight far above the beach, creating a natural dappled transition.
@@ -1688,10 +1696,21 @@ void main() {
         // WIDENED TRANSITION (2026-06-13): srLo+0.2 -> srLo+0.4 so rock/grass and rock/sand/snow
         // boundaries have a wider blend band — the slope gradient between materials is no longer
         // a ~0.2-unit hard step but a ~0.4-unit gradual fade.
-        float srLo = max(slopeRock.x, 0.18), srHi = max(slopeRock.y, srLo + 0.4);
-        float wRock = smoothstep(mix(srLo, 0.50, sandRegion), mix(srHi, 0.70, sandRegion), rockSlope);
-        float snowHi   = smoothstep(snowEdges.x, snowEdges.y, vH);
-        float snowCold = (1.0 - smoothstep(0.30, 0.75, climate.z)) * smoothstep(snowEdges.x * 0.5, snowEdges.x, vH);
+        float srLo = max(slopeRock.x, 0.05), srHi = max(slopeRock.y, srLo + 0.35);   // 0.18->0.10->0.05: rock slope gate MORE SENSITIVE so even gentle slopes (~18deg+) pick up as rock (user 2026-06-14, repeated). Stays above truly-flat (rockSlope~0).
+        float wRockSlope = smoothstep(mix(srLo, 0.50, sandRegion), mix(srHi, 0.70, sandRegion), rockSlope);
+        // WARPED BIOME BAND EDGES (user 2026-06-14: the snow/rock lines were STRAIGHT horizontal contours
+        // viewed side-on; the vTexWarp domain warp was too low-freq (>1.8km waves = ~constant over one
+        // mountain) so it had no visible effect). Use a dedicated 2-octave WORLD-DIR noise at mountain
+        // scale (~1.3-3km waves) so EVERY elevation-keyed band wobbles +/-~700m vertically over a few km
+        // = irregular natural lines, not level contours. World-dir keyed (seam-safe). Applied to snow,
+        // the rock band, snowCold, and the beach below. highp dir (high-freq lattice needs the precision).
+        float bandWarp = warpN * 450.0;   // reuse the shared warpN (defined at the beach gate above); +/-~700m undulation
+        float snowHi   = smoothstep(snowEdges.x + bandWarp, snowEdges.y + bandWarp, vH);
+        // ROCK BAND leading up to the snow (user 2026-06-14): a rocky belt ~0.4-2.2km below the snow
+        // line so high mountains show rock between alpine grass and snow, not grass straight to snow.
+        float rockBand = smoothstep(snowEdges.x - 2200.0 + bandWarp, snowEdges.x - 400.0 + bandWarp, vH) * (1.0 - snowHi);
+        float wRock = max(wRockSlope, rockBand);
+        float snowCold = (1.0 - smoothstep(0.30, 0.75, climate.z)) * smoothstep(snowEdges.x * 0.5 + bandWarp, snowEdges.x + bandWarp, vH);
         // POLAR/ICE-BIOME SNOW (user 2026-06-10 'put the snow texture on the snow'): the ICE biome
         // whitens cold lowland (biomeColor gate 1-smoothstep(0.10,0.18,tempEff)) at ANY elevation, but
         // wSnow was elevation-gated only -- polar snowfields were splatting the GRASS layer. Match the
