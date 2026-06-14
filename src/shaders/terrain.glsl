@@ -223,7 +223,7 @@ uniform float uMtnBandWide;                // widen mtn=smoothstep(16.8,18.6,ele
 uniform float uClimateRelief;              // widen wetLowFlat(0.66,0.9,humid) + coldFlat(0.18,0.34,temp) reliefMul gates
 uniform float uIsleWide;                    // widen isleZone seaBias gates (50,350)+(900,1600) -> (30,600)+(600,2200)
 uniform float uCarveWide;                   // widen the river/canyon/lake/dune CLIMATE gates so carve depth fades in over a wide span
-float canyonRidgeField(vec3 dir){ return inciseRidgeField(normalize(dir) + vec3(13.7, -4.2, 8.9), 380.0, 2.07); }  // phase offset matches FS canyonMask. baseFreq 380 = ~100km gorge network (user 2026-06-14: doubled 380->760 to restore deck-visible canyons after a 380->96 regression that put gorges ~400km apart = 'missing', then HALVED 760->380 back to the ~100km baseline). Shared VS carve + FS mask -> congruent by construction.
+float canyonRidgeField(vec3 dir){ return inciseRidgeField(normalize(dir) + vec3(13.7, -4.2, 8.9), 190.0, 2.07); }  // phase offset matches FS canyonMask. baseFreq 190 = ~200km gorge network (user 2026-06-14: HALVED 380->190 = fewer, wider-spaced gorges, easier for the coarse grid to represent). Shared VS carve + FS mask -> congruent by construction.
 // CANYON cross-section now reads as a CANYON, not a V-notch: STEEP WALLS + a FLAT FLOOR.
 //   wall = a sharp smoothstep band -> the carve drops fast over a narrow ridge interval (the cliff
 //          walls), instead of the old gentle bench+gorge blend that made shallow V-troughs.
@@ -235,9 +235,12 @@ float canyonCarveM(vec3 dir, out float depth){
     // WIDENED bands (user 2026-06-02 deepen+widen): the old .78/.86/.905/.93 intervals were a very
     // narrow ridge slice -> thin hairline gorges. Widen so the canyon reads as a BROAD gorge: a wide
     // eroded rim shoulder, a steep but visible wall, and a wide flat floor that the gorge bottoms out on.
-    float bench = smoothstep(0.62, 0.78, ridge);               // wide eroded rim shoulder
-    float wall  = smoothstep(0.70, 0.86, ridge);               // STEEP cliff wall (wider band)
-    float floorF= smoothstep(0.80, 0.93, ridge);               // reach the flat gorge floor, then clamp
+    // GENTLER WALLS (user 2026-06-14 'make canyon slopes more gentle, easier for the rough grid to
+    // represent'): widen every band so the same depth descends over a wider ridge interval = lower
+    // gradient -> the coarse LOD grid samples the wall without aliasing the cliff.
+    float bench = smoothstep(0.50, 0.74, ridge);               // wide eroded rim shoulder
+    float wall  = smoothstep(0.58, 0.90, ridge);               // gentle cliff wall (wide band)
+    float floorF= smoothstep(0.72, 0.96, ridge);               // reach the flat gorge floor, then clamp
     depth = max(wall, floorF);
     // 0.18 rim shoulder + 0.82 wall-to-floor; floorF clamps so the bottom is flat (no infinite V).
     float profile = 0.18 * bench + 0.82 * max(wall, floorF);
@@ -703,7 +706,11 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){   // W7
   h += cliffCarveV;
   // FLAT RIVER WATER
   float riverWetLine = riverWetMask * riverWet * step(0.0, h);
-  if (riverWetLine > 0.0) { float rWaterLevel = h - 20.0; h = mix(h, rWaterLevel, riverWetLine); vDisp *= (1.0 - riverWetLine); }
+  // DEEPER, GENTLER-APPROACH CHANNEL WATER (user 2026-06-14 'water in canyons very shallow, base flat,
+  // angle of approach to the base far too sharp'): drop the channel bed 20->70m so the water is deep
+  // enough to read, and use riverWetLine^0.6 as the carve weight so the bed eases DOWN over a wider
+  // margin (concave approach) instead of plunging at the wet edge.
+  if (riverWetLine > 0.0) { float rw = pow(riverWetLine, 0.6); float rWaterLevel = h - 70.0; h = mix(h, rWaterLevel, rw); vDisp *= (1.0 - rw); }
   // DUNES on the low sand desert
   float duneSand = smoothstep(mix(0.62, 0.50, uCarveWide), mix(0.85, 0.95, uCarveWide), 1.0 - hpf0.a) * smoothstep(mix(0.40, 0.30, uCarveWide), mix(0.58, 0.68, uCarveWide), hpf0.b) * (1.0 - smoothstep(40.0, 160.0, h));
   float duneCrest; float duneV = duneFieldM(dir0, duneCrest) * duneSand * step(0.0, h);
@@ -938,12 +945,14 @@ void main() {
     // water level + suppress the micro-displacement on the wet line. riverWetMask is the thalweg mask.
     float riverWetLine = riverWetMask * riverWet * step(0.0, vH);
     if (riverWetLine > 0.0) {
-        highp float rWaterLevel = vH - 20.0;         // W7: metres
+        // MIRROR of composeHeight (deeper 20->70m channel + pow(.,0.6) gentler concave approach)
+        float rw = pow(riverWetLine, 0.6);
+        highp float rWaterLevel = vH - 70.0;         // W7: metres
         highp float rFloorBefore = vH;
-        vH = mix(vH, rWaterLevel, riverWetLine);
-        vDisp *= (1.0 - riverWetLine);               // no micro-bumps on the river surface
+        vH = mix(vH, rWaterLevel, rw);
+        vDisp *= (1.0 - rw);                          // no micro-bumps on the river surface
         // record the deeper/stronger of lake|river as the water surface for vWaterDepth
-        if (riverWetLine > haveWater) { waterPlane = rWaterLevel; floorBefore = rFloorBefore; haveWater = riverWetLine; }
+        if (rw > haveWater) { waterPlane = rWaterLevel; floorBefore = rFloorBefore; haveWater = rw; }
     }
     // DUNES on the SAND DESERT (very dry + warm + LOW land): rolling dune relief replaces harsh rock
     // here (ref: webgl-dunes). Gated opposite to canyons (which want elevated arid plateaus) -- dunes
@@ -1912,7 +1921,7 @@ void main() {
         // 3 normal octaves (user 2026-06-14 'add an even lower freq octave, displacement/normals only,
         // 4x less frequent'): wt4 high (detail) + wt low (2.4km) + wt*0.25 VERY-low (9.6km) -- the very-
         // low one breaks the far repetition even more. Normals/displacement only (no albedo).
-        vec3 nA = surfTriNrm(uSurfNrm, wt4, tw, lA, n) * 1.4 + surfTriNrm(uSurfNrm, wt, tw, lA, n) * 0.8 + surfTriNrm(uSurfNrm, wt * 0.25, tw, lA, n) * 0.55;
+        vec3 nA = surfTriNrm(uSurfNrm, wt4, tw, lA, n) * 1.4 + surfTriNrm(uSurfNrm, wt, tw, lA, n) * 0.8 + surfTriNrm(uSurfNrm, wt * 0.25, tw, lA, n) * 2.4;   // very-low octave UP 0.55->2.4 (user 2026-06-14 'dont really see the lower freq octave yet'): at a 9.6km period its slope is gentle, so it needs more weight to read as broad undulation
         float dispA = albA.a;
         // NO BIOME COLOR INHERITANCE (user 2026-06-14 'take away all biome color inheritance, it will
         // speed it up' -- and fixes 'sand near grass tinted green'): each layer wears its OWN material
@@ -1924,7 +1933,7 @@ void main() {
         if (wB > 0.02) {   // second layer only where a real transition exists
             vec4 albB = surfTriTap(uSurfAlb, wt4, tw, lB);
             vec3 cB = vec3(dot(albB.rgb, LUMA));
-            vec3 nB = surfTriNrm(uSurfNrm, wt4, tw, lB, n) * 1.4 + surfTriNrm(uSurfNrm, wt, tw, lB, n) * 0.8 + surfTriNrm(uSurfNrm, wt * 0.25, tw, lB, n) * 0.55;   // + very-low octave
+            vec3 nB = surfTriNrm(uSurfNrm, wt4, tw, lB, n) * 1.4 + surfTriNrm(uSurfNrm, wt, tw, lB, n) * 0.8 + surfTriNrm(uSurfNrm, wt * 0.25, tw, lB, n) * 2.4;   // very-low octave UP 0.55->2.4 (match nA)
             float dispB = albB.a;
             // HEIGHT-BLEND POKE-THROUGH (user 'each texture's higher areas should poke through the other,
             // offset by the ramp'): height = displacement + a weight-ramp offset (gate positions the
@@ -2012,13 +2021,24 @@ void main() {
         // base = flat MATERIAL color (far/low-k); near = structured detail. The macro biome albedo is no
         // longer the base, so NO biome color bleeds into the ground (user 'take away all biome inheritance').
         albedo = clamp(mix(texMatColor, detail, k), 0.0, 1.0);
-        albedo = mix(albedo, biomeC, 0.16);   // subtle climate/biome tint back on top of the material color (deserts tanner, forests greener) -- at all distances for landscape variety
+        albedo = mix(albedo, biomeC, 0.68);   // climate/biome tint back on top of the material color (deserts tanner, forests greener) -- UP 0.16->0.68 (user 2026-06-14 x2 'tinting-according-to-landscape can be intensified, not really visible yet')
         // FAKE MIDDAY AO from the displacement (user 2026-06-14 'darken the deepest parts of the
         // displacement textures a little'): the texture's LOWEST displacement = crevices/pits; darken
         // them ~18% so the surface reads as sunlit-from-above with soft self-occlusion in the lows.
         // Faded by k so the far field (where the texture mips out) is untouched.
-        float texAO = mix(1.0, mix(0.82, 1.0, smoothstep(0.0, 0.5, texAlb.a)), k);
+        // STRONGER fake-midday AO (user 2026-06-14 'should be more intense, we dont really see it'):
+        // darken the recesses harder (0.82->0.5 = up to 50%) over a wider low-displacement range so the
+        // crevices/pits read clearly. Still faded by k so the mipped far field is untouched.
+        float texAO = mix(1.0, mix(0.5, 1.0, smoothstep(0.05, 0.6, texAlb.a)), k);
         albedo *= texAO;
+        // ELEVATION AO (user 2026-06-14 'similar AO on elevation'): the macro analog of the displacement
+        // AO -- darken CONCAVE relief (valley floors, gorges, recesses) using the screen-space CURVATURE
+        // of the lit normal. curv = d(normal).d(position) / |d(position)|^2 -> +ve where the surface
+        // curves into a pit (concave), -ve on ridges. Cheap (fwidth of the already-computed vNrm/vWorld).
+        highp vec3 ddxP = dFdx(vWorld), ddyP = dFdy(vWorld);
+        float curv = (dot(dFdx(vNrm), ddxP) + dot(dFdy(vNrm), ddyP)) / max(dot(ddxP, ddxP) + dot(ddyP, ddyP), 0.01);
+        float elevAO = 1.0 - clamp(curv * 420.0, 0.0, 0.65);   // concave -> darken up to 65% (user 2026-06-14 x2 'elevation based ao not visible yet': macro relief curvature is small-magnitude, needs big gain 45->420)
+        albedo *= elevAO;
         // displacement-normal relief: WORLD-SPACE UDN perturbation from surfTriNrm (each projection
         // plane's tangent axes, not the radial frame). Amplitude capped low (scramble lesson d262b5e);
         // applied AFTER the uReliefShade exaggeration below so the exaggeration never amplifies it.
