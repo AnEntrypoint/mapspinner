@@ -1579,8 +1579,13 @@ void main() {
         mappedW = clamp((mappedW - 0.5) * uLookContrast + 0.5, 0.0, 1.0);
         // coverage: optically thick water -> opaque; first metres see-through; grazing fresnel and
         // foam are opaque regardless of depth; feather the exact waterline contact.
+        // THIN WATER STAYS CLEAR (user 2026-06-14 'water isnt transparent where its thin'): the grazing
+        // fresnel forced shallow water OPAQUE even looking across a shoreline. Gate fresnel opacity by a
+        // depth ramp so thin water shows the bed regardless of view angle; foam + Beer-Lambert depth
+        // opacity stay so deep/foamy water still reads solid.
+        float shallowClear = smoothstep(0.0, 6.0, depthM);   // 0 in thin water -> clear; 1 by ~6m -> full fresnel
         float alphaW = clamp(1.0 - Tavg, 0.0, 1.0);
-        alphaW = max(alphaW, fres * 0.9);
+        alphaW = max(alphaW, fres * 0.9 * shallowClear);
         alphaW = max(alphaW, foamAmt * 0.8);
         // SHALLOW-SURFACE FLOOR (2026-06-11, found by the coast witness after the shelf landed):
         // the continental shelf keeps water metres-deep for kilometres, where Beer-Lambert alpha

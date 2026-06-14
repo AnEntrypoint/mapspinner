@@ -1109,7 +1109,12 @@ export async function initMapspinnerRender(gl, opts = {}) {
         // seabed, so the depth test culled the water across entire shorelines. Level-9 cells
         // (~1.6km) sag ~5cm, far under any visible bathymetry, still ~16-64x fewer water verts
         // than the deep terrain leaves.
-        const WCAP = 9;
+        // WCAP 9 -> 11 (user 2026-06-14 'water lines still jagged and square, doesnt meet land properly'):
+        // the water-pass `if(vH>1.0) discard` keys off the water mesh's COARSE interpolated seabed height,
+        // so the discarded waterline stepped at ~1.6km (level-9) cells = square/jagged edges that didn't
+        // follow the fine seabed coastline. Level-11 cells (~400m) -> ~4x finer waterline. Water-vertex
+        // cost rises (watch FPS); still far fewer verts than the full-LOD terrain leaves.
+        const WCAP = 11;
         // OWN persistent buffer (instBufWater) + static-frame skip: on an unchanged quad set, reuse the
         // cached water instances (skip the dedup Set-loop + Float32Array + bufferData). Separate buffer
         // means the terrain pass never clobbers it (the prior water-as-terrain regression root).
