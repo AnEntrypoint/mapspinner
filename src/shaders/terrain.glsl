@@ -1560,6 +1560,16 @@ void main() {
             vec3 deepBlue = vec3(0.005, 0.06, 0.18);
             vec3 waveBright = vec3(0.0, 0.02, 0.06) * length(slopeW);
             vec3 wcol = deepBlue + sunUnder * 0.4 + waveBright;
+            // SNELL'S WINDOW (user 2026-06-14 'no water surface visible from underneath'): looking UP, the
+            // surface is a bright window to the sky within the critical angle (near-vertical view) and a
+            // dark total-internal-reflection mirror at grazing angles. upness = how vertical the view->
+            // surface ray is; brighten toward the refracted sky + a sun disc inside the window.
+            float upness = abs(dot(viewW, wn));
+            float snell = smoothstep(0.50, 0.82, upness);
+            vec3 skyWindow = vec3(0.40, 0.60, 0.85) * (0.5 + 0.9 * ndl);
+            wcol = mix(wcol, skyWindow, snell * 0.85);
+            float sunw = pow(max(dot(viewW, sunDir), 0.0), 180.0);   // sun seen through the window
+            wcol += vec3(1.0, 0.92, 0.70) * sunw * (0.4 + 0.6 * snell);
             float macroMuW = dot(uz, sunDir);
             float dayShadeW = mix(uNightFloor, 1.0, smoothstep(-uTermWidth, uTermWidth, macroMuW));
             vec3 cW = wcol * dayShadeW * uExposure;
@@ -2189,6 +2199,11 @@ void main() {
         vec3 absorb = vec3(0.035, 0.010, 0.005) * (1.0 + depth * 0.0001);
         vec3 uwTrans = exp(-absorb * dKm);
         vec3 uwFog = vec3(0.004, 0.09, 0.18) + vec3(0.0, 0.015, 0.03) * depth / 1000.0;
+        // SEABED LIGHTING (user 'floor too flat/dim'): the deep floor gets almost no direct sun, so it
+        // read dim+flat. Lift the brightness and add an up-facing fill (brighter where the surface faces
+        // up, darker on slopes -> 3D relief) + a touch of slope contrast keyed on the lit normal vNrm.
+        float upFill = mix(0.75, 1.35, clamp(dot(vNrm, normalize(vWorld)) * 0.5 + 0.5, 0.0, 1.0));
+        color *= upFill * 1.5;
         color = mix(color * uwTrans + uwFog * (1.0 - uwTrans), uwFog, smoothstep(100000.0, 500000.0, dKm * 1000.0));
     }
     // RIVERS post-lighting (witnessed browser-2115/2118: the river-blue in ALBEDO is multiplied
