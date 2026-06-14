@@ -627,11 +627,13 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){   // W7
       // C1 WATERLINE (user 2026-06-14 'geometry crease + shading/rock hard line where land meets beach'):
       // the land shelf is FLAT at the waterline (slope 0) but the seabed used slope 0.24 from h=0 -> a
       // slope discontinuity = a crease (+ the shading brightness line + rock where steep) right at the
-      // shore. Ease the shallow seabed with the SAME flat-at-waterline shelf curve (mirror of the land
-      // side) before the 0.24/1.19 bathymetry, so BOTH sides meet the waterline with slope 0 = no crease.
-      highp float bShelfS = uBeachShelfM > 1.0 ? uBeachShelfM : 600.0;
+      // shore. Ease ONLY a NARROW band of depth (NOT the 28km land beach width -- that shallowed the
+      // whole ocean into 'almost-land everywhere', user 2026-06-14) with the flat-at-waterline curve so
+      // both sides meet the waterline at slope 0 (no crease); beyond SEABED_EASE the true bathymetry
+      // resumes so the ocean goes DEEP.
+      const highp float SEABED_EASE = 300.0;   // metres of depth flattened at the shore (decoupled from the land beach)
       highp float d0 = -h;
-      highp float d = (d0 < bShelfS) ? (d0 * d0 / bShelfS) * (2.0 - d0 / bShelfS) : d0;
+      highp float d = (d0 < SEABED_EASE) ? (d0 * d0 / SEABED_EASE) * (2.0 - d0 / SEABED_EASE) : d0;
       h = -(min(d, 500.0) * 0.24 + max(d - 500.0, 0.0) * 1.19);
       h = max(h, -11000.0);   // cap depth at Mariana Trench (~11km)
   } else {
@@ -860,9 +862,9 @@ void main() {
     // shelf/slope bathymetry remap + underwater displacement -- MUST mirror composeHeight exactly
     // (this is the FS-material running value; composeHeight is the geometry/probe height).
     if (vH < 0.0) {
-        highp float bShelfS = uBeachShelfM > 1.0 ? uBeachShelfM : 600.0;   // C1 waterline -- mirror composeHeight exactly
+        const highp float SEABED_EASE = 300.0;   // mirror composeHeight: narrow waterline ease, deep ocean beyond
         highp float dSea0 = -vH;
-        highp float dSea = (dSea0 < bShelfS) ? (dSea0 * dSea0 / bShelfS) * (2.0 - dSea0 / bShelfS) : dSea0;
+        highp float dSea = (dSea0 < SEABED_EASE) ? (dSea0 * dSea0 / SEABED_EASE) * (2.0 - dSea0 / SEABED_EASE) : dSea0;
         vH = -(min(dSea, 500.0) * 0.24 + max(dSea - 500.0, 0.0) * 1.19);
         vH = max(vH, -11000.0);   // cap depth at Mariana Trench (~11km)
     } else {
@@ -2156,11 +2158,14 @@ void main() {
         highp vec3 segKm = pAtm - camA;
         highp float dKm  = length(segKm);
         float depth = max(0.0, terrainR - length(camWorld));
-        // Water absorption coefficients (per km): red attenuates fastest, blue slowest.
-        vec3 absorb = vec3(4.0, 0.8, 0.3) * (1.0 + depth * 0.0003);
+        // CLEARER WATER + LONG VISIBILITY (user 2026-06-14 'fix underwater visibility so we can explore
+        // under the ocean'): the old absorb (4,0.8,0.3)/km + a 50->500m hard fog fade closed the view to
+        // opaque blue within ~500m. Lower the coefficients (still red-first absorption) and push the hard
+        // fade to ~3-15km so the seabed landscape is explorable; red still fades fast (realistic blue cast).
+        vec3 absorb = vec3(1.0, 0.30, 0.15) * (1.0 + depth * 0.0002);
         vec3 uwTrans = exp(-absorb * dKm);
-        vec3 uwFog = vec3(0.002, 0.06, 0.16) + vec3(0.0, 0.02, 0.04) * depth / 1000.0;
-        color = mix(color * uwTrans + uwFog * (1.0 - uwTrans), uwFog, smoothstep(50.0, 500.0, dKm * 1000.0));
+        vec3 uwFog = vec3(0.004, 0.10, 0.22) + vec3(0.0, 0.02, 0.04) * depth / 1000.0;
+        color = mix(color * uwTrans + uwFog * (1.0 - uwTrans), uwFog, smoothstep(3000.0, 15000.0, dKm * 1000.0));
     }
     // RIVERS post-lighting (witnessed browser-2115/2118: the river-blue in ALBEDO is multiplied
     // by the warm sun irradiance (sunIrr.b is low) so land rivers lose their blue in the lit
