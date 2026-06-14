@@ -1917,8 +1917,12 @@ void main() {
             // boundary); higher wins over a soft width so the loser's high bumps poke through = fingers,
             // no hard line. ONE blend for ALL pairs. Mips smooth dispA/dispB at distance -> soft far edge.
             float bw = 0.06;   // NEAR-HARD crossover (user 2026-06-14 'make the transition hard, let the displacement make the distribution interesting -> far less blendy'): the displacement picks a sharp per-pixel winner; the gate weight only shifts the proportion across the ramp
-            float hA = dispA + (bAB - 0.5) * 1.1;
-            float hB = dispB + (0.5 - bAB) * 1.1;
+            // weight-ramp coefficient 1.1 -> 0.5 (user 2026-06-14 'we want that crossover on ALL
+            // crossovers'): a weaker weight ramp lets the DISPLACEMENT decide the winner over a WIDER
+            // weight range, so the near-hard displacement-driven distribution spans a broad margin for
+            // EVERY pair (rock-slope, snow, biome...), not just the explicitly-widened beach gate.
+            float hA = dispA + (bAB - 0.5) * 0.5;
+            float hB = dispB + (0.5 - bAB) * 0.5;
             float mh = max(hA, hB) - bw;
             float waH = max(hA - mh, 0.0), wbH = max(hB - mh, 0.0);
             float bSharp = waH / max(waH + wbH, 1e-4);
