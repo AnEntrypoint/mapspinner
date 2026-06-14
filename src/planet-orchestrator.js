@@ -177,7 +177,7 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
   // count (orbit 860->20, lowalt 1272->328). 1.0 is the calibrated default; override live
   // via window.__splitFactor.
   const splitFactor = opts.splitFactor ?? 1.0;
-  const gridMeshSize = opts.gridMeshSize || 16;   // 24->16 FPS lever (sub-pixel over-tessellation; see gl-render.js GRID)
+  const gridMeshSize = opts.gridMeshSize || 11;   // 16->11 FPS lever (triangle-throughput bound, not ALU; GRID 8 jagged biome crossovers, see gl-render.js GRID)
 
   gl.getExtension('EXT_color_buffer_float');   // RGBA32F atlas render targets
   // OES_texture_float_linear lets the driver LINEAR-filter the RGBA32F HPF/elevation textures. When
@@ -361,13 +361,14 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
   // static-camera re-render PERF path. frameStart kept (the render loop still references it).
   let _frameCache = null;
   let _pipelineQuads = null;   // pre-computed quads from last frame for draw-before-compute pipelining
+  let _glCheckTick = 0;        // throttle the gl.getError() hard-sync to 1-in-30 frames (pipeline stall)
   let frameStart = 0;
 
   // ---- per-frame quadtree drive --------------------------------------------------
   // camWorldPos: [x,y,z] world meters (sphere centered at origin).
   // camTarget:   [x,y,z] world look-at point. fovy in radians. displayMode int.
   // Returns { quadCount, glError, face }.
-  function frame(camWorldPos, camTarget, fovy = 0.7, displayMode = 0, sunDir, time = 0, up) {
+  function frame(camWorldPos, camTarget, fovy = 0.7, displayMode = 0, sunDir, time = 0, up, surfElev = 0) {
     const sun = sunDir || (() => { const s = [0.4, 0.5, 0.75]; const sl = Math.hypot(...s); return [s[0]/sl, s[1]/sl, s[2]/sl]; })();
     // Use the caller's up if given (planet.html keeps an orthonormal free-fly up); only
     // fall back to [0,1,0] when none supplied. Hardcoding [0,1,0] broke the +Y pole view
@@ -400,7 +401,7 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
       || (fwd[0]*c.fwd[0]+fwd[1]*c.fwd[1]+fwd[2]*c.fwd[2]) < c.fwdLen2*0.99999
       || displayMode !== c.displayMode;
     if (!moved) {
-      const cam2 = { eye: camWorldPos, center: camTarget, up: camUp, fovy, displayMode };
+      const cam2 = { eye: camWorldPos, center: camTarget, up: camUp, fovy, displayMode, surfElev };
       render.render(c.quads, cam2, sun, time);
       const glError = render.checkGlError();
       // Phase 2 fix: also re-draw vegetation on STATIC frames (the GPU instance buffer is
@@ -499,7 +500,7 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
     // ONLY to splitDist (NOT distF below): distF = sf*8.0 is the altitude-weighting term, and scaling sf
     // into BOTH compounds into ~2 levels at altitude (witnessed: base sf*2 gave mx 5->7 at 8000km). Keep
     // distF on the original sf so the push is a clean ONE step. maxLevel (16) is untouched -- no new LOD.
-    const LOD_STEP = 2.3;   // push ALL LODs ~0.6 step (reduced from 3.0 to target ~600 quads at all alts):
+    const LOD_STEP = 3.6;   // 2.3->3.6; tightens the far-ring by reducing LOD near the horizon. NOTE: splitDist floors at 1.1 so deck quad count is set by splitFactor (0.28 ~= 500 quads), not this.
     qt.computeSplitDist(sf * LOD_STEP, gl.drawingBufferHeight || 480, fovy);
     // DETAIL-FARTHER (user 2026-06-01h: each LOD pop should happen ~3x farther out -- 6km detail at
     // 24km, etc.). A quad subdivides when camAlt < l * splitDist * distFactor, so tripling distFactor
@@ -648,7 +649,7 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
     let _cullDbgOnScreen = 0;
     // Use viewProjNoEye (proj*viewRel, NO translate) + pass the eye so quadOutsideFrustum can make
     // each corner camera-relative in JS doubles (fp32-precision fix for the ground-nadir blank).
-    const _cm = cullActive ? render.cullMatrix({ eye: camWorldPos, center: camTarget, up: camUp, fovy }) : null;
+    const _cm = cullActive ? render.cullMatrix({ eye: camWorldPos, center: camTarget, up: camUp, fovy, surfElev }) : null;
     const vpr = _cm ? _cm.viewProjNoEye : null;
     // BEHIND-LIMB CULL (the dominant bottleneck fix). The baseline measured ~80% of all
     // generated quads sitting BEHIND the planet's horizon -- they are geometrically
@@ -679,7 +680,16 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
     const altM = Math.max(0.0, camDist - R);
     const elSlack = Math.min(CULL_MAX_ELEV, 200.0 + altM * 0.5);
     const limbCullActive = (typeof window !== 'undefined' && window.__limbCull != null ? !!window.__limbCull : true)
-      && altM > 2.0;
+      && altM > 0.5;
+    // CPU/GPU PIPELINING (real overlap, 2026-06-14): issue LAST frame's cached quads to the GPU
+    // NOW, BEFORE the 6-face quadtree build below runs, so the GPU draw and this frame's CPU
+    // build actually overlap. Previously this draw sat AFTER the build loop (no overlap -- the
+    // CPU work had already finished before the draw was issued). cam carries THIS frame's view
+    // (1-frame geometry latency, standard pipelining). First frame (no cache) draws after build.
+    const cam = { eye: camWorldPos, center: camTarget, up: camUp, fovy, displayMode, surfElev };
+    if (_pipelineQuads) {
+      render.render(_pipelineQuads, cam, sun, time);
+    }
     for (let face = 0; face < 6; face++) {
       // LOD drive uses lodRefPos (aim-shifted, altitude preserved) so deepest LOD follows the
       // look point; the quad record keeps the TRUE-camera localCam (for the VS geomorph
@@ -773,14 +783,17 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
     // Phase 2 (CPU): the 6-face loop above already populated `quads` — this overlaps
     // with GPU rendering of Phase 1. Phase 3: first frame (no cache) draws after compute.
     // glError is checked via render.checkGlError() after Phase 2 for diagnostics.
-    const cam = { eye: camWorldPos, center: camTarget, up: camUp, fovy, displayMode };
-    if (_pipelineQuads) {
-      render.render(_pipelineQuads, cam, sun, time);
-    }
+    // cam + the _pipelineQuads draw were HOISTED above the 6-face loop (real CPU/GPU overlap).
+    // First frame (no cache) has nothing to pre-draw, so it draws THIS frame's quads here.
     if (!_pipelineQuads) {
       render.render(quads, cam, sun, time);
     }
-    const glError = render.checkGlError();   // sync probe after quadtree CPU work
+    // THROTTLED glError: gl.getError() is a hard client/server SYNC that drains the GL pipeline
+    // (the exact stall the draw-before-compute pattern exists to avoid). Probe once every 30
+    // frames (or when window.__glCheck forces it); assume 0 between probes. 2026-06-14.
+    _glCheckTick = (_glCheckTick + 1) % 30;
+    const _forceGlCheck = (typeof window !== 'undefined' && window.__glCheck);
+    const glError = (_glCheckTick === 0 || _forceGlCheck) ? render.checkGlError() : 0;
     _pipelineQuads = quads;
     // CULL DEBUG stats for the live HUD: kept/culled counts + the false-cull signature
     // (culledOnScreen = frustum-culled quads that actually project inside the screen) + whether

@@ -49,7 +49,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
   // (-52%) and tris/quad 1152->512 (-55%), so the per-vertex 14-oct broadShapeM VS (browser-9: 95% of
   // the low-alt frame) runs on ~half the vertices. median scales ~24/16 -> ~3.6px, far closer to the
   // band; the fine relief is carried per-pixel by the FS dFdx normal, not the mesh tessellation.
-  const GRID = opts.gridMeshSize || 16;    // mesh quads per edge
+  const GRID = opts.gridMeshSize || 11;    // mesh quads per edge. 16->11 (user 2026-06-14): FPS is TRIANGLE-THROUGHPUT bound, not broadShapeM ALU (octMax 12->3 left frame time flat; GRID is ~linear). GRID 8 was faster (-50%) but made BIOME CROSSOVER LINES JAGGED (climate varying interpolated across coarse triangles steps along edges) -- reverted to 11 (-37%). Proper fix to reclaim GRID 8 = per-pixel biome sampling in the FS. Override via ?grid=N.
   // Expose the LIVE mesh grid so screen-space-error diagnostics (planet.html __diag.pxPerPoly)
   // divide by the real polys/tile instead of a stale literal. Any future GRID change self-corrects
   // the metric (the 24->16 lever left pxPerPoly defaulting to 24 = 1.5x wrong band fraction).
@@ -300,7 +300,8 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1i(loc('uFSDetailOcts'),    (typeof window!=='undefined' && window.__fsDetailOcts!=null) ? (window.__fsDetailOcts|0) : 3);
     // FXC fold-defeat (2026-06-12, the rock-on-flat patches): the lit-normal FD step is uniform-fed
     // so d3d11/FXC cannot constant-fold the 150/R offset. Live dial: window.__nrmStepM.
-    gl.uniform1f(loc('uNrmStepM'),      g('nrmStepM', 150.0));
+    gl.uniform1f(loc('uNrmStepM'),      g('nrmStepM', 300.0));
+    gl.uniform1f(loc('uGrid'),          GRID);
     gl.uniform1f(loc('uHpfInset'),      (typeof window!=='undefined' && window.__hpfInset === false) ? 0.0 : 1.0);   // SEAM FIX: inset sampler is the permanent default (matches bakeFace fu=x/(RES-1)); window.__hpfInset===false rolls back
     // ANCHOR-STEP A/B TOGGLES (per-area stairstep, wrxo0rr7a). Default 0 = current; set window.__<name>=1
     // to widen that anchor-keyed band. Set HERE so BOTH render and the _PROBE_ collision see them (parity).
@@ -474,6 +475,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     uniform vec3 skyCamWorld;   // camera world pos (meters)
     uniform vec3 skySunDir;     // world sun dir (normalized)
     uniform float skyR;         // sphere radius (meters)
+    uniform float uSkyFade;     // 1 at surface, 0 at 100km
     void main(){
       // Reconstruct the world-space view ray from NDC, like the WebGPU skyFs: undo the
       // projection (divide by the proj diagonal) to get a view-space dir, then rotate
@@ -519,7 +521,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
       // glow + daylit sky read as an atmosphere without blowing out.
       vec3 c = radiance * 120.0;
       vec3 mapped = clamp((c*(2.51*c+0.03))/(c*(2.43*c+0.59)+0.14), 0.0, 1.0); // ACES
-      fragColor = vec4(pow(mapped, vec3(1.0/2.2)), 1.0);
+      fragColor = vec4(pow(mapped, vec3(1.0/2.2)) * uSkyFade, 1.0);
     }`;
   function rawShader(type, source){ const s=gl.createShader(type); gl.shaderSource(s, source); gl.compileShader(s);
     if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error('sky '+type+': '+gl.getShaderInfoLog(s)); return s; }
@@ -630,13 +632,17 @@ export async function initMapspinnerRender(gl, opts = {}) {
     const aspect = gl.drawingBufferWidth / gl.drawingBufferHeight;
     const camDist = Math.hypot(cam.eye[0], cam.eye[1], cam.eye[2]);
     const alt = Math.max(0.0, camDist - R);
+    const altAboveTerrain = Math.max(0.001, alt - R * (cam.surfElev || 0));
     const horizon = Math.sqrt(Math.max(0.0, camDist*camDist - R*R));
-    const near = Math.max(1.0, alt * 0.1);
-    // ALTITUDE-BLENDED FAR PLANE: at low altitude (<1km) use the tighter horizon*1.5 for
-    // depth precision + GPU culling at the deck where FPS is worst; blend to full camDist
-    // at high altitude (>200km) so the full globe is visible. No +R*0.25 floor.
-    const _fBlend = Math.min(1.0, Math.max(0.0, (alt - 1000.0) / 200000.0));
-    const far  = Math.max(horizon * 1.5, alt * 8.0) * (1.0 - _fBlend) + camDist * _fBlend;
+    // MATCH render()'s near exactly (2026-06-14 jank fix): the cull frustum must use the SAME near
+    // as the draw frustum, else behind-limb/screen-AABB culling diverges from what is actually drawn
+    // at the deck (cull near was max(*0.1,0.1) while render used the <2m 0.05 branch).
+    const near = altAboveTerrain < 2.0 ? 0.05 : Math.max(altAboveTerrain * 0.1, 0.05);
+    // FAR PLANE: horizon distance tracks the visible ground edge; blends toward camDist
+    // above 500km for orbital views so the full planet is visible.
+    const _fBlend = Math.min(1.0, Math.max(0.0, (alt - 500000.0) / 4500000.0));
+    const farGround = Math.max(horizon, alt * 8.0);
+    const far = farGround * (1.0 - _fBlend) + camDist * _fBlend;
     const proj = M4.perspective(cam.fovy||0.785, aspect, near, far);
     const eye = cam.eye;
     const viewRel = M4.lookAt([0,0,0], [cam.center[0]-eye[0], cam.center[1]-eye[1], cam.center[2]-eye[2]], cam.up||[0,1,0]);
@@ -647,7 +653,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // fp32 cancellation at ground level (eye~=world), garbaging the projection and blanking the
     // footprint. Subtracting in JS doubles first keeps the cull's projection precise near ground.
     const viewProjNoEye = M4.mul(proj, viewRel);
-    return { viewProjRel, viewProjNoEye, eye, near, far, proj };
+    return { viewProjRel, viewProjNoEye, eye, near, far, proj, viewRel };
   }
 
   // Render a set of quads. quads: [{quad, face, elevLayer, normalLayer}], cam: {eye, center, up, fovy}
@@ -656,17 +662,18 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // ADAPTIVE near/far (altitude-tied). A fixed near=1 / far=R*8 (~5e7) at a 50km eye
     // pushed ALL near-surface geometry to NDC z~=1 (the far-plane limit), collapsing depth
     // precision so most near quads z-fought / clamped off -> only one screen rectangle
-    // survived. Tie the planes to altitude: near ~= alt*0.1 (a few km up high, meters near
-    // the ground), far ~= the visible horizon distance (so the whole near surface fits the
-    // [near,far] range with usable z precision) plus a margin to keep the far hemisphere /
-    // limb. From space (alt >> R) this widens back out to ~R*8, preserving the full-globe
+    // survived. Tie the planes to altitude: near = alt*0.1 (naturally scales from 1m at
+    // deck to 1200km at orbit), far = horizon distance blended toward camDist above 500km
+    // for orbital views. From space the far widens out to ~R*8, preserving the full-globe
     // view. Clamped so near>=1 and far>near.
     const camDist = Math.hypot(cam.eye[0], cam.eye[1], cam.eye[2]);
     const alt = Math.max(0.0, camDist - R);
+    const altAboveTerrain = Math.max(0.001, alt - R * (cam.surfElev || 0));
     const horizon = Math.sqrt(Math.max(0.0, camDist*camDist - R*R));
-    const near = Math.max(1.0, alt * 0.1);
-    const _fBlend = Math.min(1.0, Math.max(0.0, (alt - 1000.0) / 200000.0));
-    const far  = Math.max(horizon * 1.5, alt * 8.0) * (1.0 - _fBlend) + camDist * _fBlend;
+    const near = altAboveTerrain < 2.0 ? 0.05 : Math.max(altAboveTerrain * 0.1, 0.05);
+    const _fBlend = Math.min(1.0, Math.max(0.0, (alt - 500000.0) / 4500000.0));
+    const farGround = Math.max(horizon, alt * 8.0);
+    const far = farGround * (1.0 - _fBlend) + camDist * _fBlend;
     const proj = M4.perspective(cam.fovy||0.785, aspect, near, far);
     const view = M4.lookAt(cam.eye, cam.center, cam.up||[0,1,0]);
     const viewProj = M4.mul(proj, view);
@@ -701,8 +708,28 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.viewport(0,0,gl.drawingBufferWidth,gl.drawingBufferHeight);
     gl.clearColor(0.0,0.0,0.0,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
 
-    // SKY/ATMOSPHERE PASS REMOVED (user: 'get rid of all non-terrain material for now like haze').
-    // The background stays the plain clear color; only the terrain (lit by the sun) is drawn.
+    // SKY/ATMOSPHERE PASS: atmospheric limb/halo behind the terrain. Fades in below
+    // 100km (full at surface, transparent above 100km). Depth off so terrain overdraws.
+    {
+      const skyFade = Math.max(0.0, 1.0 - camAlt / 100000.0);
+      if (skyFade > 0.001) {
+        gl.useProgram(skyProg);
+        gl.uniformMatrix3fv(SU('camRot'), false, new Float32Array([
+          _cm.viewRel[0], _cm.viewRel[4], _cm.viewRel[8],
+          _cm.viewRel[1], _cm.viewRel[5], _cm.viewRel[9],
+          _cm.viewRel[2], _cm.viewRel[6], _cm.viewRel[10]
+        ]));
+        gl.uniform2f(SU('projDiag'), _cm.proj[0], _cm.proj[5]);
+        gl.uniform3f(SU('skyCamWorld'), eye[0], eye[1], eye[2]);
+        gl.uniform3f(SU('skySunDir'), sunDir[0], sunDir[1], sunDir[2]);
+        gl.uniform1f(SU('skyR'), R);
+        gl.uniform1f(SU('uSkyFade'), skyFade);
+        gl.disable(gl.DEPTH_TEST);
+        gl.bindVertexArray(skyVao);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.enable(gl.DEPTH_TEST);
+      }
+    }
 
     gl.enable(gl.DEPTH_TEST);
     // Back-face culling: the globe's FAR (back) hemisphere quads were drawing over the

@@ -102,11 +102,11 @@ function jsSnoise3(px,py,pz){
 }
 function jsBroadShape(dx,dy,dz){
   const r=Math.hypot(dx,dy,dz)||1; dx/=r; dy/=r; dz/=r;
-  let amp=6500.0, freq=3.0, sum=0.0;   // A0=6500, off=-900: matches GLSL broadShapeM (one-fractal collapse)
+  let amp=6500.0, freq=0.75, sum=0.0;   // A0=6500, off=-500: matches GLSL broadShapeM (one-fractal collapse)
   // hi-freq elevation noise 4x cut (user 2026-06-06): the GPU broadShapeM scales the o>=6 fine band by
   // uHiFreqCut (0.25); mirror it here so the collision FALLBACK height tracks the rendered surface.
-  for(let o=0;o<14;o++){ let nn=jsSnoise3(dx*freq,dy*freq,dz*freq); if(o>=6) nn*=0.25; sum+=amp*nn; amp*=(o<6?0.6:0.82); freq*=2.0; }
-  return sum-900.0;   // metres, neutral relief (reliefMul=1, ridgeMul=0)
+  for(let o=0;o<14;o++){ let nn=jsSnoise3(dx*freq,dy*freq,dz*freq); if(o>=6) nn*=0.25; sum+=amp*nn; amp*=(o<6?0.66:0.80); freq*=2.0; }
+  return sum-500.0;   // metres, neutral relief (reliefMul=1, ridgeMul=0)
 }
 
 // ---- Vector helpers (used by the free-fly camera + WebGL2 sun/orientation math).
@@ -372,8 +372,18 @@ function frameLoop(){
       // The orchestrator works in METERS (its producer generates meter-scale elevation).
       // We drive it in meter-space and scale the km-unit camera into meters via
       // WEBGL2_M_PER_UNIT below.
+      // SPLITFACTOR PIN (user 2026-06-14): set 0.28 BEFORE orch init so the FIRST quadtree build uses
+      // it -- otherwise window.__splitFactor is undefined for the first frames and the orchestrator's
+      // altitude ramp (planet-orchestrator.js:445, taken when __splitFactor==null) overrides any opts
+      // default. gen-controls re-affirms the same 0.28 on apply(). 0.28 lands ~500-600 quads at the
+      // deck; splitDist floors at 1.1 so this is near the coarse limit.
+      if (window.__splitFactor == null) window.__splitFactor = 0.28;
       import('./src/planet-orchestrator.js')
-        .then(m => m.initMapspinnerPlanet(glw, { radius: WEBGL2_TERRAIN_R_M, frustumCull: false }))
+        .then(m => m.initMapspinnerPlanet(glw, { radius: WEBGL2_TERRAIN_R_M, frustumCull: false,
+          // FPS lever (2026-06-14): mesh GRID is overridable via ?grid=N for live triangle-count
+          // A/B (the bottleneck is triangle/vertex throughput, not the broadShapeM ALU -- octMax
+          // 12->3 left frame time flat). Absent param falls through to gl-render's 16 default.
+          gridMeshSize: ((new URLSearchParams(location.search).get('grid')|0) || undefined) }))
         .then(orch => { window.__planetOrch = orch; window.__planetOrchGL = glw; window.__planetOrchStatus='ready';
           import('./src/terrain-gen-controls.js').then(()=>{ try{ window.__gen && window.__gen.apply(); }catch(_){} }).catch(e=>console.warn('gen-controls',e)); })
         .catch(e => { window.__planetOrchStatus='error:'+(e.message||e); console.error('orch init',e); });
@@ -522,7 +532,7 @@ function frameLoop(){
   // a height above an inflated reference -> the eye was really ground+margin+2m, not 2m.) The mirror
   // fallback keeps a small +3m only because the CPU jsBroadShape can under-predict vs the GPU.
   if (gpuM != null && isFinite(gpuM)) {
-    renderedM = gpuM;   // GPU-exact rendered height (may be negative = seabed)
+    renderedM = gpuM + 1.0;   // +1m margin for sub-vertex micro-relief (vtxDisplace peaks exceed 2m in rugged terrain)
   } else {
     renderedM = jsBroadShape(cam.pos[0], cam.pos[1], cam.pos[2]) + 3.0;  // mirror fallback (CPU under-predicts)
   }
@@ -569,7 +579,7 @@ function frameLoop(){
     // at 2 by a diagnostic turned a dropdown pick of 1 into 2|1=3 (invalid mode -> silent lit) = the
     // 'render menu does nothing' report. Explicit precedence: override wins when set, else the menu.
     const _dmEff = (window.__displayMode != null ? window.__displayMode : cam.displayMode) | 0;
-    const fr = window.__planetOrch.frame(eyeM, tgtM, 45*Math.PI/180, _dmEff, _sun, oceanTime, cam.up);
+    const fr = window.__planetOrch.frame(eyeM, tgtM, 45*Math.PI/180, _dmEff, _sun, oceanTime, cam.up, surfElev);
     window.__webglFrame = fr;
     // First rendered frame: tear down the loading overlay (compile finished, terrain is on screen).
     if (window.__loadOverlay !== false) { const ov=document.getElementById('__loadOverlay');

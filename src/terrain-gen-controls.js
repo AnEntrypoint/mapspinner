@@ -26,7 +26,7 @@ const DEFAULTS = {
     fsNormal: 0,           // window.__fsNormal (cross-dFdx FS normal, diagnostic, default off)
   },
   lod: {
-    splitFactor: null,     // window.__splitFactor (null = orchestrator altitude ramp)
+    splitFactor: 0.28,    // window.__splitFactor (null = orchestrator altitude ramp). 0.4->0.28 (user 2026-06-14: ~600 quads at the deck)
   },
   geometry: {
     elevEdgeInset: 0.5,    // window.__elevEdgeInset (mesh-edge elevation sample inset; gl-render)
