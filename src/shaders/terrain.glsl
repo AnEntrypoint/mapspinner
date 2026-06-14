@@ -964,20 +964,24 @@ void main() {
         // so it never drops below the mesh cell (would re-alias) nor exceeds ~1/3 the tile.
         highp float nStepM = (uNrmStepM > 0.0) ? uNrmStepM : 300.0;
         highp float duP = clamp(nStepM / max(defOffset.z, 1.0), 1.0 / ((uGrid > 0.0) ? uGrid : 16.0), 0.34);
-        highp float hPU = 0.0, hMU = 0.0, hPV = 0.0, hMV = 0.0;
-        highp vec3 dPU = dir0, dMU = dir0, dPV = dir0, dMV = dir0;
-        int fdIters = (uGrid >= 0.0) ? 4 : 1;   // 4 offset taps; runtime-bounded (FXC unroll-defeat, see uOctMax)
+        // 3-TAP FORWARD (FPS push 2026-06-14: target 144fps): center + 2 FORWARD offsets, NOT the 5-tap
+        // central. The central was added for jaggedness, but the actual jaggedness root was the dFdx(vH)
+        // relief term (now removed) -- at the LOW-PASS step (duP ~300m >> vertex spacing) the forward vs
+        // central asymmetry is negligible while it costs 3 composeHeight/vertex instead of 5 (-40% of the
+        // dominant VS cost). Still captures vtxDisplace (faceWarp shifts both dir+faceLocal per tap).
+        highp float hPU = 0.0, hPV = 0.0;
+        highp vec3 dPU = dir0, dPV = dir0;
+        int fdIters = (uGrid >= 0.0) ? 2 : 1;   // 2 forward offset taps (+ center hN0) = 3-tap normal; runtime-bounded (FXC unroll-defeat)
         for (int i = 0; i < fdIters; i++) {
-            highp vec2 off = (i == 0) ? vec2(duP, 0.0) : (i == 1) ? vec2(-duP, 0.0) : (i == 2) ? vec2(0.0, duP) : vec2(0.0, -duP);
+            highp vec2 off = (i == 0) ? vec2(duP, 0.0) : vec2(0.0, duP);
             highp vec2 fl = faceWarp((vertex.xy + off) * defOffset.z + defOffset.xy);
             highp vec3 dd = normalize(defLocalToWorld * vec3(fl, defRadius));
             highp float hh = composeHeight(dd, fl, defOffset.z);
-            if (i == 0) { hPU = hh; dPU = dd; } else if (i == 1) { hMU = hh; dMU = dd; }
-            else if (i == 2) { hPV = hh; dPV = dd; } else { hMV = hh; dMV = dd; }
+            if (i == 0) { hPU = hh; dPU = dd; } else { hPV = hh; dPV = dd; }
         }
-        highp vec3 wPU = dPU * (defRadius + hPU), wMU = dMU * (defRadius + hMU);
-        highp vec3 wPV = dPV * (defRadius + hPV), wMV = dMV * (defRadius + hMV);
-        vN = normalize(cross(wPU - wMU, wPV - wMV));
+        highp vec3 wC = dir0 * (defRadius + hN0);
+        highp vec3 wU = dPU * (defRadius + hPU), wV = dPV * (defRadius + hPV);
+        vN = normalize(cross(wU - wC, wV - wC));
         if (dot(vN, dir0) < 0.0) vN = -vN;   // keep it outward (terrain has no overhangs)
     }
     highp float h = hN0;
