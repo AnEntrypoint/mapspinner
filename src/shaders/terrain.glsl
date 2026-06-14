@@ -1780,6 +1780,7 @@ void main() {
     // vH > -2 gate cut the photo textures at the waterline, leaving the seabed flat-colored.
     float texFarFade = 1.0 - smoothstep(8000.0, 10000.0, pxWorld);
     if (uHasSurfTex > 0.5 && uTexMix > 0.001 && texFarFade > 0.001) {
+        vec3 biomeC = albedo;   // SUBTLE landscape color variation (user 2026-06-14 're-introduce ... use existing data, make it subtle'): the macro biome/climate color is ALREADY computed; save it now and mix a touch back after the material override (no new computation).
         // material weights from the existing gates (climate = vClimate: z=temp, w=humid)
         // SAND GATE = THE MACRO DESERT GATE (user 2026-06-11 'all the grassy areas need to have the
         // grass texture'): the old humid<0.42 band splatted SAND across savanna/steppe/meadow-edge
@@ -1908,7 +1909,10 @@ void main() {
         highp vec3 wt4 = wt * 4.0;
         vec4 albA = surfTriTap(uSurfAlb, wt4, tw, lA);
         vec3 cA = vec3(dot(albA.rgb, LUMA));
-        vec3 nA = surfTriNrm(uSurfNrm, wt4, tw, lA, n) * 1.4 + surfTriNrm(uSurfNrm, wt, tw, lA, n) * 0.8;   // high + low-octave normal
+        // 3 normal octaves (user 2026-06-14 'add an even lower freq octave, displacement/normals only,
+        // 4x less frequent'): wt4 high (detail) + wt low (2.4km) + wt*0.25 VERY-low (9.6km) -- the very-
+        // low one breaks the far repetition even more. Normals/displacement only (no albedo).
+        vec3 nA = surfTriNrm(uSurfNrm, wt4, tw, lA, n) * 1.4 + surfTriNrm(uSurfNrm, wt, tw, lA, n) * 0.8 + surfTriNrm(uSurfNrm, wt * 0.25, tw, lA, n) * 0.55;
         float dispA = albA.a;
         // NO BIOME COLOR INHERITANCE (user 2026-06-14 'take away all biome color inheritance, it will
         // speed it up' -- and fixes 'sand near grass tinted green'): each layer wears its OWN material
@@ -1920,7 +1924,7 @@ void main() {
         if (wB > 0.02) {   // second layer only where a real transition exists
             vec4 albB = surfTriTap(uSurfAlb, wt4, tw, lB);
             vec3 cB = vec3(dot(albB.rgb, LUMA));
-            vec3 nB = surfTriNrm(uSurfNrm, wt4, tw, lB, n) * 1.4 + surfTriNrm(uSurfNrm, wt, tw, lB, n) * 0.8;   // high + low-octave normal
+            vec3 nB = surfTriNrm(uSurfNrm, wt4, tw, lB, n) * 1.4 + surfTriNrm(uSurfNrm, wt, tw, lB, n) * 0.8 + surfTriNrm(uSurfNrm, wt * 0.25, tw, lB, n) * 0.55;   // + very-low octave
             float dispB = albB.a;
             // HEIGHT-BLEND POKE-THROUGH (user 'each texture's higher areas should poke through the other,
             // offset by the ramp'): height = displacement + a weight-ramp offset (gate positions the
@@ -1953,8 +1957,10 @@ void main() {
             // grass/sand interlocks (fingers) at ALL distances -- still the texture DISPLACEMENT, not noise.
             float dispA_lo = surfTriTap(uSurfAlb, wt, tw, lA).a;
             float dispB_lo = surfTriTap(uSurfAlb, wt, tw, lB).a;
-            float hA = (dispA - 0.5) * 1.8 + (dispA_lo - 0.5) * 2.8 + wRamp + ordA * 0.45;
-            float hB = (dispB - 0.5) * 1.8 + (dispB_lo - 0.5) * 2.8 - wRamp + ordB * 0.45;
+            float dispA_vlo = surfTriTap(uSurfAlb, wt * 0.25, tw, lA).a;   // very-low (9.6km) displacement -> even-larger-scale boundary undulation (less repetitive far)
+            float dispB_vlo = surfTriTap(uSurfAlb, wt * 0.25, tw, lB).a;
+            float hA = (dispA - 0.5) * 1.5 + (dispA_lo - 0.5) * 2.2 + (dispA_vlo - 0.5) * 2.2 + wRamp + ordA * 0.45;
+            float hB = (dispB - 0.5) * 1.5 + (dispB_lo - 0.5) * 2.2 + (dispB_vlo - 0.5) * 2.2 - wRamp + ordB * 0.45;
             float mh = max(hA, hB) - bw;
             float waH = max(hA - mh, 0.0), wbH = max(hB - mh, 0.0);
             float bSharp = waH / max(waH + wbH, 1e-4);
@@ -2006,6 +2012,7 @@ void main() {
         // base = flat MATERIAL color (far/low-k); near = structured detail. The macro biome albedo is no
         // longer the base, so NO biome color bleeds into the ground (user 'take away all biome inheritance').
         albedo = clamp(mix(texMatColor, detail, k), 0.0, 1.0);
+        albedo = mix(albedo, biomeC, 0.16);   // subtle climate/biome tint back on top of the material color (deserts tanner, forests greener) -- at all distances for landscape variety
         // FAKE MIDDAY AO from the displacement (user 2026-06-14 'darken the deepest parts of the
         // displacement textures a little'): the texture's LOWEST displacement = crevices/pits; darken
         // them ~18% so the surface reads as sunlit-from-above with soft self-occlusion in the lows.
