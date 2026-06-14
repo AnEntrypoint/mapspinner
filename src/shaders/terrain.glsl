@@ -634,7 +634,11 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){   // W7
       // the field -> seam-safe + the collision probe shares it. GUARD: a stale/unset uniform (0) would
       // disable the shelf -> default 600 so it always applies. window.__beachShelf dials S live.
       highp float bShelf = uBeachShelfM > 1.0 ? uBeachShelfM : 600.0;
-      if (h < bShelf) h = h * h / bShelf;
+      // C1-CONTINUOUS shelf (user 2026-06-14 'hard shading line where landscape meets beach'): the old
+      // h*h/S met the identity at h=S with SLOPE 2 (vs 1) -> a derivative kink -> the slope-keyed shading
+      // (rock/AO/material) SNAPPED into a hard line at the shelf top. f = (h*h/S)*(2 - h/S) keeps f(0)=0,
+      // f'(0)=0 (flat at the waterline = wide beach) AND f(S)=S, f'(S)=1 (smooth join to natural land).
+      if (h < bShelf) h = (h * h / bShelf) * (2.0 - h / bShelf);
   }
   // displacement now continues UNDERWATER (the old land-only gate served the flat-clamped ocean,
   // gone since 026d530): the seabed carries the same micro-relief as land = realistic continuation.
@@ -853,7 +857,8 @@ void main() {
         vH = max(vH, -11000.0);   // cap depth at Mariana Trench (~11km)
     } else {
         highp float bShelf = uBeachShelfM > 1.0 ? uBeachShelfM : 600.0;   // LAND COASTAL SHELF -- mirror composeHeight exactly (wide beach, user 2026-06-14); guard stale/unset uniform
-        if (vH < bShelf) vH = vH * vH / bShelf;
+        if (vH < bShelf) vH = (vH * vH / bShelf) * (2.0 - vH / bShelf);   // C1-continuous (mirror composeHeight) -- removes the beach-top slope kink / hard shading line
+
     }
     vH += vDisp;
     vH += detailFbm(dir0) * uDetailOverlay * 30.0 * step(0.0, vH);

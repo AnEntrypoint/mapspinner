@@ -780,7 +780,14 @@ export async function initMapspinnerRender(gl, opts = {}) {
     const camDist = Math.hypot(cam.eye[0], cam.eye[1], cam.eye[2]);
     const alt = Math.max(0.0, camDist - R);
     const altAboveTerrain = Math.max(0.001, alt - R * (cam.surfElev || 0));
-    const horizon = Math.sqrt(Math.max(0.0, camDist*camDist - R*R));
+    // FAR-PLANE HORIZON RADIUS = R - 500m (user 2026-06-14: 'nearby mountains disappear at water level;
+    // adjust that level to 500m under water'). The far plane tracks the sea-level horizon = sqrt(camDist^2
+    // - R^2), which at the deck (camDist~=R) collapses to a few hundred metres -> coastal mountains a km
+    // out fall beyond the far plane and vanish. Dropping the horizon reference radius 500m below sea level
+    // extends the horizon to tens of km at low altitude so near-shore relief stays in view (negligible
+    // depth-precision cost: 500m vs R~6.37e6). Both the cull and the draw use this (single source).
+    const RHORIZON = R - 500.0;
+    const horizon = Math.sqrt(Math.max(0.0, camDist*camDist - RHORIZON*RHORIZON));
     // MATCH render()'s near exactly (2026-06-14 jank fix): the cull frustum must use the SAME near
     // as the draw frustum, else behind-limb/screen-AABB culling diverges from what is actually drawn
     // at the deck (cull near was max(*0.1,0.1) while render used the <2m 0.05 branch).
@@ -816,7 +823,14 @@ export async function initMapspinnerRender(gl, opts = {}) {
     const camDist = Math.hypot(cam.eye[0], cam.eye[1], cam.eye[2]);
     const alt = Math.max(0.0, camDist - R);
     const altAboveTerrain = Math.max(0.001, alt - R * (cam.surfElev || 0));
-    const horizon = Math.sqrt(Math.max(0.0, camDist*camDist - R*R));
+    // FAR-PLANE HORIZON RADIUS = R - 500m (user 2026-06-14: 'nearby mountains disappear at water level;
+    // adjust that level to 500m under water'). The far plane tracks the sea-level horizon = sqrt(camDist^2
+    // - R^2), which at the deck (camDist~=R) collapses to a few hundred metres -> coastal mountains a km
+    // out fall beyond the far plane and vanish. Dropping the horizon reference radius 500m below sea level
+    // extends the horizon to tens of km at low altitude so near-shore relief stays in view (negligible
+    // depth-precision cost: 500m vs R~6.37e6). Both the cull and the draw use this (single source).
+    const RHORIZON = R - 500.0;
+    const horizon = Math.sqrt(Math.max(0.0, camDist*camDist - RHORIZON*RHORIZON));
     const near = altAboveTerrain < 2.0 ? 0.05 : Math.max(altAboveTerrain * 0.1, 0.05);
     const _fBlend = Math.min(1.0, Math.max(0.0, (alt - 500000.0) / 4500000.0));
     const farGround = Math.max(horizon, alt * 8.0);
