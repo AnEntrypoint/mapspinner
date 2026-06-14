@@ -1921,7 +1921,7 @@ void main() {
         // 3 normal octaves (user 2026-06-14 'add an even lower freq octave, displacement/normals only,
         // 4x less frequent'): wt4 high (detail) + wt low (2.4km) + wt*0.25 VERY-low (9.6km) -- the very-
         // low one breaks the far repetition even more. Normals/displacement only (no albedo).
-        vec3 nA = surfTriNrm(uSurfNrm, wt4, tw, lA, n) * 2.0 + surfTriNrm(uSurfNrm, wt, tw, lA, n) * 0.9 + surfTriNrm(uSurfNrm, wt * 0.25, tw, lA, n) * 1.1;   // REBALANCED (user 2026-06-14 'higher octaves appear gone'): very-low 2.4 swamped the detail -> high (wt4) UP to 2.0 (dominant detail), very-low DOWN to 1.1 (still visible broad) (user 2026-06-14 'dont really see the lower freq octave yet'): at a 9.6km period its slope is gentle, so it needs more weight to read as broad undulation
+        vec3 nA = surfTriNrm(uSurfNrm, wt4, tw, lA, n) * 2.0 + surfTriNrm(uSurfNrm, wt, tw, lA, n) * 0.9;   // high (wt4, detail) + mid (wt, 2.4km) octaves. Lowest (wt*0.25, 9.6km) REMOVED 2026-06-14 (user 'keep the mid one, just the lowest one to be removed' -- very low visual impact)
         float dispA = albA.a;
         // NO BIOME COLOR INHERITANCE (user 2026-06-14 'take away all biome color inheritance, it will
         // speed it up' -- and fixes 'sand near grass tinted green'): each layer wears its OWN material
@@ -1933,7 +1933,7 @@ void main() {
         if (wB > 0.02) {   // second layer only where a real transition exists
             vec4 albB = surfTriTap(uSurfAlb, wt4, tw, lB);
             vec3 cB = vec3(dot(albB.rgb, LUMA));
-            vec3 nB = surfTriNrm(uSurfNrm, wt4, tw, lB, n) * 2.0 + surfTriNrm(uSurfNrm, wt, tw, lB, n) * 0.9 + surfTriNrm(uSurfNrm, wt * 0.25, tw, lB, n) * 1.1;   // REBALANCED (match nA)
+            vec3 nB = surfTriNrm(uSurfNrm, wt4, tw, lB, n) * 2.0 + surfTriNrm(uSurfNrm, wt, tw, lB, n) * 0.9;   // high + mid octaves; lowest removed (match nA)
             float dispB = albB.a;
             // HEIGHT-BLEND POKE-THROUGH (user 'each texture's higher areas should poke through the other,
             // offset by the ramp'): height = displacement + a weight-ramp offset (gate positions the
@@ -1966,10 +1966,9 @@ void main() {
             // grass/sand interlocks (fingers) at ALL distances -- still the texture DISPLACEMENT, not noise.
             float dispA_lo = surfTriTap(uSurfAlb, wt, tw, lA).a;
             float dispB_lo = surfTriTap(uSurfAlb, wt, tw, lB).a;
-            float dispA_vlo = surfTriTap(uSurfAlb, wt * 0.25, tw, lA).a;   // very-low (9.6km) displacement -> even-larger-scale boundary undulation (less repetitive far)
-            float dispB_vlo = surfTriTap(uSurfAlb, wt * 0.25, tw, lB).a;
-            float hA = (dispA - 0.5) * 1.5 + (dispA_lo - 0.5) * 2.2 + (dispA_vlo - 0.5) * 2.2 + wRamp + ordA * 0.45;
-            float hB = (dispB - 0.5) * 1.5 + (dispB_lo - 0.5) * 2.2 + (dispB_vlo - 0.5) * 2.2 - wRamp + ordB * 0.45;
+            // very-low (9.6km) displacement taps REMOVED 2026-06-14 (user 'just the lowest one to be removed'): keep high (dispA) + mid (dispA_lo) for the LOD-stable boundary fingering.
+            float hA = (dispA - 0.5) * 1.5 + (dispA_lo - 0.5) * 2.2 + wRamp + ordA * 0.45;
+            float hB = (dispB - 0.5) * 1.5 + (dispB_lo - 0.5) * 2.2 - wRamp + ordB * 0.45;
             float mh = max(hA, hB) - bw;
             float waH = max(hA - mh, 0.0), wbH = max(hB - mh, 0.0);
             float bSharp = waH / max(waH + wbH, 1e-4);
