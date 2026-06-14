@@ -198,6 +198,7 @@ float riverCarveM(vec3 dir, out float wet){
 float riverCarveM(vec3 dir){ float w; return riverCarveM(dir, w); }
 const float CANYON_INCISE_DEPTH = 1400.0;  // metres at the gorge floor (user 2026-06-02: deepen+widen so canyons visibly sculpt the elevation; was 480m = invisible vs multi-km relief)
 uniform float canyonDepthMul;              // LIVE canyon-depth lever (window.__canyonDepth; 1.0 default)
+uniform float uVsCheap;                     // VS profiling: >0.5 skips all carves in composeHeight (window.__vsCheap; gpuTimer carve-cost A/B)
 // W5: uNrmGain deleted (only fed the removed VS slopeGain).
 uniform float uVertexAO;                   // per-vertex shading/AO strength lever (window.__vertexAO; 1.0 default)
 // SEPARATE WATER SURFACE (user 2026-06-11 'the ocean should be a separate surface'): the same
@@ -643,6 +644,10 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){   // W7
   // Shore-gated (fades in over the first 250m of land) so the coastline and the flat water planes are
   // untouched and no noise islets pop offshore. The VS FD lit-normal picks it up automatically.
   h += detailFbm(dir0) * uDetailOverlay * 30.0 * step(0.0, h);
+  // VS-PROFILING GATE (2026-06-14): uVsCheap>0.5 returns BEFORE all the carves (valley/lake/river/
+  // canyon/cliff/dune) so gpuTimer can A/B the per-vertex CARVE cost (the doctrine's suspected
+  // dominant term). Transient profiling toggle (window.__vsCheap); 0 = full path (default).
+  if (uVsCheap > 0.5) return h;
   // FLAT-AREA VALLEY NETWORKS + LAKES (user 2026-06-13): incised valley systems in low-relief
   // plains. Replaces the old noise bumps with a ridge-field valley network for connected
   // linear depressions and lakes that fill the valley bottoms. Fades to zero by reliefMul ~0.5.

@@ -286,6 +286,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(loc('uDetailOverlay'), g('detailOverlay', 6.0));  // perlin-everywhere ELEVATION term in composeHeight -- probe must match the VS or collision diverges
     gl.uniform1f(loc('vtxDetail'),      g('vtxDetail', 1.0));    // DECISIVE: vtxDisplace strength (early-return on 0)
     gl.uniform1f(loc('canyonDepthMul'), g('canyonDepth', 1.0));
+    gl.uniform1f(loc('uVsCheap'),       (typeof window!=='undefined' && window.__vsCheap) ? 1.0 : 0.0);   // VS carve-cost profiling A/B
     gl.uniform1f(loc('uBeachShelfM'),   g('beachShelf', 2400.0));   // land coastal shelf (geometry); probe MUST match render
     gl.uniform1f(loc('cliffAmt'),       g('cliffAmt', 1.0));
     gl.uniform1i(loc('uFloatLinearOK'), _halfFloatLinearOK ? 1 : 0);
@@ -806,6 +807,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // literals so the look is unchanged until the user dials a window global.
     const _g = (n,d)=> (typeof window!=='undefined' && window['__'+n]!=null) ? +window['__'+n] : d;
     gl.uniform1f(U('canyonDepthMul'), _g('canyonDepth', 1.0));
+    gl.uniform1f(U('uVsCheap'),       (typeof window!=='undefined' && window.__vsCheap) ? 1.0 : 0.0);   // VS carve-cost profiling A/B
     gl.uniform1f(U('uBeachShelfM'),   _g('beachShelf', 2400.0));   // land coastal shelf (geometry): h<S eased h*h/S = wide beach
     gl.uniform1f(U('uHiFreqCut'),     _g('hiFreqCut', 0.25));   // 0.5->0.25 (2026-06-10 'blotchy' -- see setComposeHeightUniforms)
     gl.uniform1f(U('uVertexAO'),      _g('vertexAO', 1.0));    // per-vertex shading/AO strength (DEFECT 2, 2026-06-06)
