@@ -1798,7 +1798,12 @@ void main() {
         highp vec3 bwDir = nWorld;
         // 3-oct (added the ~1km octave, user 2026-06-14 'make biome bands more interesting') -> the
         // texture-splat rock/snow/beach edges break into finer fingers as you approach, not a hard band.
-        float warpN = snoise3(bwDir * 3325.0) + 0.5 * snoise3(bwDir * 7750.0) + 0.35 * snoise3(bwDir * 17000.0);   // ~ +/-1.8
+        // HIGHER-FREQ octaves added (user 2026-06-14 'sand-grass crossover too straight; snow warps ok
+        // but sand-grass doesnt'): the snow line follows the mountains so it reads wavy, but the beach
+        // sits on flat coastal land where the old 12/5/2.3km warp shifted the line UNIFORMLY = still a
+        // straight horizontal line. Add ~900m + ~360m octaves so the beach/biome edges wiggle locally.
+        float warpN = snoise3(bwDir * 3325.0) + 0.5 * snoise3(bwDir * 7750.0) + 0.4 * snoise3(bwDir * 17000.0)
+                    + 0.45 * snoise3(bwDir * 45000.0) + 0.32 * snoise3(bwDir * 110000.0);   // ~ +/-2.6
         // BEACH sand gate tied to uBeachTopM (so the sand TEXTURE scales with the wide beach, not a
         // hardcoded 80m strip) + the shared warp on its LAND edge so the beach->grass line is irregular.
         // FINE BREAK on the grass->sand line (user 2026-06-14 'still a hard straight grass-sand line up
@@ -1937,15 +1942,26 @@ void main() {
             // displacement crossover) and STRONG at the ends so the fingers taper to nothing before the
             // gate cuts off -> the ramp completes smoothly, no end line.
             float wRamp = (bAB - 0.5) * mix(1.4, 4.0, clamp(abs(bAB - 0.5) * 2.0, 0.0, 1.0));   // mid 0.6->1.4 (user 2026-06-14 'all crossover bands a bit wide, rock too'): stronger weight bias = NARROWER displacement crossover on every pair
-            float hA = (dispA - 0.5) * 3.0 + wRamp;
-            float hB = (dispB - 0.5) * 3.0 - wRamp;
+            // OVERLAY ORDER (user 2026-06-14 'flip the order of the textures overlay on the ramps, grass
+            // goes over sand etc'): bias the height by a per-material overlay priority so the COVERING
+            // material wins the crossover -> grass overlays sand+rock, snow overlays all (sand<rock<grass<snow).
+            float ordA = lA < 0.5 ? 0.6 : (lA < 1.5 ? 0.3 : (lA < 2.5 ? 0.0 : 1.0));
+            float ordB = lB < 0.5 ? 0.6 : (lB < 1.5 ? 0.3 : (lB < 2.5 ? 0.0 : 1.0));
+            // LOD-STABLE boundary (user 2026-06-14 'still see the hard color line' -- the high-octave
+            // displacement mips FLAT at distance so the crossover collapsed to a smooth ramp = a line/band).
+            // Add the LOW-octave (2.4km tile) displacement, which stays varied much farther out, so the
+            // grass/sand interlocks (fingers) at ALL distances -- still the texture DISPLACEMENT, not noise.
+            float dispA_lo = surfTriTap(uSurfAlb, wt, tw, lA).a;
+            float dispB_lo = surfTriTap(uSurfAlb, wt, tw, lB).a;
+            float hA = (dispA - 0.5) * 1.8 + (dispA_lo - 0.5) * 2.8 + wRamp + ordA * 0.45;
+            float hB = (dispB - 0.5) * 1.8 + (dispB_lo - 0.5) * 2.8 - wRamp + ordB * 0.45;
             float mh = max(hA, hB) - bw;
             float waH = max(hA - mh, 0.0), wbH = max(hB - mh, 0.0);
             float bSharp = waH / max(waH + wbH, 1e-4);
             texAlb = vec4(mix(cB, cA, bSharp), mix(dispB, dispA, bSharp));
             texNrm = mix(nB, nA, bSharp);
             vec3 mcB = lB < 0.5 ? bcGrass : (lB < 1.5 ? bcRock : (lB < 2.5 ? bcShore : bcSnow));
-            texMatColor = mix(mcB, mcA, bSharp);   // height-blended MATERIAL color (no biome)
+            texMatColor = mix(mcB, mcA, bSharp);   // material color, broken up by the (noise-augmented) bSharp below
         }
         // MATCH COLOR TO NORMAL (user 2026-06-14 'green grassy patches with the rock normals -- should be
         // rock colored or grass normals'): texNrm follows the displacement height-blend (rock on bumps in
