@@ -623,7 +623,14 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){   // W7
   // SLOPE down to the abyssal plain (which keeps its raw depth). Monotone remap of h, pure fn of
   // the field -> seam-safe, LOD-invariant, and the collision probe shares it by construction.
   if (h < 0.0) {
-      highp float d = -h;
+      // C1 WATERLINE (user 2026-06-14 'geometry crease + shading/rock hard line where land meets beach'):
+      // the land shelf is FLAT at the waterline (slope 0) but the seabed used slope 0.24 from h=0 -> a
+      // slope discontinuity = a crease (+ the shading brightness line + rock where steep) right at the
+      // shore. Ease the shallow seabed with the SAME flat-at-waterline shelf curve (mirror of the land
+      // side) before the 0.24/1.19 bathymetry, so BOTH sides meet the waterline with slope 0 = no crease.
+      highp float bShelfS = uBeachShelfM > 1.0 ? uBeachShelfM : 600.0;
+      highp float d0 = -h;
+      highp float d = (d0 < bShelfS) ? (d0 * d0 / bShelfS) * (2.0 - d0 / bShelfS) : d0;
       h = -(min(d, 500.0) * 0.24 + max(d - 500.0, 0.0) * 1.19);
       h = max(h, -11000.0);   // cap depth at Mariana Trench (~11km)
   } else {
@@ -852,7 +859,9 @@ void main() {
     // shelf/slope bathymetry remap + underwater displacement -- MUST mirror composeHeight exactly
     // (this is the FS-material running value; composeHeight is the geometry/probe height).
     if (vH < 0.0) {
-        highp float dSea = -vH;
+        highp float bShelfS = uBeachShelfM > 1.0 ? uBeachShelfM : 600.0;   // C1 waterline -- mirror composeHeight exactly
+        highp float dSea0 = -vH;
+        highp float dSea = (dSea0 < bShelfS) ? (dSea0 * dSea0 / bShelfS) * (2.0 - dSea0 / bShelfS) : dSea0;
         vH = -(min(dSea, 500.0) * 0.24 + max(dSea - 500.0, 0.0) * 1.19);
         vH = max(vH, -11000.0);   // cap depth at Mariana Trench (~11km)
     } else {
