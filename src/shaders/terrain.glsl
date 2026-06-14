@@ -1812,7 +1812,7 @@ void main() {
         // displacement height-blend (small bw below) so sand vs grass is a sharp choice distributed by
         // texture relief = interlocking fingers that thin out with height, never a blendy fade.
         float beachW = warpN * uBeachTopM * 0.30;   // warp amplitude scales with the beach band height
-        float beach = (1.0 - smoothstep(beachW, uBeachTopM * 4.5 + beachW, vH))   // 2.5->4.5x: wider grass<->sand gradient (user 2026-06-14)
+        float beach = (1.0 - smoothstep(beachW, uBeachTopM * 0.5 + beachW, vH))   // 2.0->0.5x: 4x narrower grass<->sand crossover band (user 2026-06-14)
                     * (1.0 - smoothstep(0.18, 0.55, slope));
         // SAND BLEED (2026-06-13): patchy sand spills above the main beach line, modulated by VS
         // warp noise so the edge reads as wind-blown pockets, not a strict elevation cut. At peak it
@@ -1926,8 +1926,19 @@ void main() {
             // crossovers'): a weaker weight ramp lets the DISPLACEMENT decide the winner over a WIDER
             // weight range, so the near-hard displacement-driven distribution spans a broad margin for
             // EVERY pair (rock-slope, snow, biome...), not just the explicitly-widened beach gate.
-            float hA = dispA + (bAB - 0.5) * 0.5;
-            float hB = dispB + (0.5 - bAB) * 0.5;
+            // AMPLIFY the displacement's influence (user 2026-06-14 'the high-freq textures arent
+            // affecting the crossover point yet'): the raw displacement sits near its 0.5 mean so the
+            // per-layer DIFFERENCE was tiny -> the crossover was weight-driven, not texture-driven. Center
+            // + scale it (x3) so the high-freq relief clearly decides the boundary; the weight just
+            // positions it. (Mips average the displacement to ~0.5 at distance -> auto-smooth far edge.)
+            // NON-LINEAR weight ramp (user 2026-06-14 'the ramp isnt complete enough between sections ->
+            // cutoff lines at the end'): a CONSTANT weight bias let displacement fingers survive right up
+            // to where the gate drops the layer = a hard cutoff line. Make the bias WEAK mid-ramp (wide
+            // displacement crossover) and STRONG at the ends so the fingers taper to nothing before the
+            // gate cuts off -> the ramp completes smoothly, no end line.
+            float wRamp = (bAB - 0.5) * mix(1.4, 4.0, clamp(abs(bAB - 0.5) * 2.0, 0.0, 1.0));   // mid 0.6->1.4 (user 2026-06-14 'all crossover bands a bit wide, rock too'): stronger weight bias = NARROWER displacement crossover on every pair
+            float hA = (dispA - 0.5) * 3.0 + wRamp;
+            float hB = (dispB - 0.5) * 3.0 - wRamp;
             float mh = max(hA, hB) - bw;
             float waH = max(hA - mh, 0.0), wbH = max(hB - mh, 0.0);
             float bSharp = waH / max(waH + wbH, 1e-4);
