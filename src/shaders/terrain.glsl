@@ -1812,7 +1812,7 @@ void main() {
         // displacement height-blend (small bw below) so sand vs grass is a sharp choice distributed by
         // texture relief = interlocking fingers that thin out with height, never a blendy fade.
         float beachW = warpN * uBeachTopM * 0.30;   // warp amplitude scales with the beach band height
-        float beach = (1.0 - smoothstep(beachW, uBeachTopM * 2.5 + beachW, vH))
+        float beach = (1.0 - smoothstep(beachW, uBeachTopM * 4.5 + beachW, vH))   // 2.5->4.5x: wider grass<->sand gradient (user 2026-06-14)
                     * (1.0 - smoothstep(0.18, 0.55, slope));
         // SAND BLEED (2026-06-13): patchy sand spills above the main beach line, modulated by VS
         // warp noise so the edge reads as wind-blown pockets, not a strict elevation cut. At peak it
@@ -1905,6 +1905,11 @@ void main() {
         vec3 cA = vec3(dot(albA.rgb, LUMA));
         vec3 nA = surfTriNrm(uSurfNrm, wt4, tw, lA, n) * 1.4 + surfTriNrm(uSurfNrm, wt, tw, lA, n) * 0.8;   // high + low-octave normal
         float dispA = albA.a;
+        // NO BIOME COLOR INHERITANCE (user 2026-06-14 'take away all biome color inheritance, it will
+        // speed it up' -- and fixes 'sand near grass tinted green'): each layer wears its OWN material
+        // color (grass/rock/sand/snow), NOT the macro biome color. mcA = layer A's base color.
+        vec3 mcA = lA < 0.5 ? bcGrass : (lA < 1.5 ? bcRock : (lA < 2.5 ? bcShore : bcSnow));
+        vec3 texMatColor = mcA;
         vec4 texAlb = vec4(cA, dispA); vec3 texNrm = nA;
         float splatRock = (abs(lA - 1.0) < 0.5) ? 1.0 : 0.0;   // height-blend rock fraction (layer 1 = rock)
         if (wB > 0.02) {   // second layer only where a real transition exists
@@ -1928,14 +1933,14 @@ void main() {
             float bSharp = waH / max(waH + wbH, 1e-4);
             texAlb = vec4(mix(cB, cA, bSharp), mix(dispB, dispA, bSharp));
             texNrm = mix(nB, nA, bSharp);
-            splatRock = (abs(lA - 1.0) < 0.5 ? bSharp : 0.0) + (abs(lB - 1.0) < 0.5 ? (1.0 - bSharp) : 0.0);
+            vec3 mcB = lB < 0.5 ? bcGrass : (lB < 1.5 ? bcRock : (lB < 2.5 ? bcShore : bcSnow));
+            texMatColor = mix(mcB, mcA, bSharp);   // height-blended MATERIAL color (no biome)
         }
         // MATCH COLOR TO NORMAL (user 2026-06-14 'green grassy patches with the rock normals -- should be
         // rock colored or grass normals'): texNrm follows the displacement height-blend (rock on bumps in
         // the slope-transition band) but the macro albedo used the slope gate -> grass color under a rock
         // normal. Push the macro color toward bcRock by the splat's actual rock fraction so the COLOR
         // follows the same selection the NORMAL does (bounded -- splatRock is 0 where rock isn't in top-2).
-        albedo = mix(albedo, bcRock, splatRock * 0.8);
         float k = uTexMix * texFarFade;
         // macro-tinted detail (user 2026-06-10 'the textured patch must be tinted to the same shade
         // as the spot its replacing'): the texture contributes STRUCTURE + relative chroma only,
@@ -1949,7 +1954,7 @@ void main() {
         // deviation visible while the patch average lands exactly on the macro shade.
         float mA = uSurfMeanL[int(lA + 0.5)];
         float texL = wB > 0.02 ? mix(uSurfMeanL[int(lB + 0.5)], mA, bAB) : mA;
-        vec3 detail = texC * (albedo / max(texL, 0.02));
+        vec3 detail = texC * (texMatColor / max(texL, 0.02));   // MATERIAL color * structure (no biome inheritance)
         // ROCK SHOWS THE TRUE PHOTO (user 2026-06-10 'we still see the original rock texture --
         // replace completely'): tinting rock to the macro shade just reproduced the old grey/tan,
         // so the rock layer takes the raw photo color; grass/sand/snow stay shade-matched.
@@ -1966,8 +1971,9 @@ void main() {
         // low-freq albedo is now NORMALS-ONLY (texC is luma structure), so the old raw-photo 'identity'
         // hue is gone; texIdent == detail = MACRO color * structure (keeps rock its macro tan-grey, not
         // grey). The 4x detail carries the fine structure for every material.
-        vec3 texIdent = texC * (albedo / max(texL, 0.02));
-        albedo = clamp(mix(albedo, mix(detail, texIdent, photoF), k), 0.0, 1.0);
+        // base = flat MATERIAL color (far/low-k); near = structured detail. The macro biome albedo is no
+        // longer the base, so NO biome color bleeds into the ground (user 'take away all biome inheritance').
+        albedo = clamp(mix(texMatColor, detail, k), 0.0, 1.0);
         // FAKE MIDDAY AO from the displacement (user 2026-06-14 'darken the deepest parts of the
         // displacement textures a little'): the texture's LOWEST displacement = crevices/pits; darken
         // them ~18% so the surface reads as sunlit-from-above with soft self-occlusion in the lows.
