@@ -956,7 +956,14 @@ void main() {
         // and takes a CENTRAL (symmetric) world-space cross product = smooth AND matches the displaced
         // surface. ONE formula for every vert (no interior/edge split = no discontinuity); seam-safe because
         // adjacent same-LOD tiles sample the identical world offsets (the field is a pure fn of world pos).
-        highp float duP = 1.5 / ((uGrid > 0.0) ? uGrid : 16.0);   // +/- ~1.5 mesh cells: smooth yet follows mesh relief
+        // NORMAL SMOOTHING (user 2026-06-14: 'angular normals = no vertex smoothing'): low-pass the
+        // per-vertex normal by taking the central difference over a fixed ~METRIC step (uNrmStepM, ~300m)
+        // instead of ~1 mesh cell. A cell-sized step samples the high-freq erosion/canyon relief so the
+        // normal swings sharply vertex-to-vertex = angular; a fixed larger step averages it = adjacent
+        // verts vary smoothly = smooth shading, at any GRID. duP = stepM / tile-span (defOffset.z), clamped
+        // so it never drops below the mesh cell (would re-alias) nor exceeds ~1/3 the tile.
+        highp float nStepM = (uNrmStepM > 0.0) ? uNrmStepM : 300.0;
+        highp float duP = clamp(nStepM / max(defOffset.z, 1.0), 1.0 / ((uGrid > 0.0) ? uGrid : 16.0), 0.34);
         highp float hPU = 0.0, hMU = 0.0, hPV = 0.0, hMV = 0.0;
         highp vec3 dPU = dir0, dMU = dir0, dPV = dir0, dMV = dir0;
         int fdIters = (uGrid >= 0.0) ? 4 : 1;   // 4 offset taps; runtime-bounded (FXC unroll-defeat, see uOctMax)
@@ -1889,14 +1896,14 @@ void main() {
     // is obvious'): exaggerate the tangential tilt of the LIT normal only -- the material gates keep
     // the true geometric n, so placement is unchanged; lighting contrast on rolling ground increases.
     if (vH > -2.0 && uReliefShade > 1.0) {
-      // SCREEN-SPACE HEIGHT GRADIENT relief shading: dFdx/dFdy of the world height gives a
-      // direct per-pixel slope signal that works even when the analytic normal nLit≈uz (gentle
-      // rolling ground). The gradient is normalised by fwidth(vH) so amplitude is view-distance
-      // invariant, then blended with the classic uz-exaggeration formula. Without this term,
-      // nLit = normalize(uz + (nLit-uz)*k) is identity on flat ground because nLit-uz ≈ 0.
-      highp vec2 hGrad = vec2(dFdx(vH), dFdy(vH));
-      highp float hMag = max(fwidth(vH), 0.1);
-      nLit = normalize(uz + (nLit - uz) * uReliefShade + vec3(-hGrad.x/hMag, -hGrad.y/hMag, 0.0) * 0.3);
+      // Relief exaggeration of the LIT normal's tangential tilt. The old SCREEN-SPACE dFdx(vH) term was
+      // REMOVED (user 2026-06-14 'jagged normals, still there on the normals view'): dFdx/dFdy of the
+      // INTERPOLATED vH varying is CONSTANT PER TRIANGLE and discontinuous at every triangle edge =
+      // hard facets baked straight into the lit normal -- the jaggedness root, not the vertex normal.
+      // It was a workaround for when vNrm ~= uz on gentle ground; the central-difference vNrm now
+      // captures gentle slopes (real gradient), so (nLit-uz) is non-zero on real slopes and the plain
+      // exaggeration is legible without the faceted screen-space hack.
+      nLit = normalize(uz + (nLit - uz) * uReliefShade);
     }
     // photo-texture detail normal at its calibrated amplitude, OUTSIDE the relief exaggeration.
     // ADDED in world space (the old `- ux*dn.x - uy*dn.y` subtracted an already-negated Sobel
