@@ -1961,7 +1961,12 @@ void main() {
             texAlb = vec4(mix(cB, cA, bSharp), mix(dispB, dispA, bSharp));
             texNrm = mix(nB, nA, bSharp);
             vec3 mcB = lB < 0.5 ? bcGrass : (lB < 1.5 ? bcRock : (lB < 2.5 ? bcShore : bcSnow));
-            texMatColor = mix(mcB, mcA, bSharp);   // material color, broken up by the (noise-augmented) bSharp below
+            // HARD color pick (user 2026-06-14 'grass mixed with sand creates a hard line between slope
+            // grass and grass around it -- match the two grasses'): a linear color mix tan-tinted the grass
+            // inside the sand zone so it differed from pure grass outside. Now the boundary is FINGERED by
+            // the LOD-stable displacement, so a near-hard color pick keeps grass PURE bcGrass everywhere
+            // (the two grasses match) and flips cleanly to sand along the fingers -- no tint, no straight line.
+            texMatColor = mix(mcB, mcA, smoothstep(0.42, 0.58, bSharp));
         }
         // MATCH COLOR TO NORMAL (user 2026-06-14 'green grassy patches with the rock normals -- should be
         // rock colored or grass normals'): texNrm follows the displacement height-blend (rock on bumps in
