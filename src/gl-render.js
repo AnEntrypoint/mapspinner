@@ -655,8 +655,12 @@ export async function initMapspinnerRender(gl, opts = {}) {
       // The analytic single-scatter radiance is HDR with small magnitudes; lift then
       // ACES tonemap (matches the WebGPU sky pass family). EXPOSURE tuned so the limb
       // glow + daylit sky read as an atmosphere without blowing out.
-      vec3 c = radiance * 120.0;
+      vec3 c = radiance * 105.0;   // 120->105: trim exposure so the bright daytime sky stops clipping to white
       vec3 mapped = clamp((c*(2.51*c+0.03))/(c*(2.43*c+0.59)+0.14), 0.0, 1.0); // ACES
+      // DAY SKY TOO WHITE (user 2026-06-14): ACES desaturates the bright daylit sky toward white. Push
+      // saturation back up so the day sky reads BLUE (sun disc stays white -- it is already near-neutral).
+      float skyLum = dot(mapped, vec3(0.2126, 0.7152, 0.0722));
+      mapped = clamp(mix(vec3(skyLum), mapped, 1.35), 0.0, 1.0);
       fragColor = vec4(pow(mapped, vec3(1.0/2.2)) * uSkyFade, 1.0);
     }`;
   function rawShader(type, source){ const s=gl.createShader(type); gl.shaderSource(s, source); gl.compileShader(s);
@@ -993,7 +997,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(U('uLookSat'),        _g('lookSat', 1.15));
     gl.uniform1f(U('uLookContrast'),   _g('lookContrast', 1.08));
     { const o3=(n,d)=>{ const w=(typeof window!=='undefined'&&window['__'+n])||null; const v=(Array.isArray(w)&&w.length===3)?w:d; gl.uniform3f(U(n), v[0],v[1],v[2]); };
-      o3('uOceanDeep',[0.008,0.025,0.06]); o3('uOceanShallow',[0.07,0.22,0.26]); o3('uOceanK',[0.030,0.012,0.0045]); }
+      o3('uOceanDeep',[0.008,0.025,0.06]); o3('uOceanShallow',[0.07,0.22,0.26]); o3('uOceanK',[0.016,0.007,0.0028]); }   // K halved (user 2026-06-14 'see the land under the water properly') = clearer water, bed visible through shallow/medium depth; deep basins still opaque
     // (the continuous broad-shape field is now always on - the single terrain shape source -
     // so its old on/off lever uniform was removed from terrain.glsl; nothing to set here.)
     // LIVE biome ramp (window.__gen.state.biome, else tuned defaults) -- full-adjustability.

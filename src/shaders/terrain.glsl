@@ -1582,8 +1582,12 @@ void main() {
         // ~0 and nadir fresnel ~0 made the whole shoreline INVISIBLE (coverage 0 at a bisected
         // waterline pose). Real shallow water still shows its surface (sky reflection + ripple):
         // floor the opacity once genuinely submerged so shorelines read as water.
-        alphaW = max(alphaW, 0.30 * smoothstep(0.3, 4.0, depthM));
-        alphaW *= smoothstep(0.0, 1.5, depthM);
+        // SHALLOW TRANSPARENCY (user 2026-06-14: 'water fully transparent where it meets land, see the
+        // bed through it'): floor cut 0.30->0.12 and pushed deeper (start 1.5m) so the bed shows through
+        // the shoreline + shallows; deeper water still goes opaque via Beer-Lambert (1-Tavg). The contact
+        // fade is widened (0->3m) so the exact waterline is clear, not a hard opaque rim.
+        alphaW = max(alphaW, 0.12 * smoothstep(1.5, 8.0, depthM));
+        alphaW *= smoothstep(0.0, 3.0, depthM);
         fragColor = vec4(pow(mappedW, vec3(1.0 / 2.2)), alphaW);
         return;
     }
@@ -1746,7 +1750,7 @@ void main() {
         // WIDENED TRANSITION (2026-06-13): srLo+0.2 -> srLo+0.4 so rock/grass and rock/sand/snow
         // boundaries have a wider blend band — the slope gradient between materials is no longer
         // a ~0.2-unit hard step but a ~0.4-unit gradual fade.
-        float srLo = max(slopeRock.x, 0.05), srHi = max(slopeRock.y, srLo + 0.35);   // 0.18->0.10->0.05: rock slope gate MORE SENSITIVE so even gentle slopes (~18deg+) pick up as rock (user 2026-06-14, repeated). Stays above truly-flat (rockSlope~0).
+        float srLo = max(slopeRock.x, 0.05), srHi = max(slopeRock.y, srLo + 0.25);   // 0.18->0.10->0.05 lo; band +0.35->+0.25 (user 2026-06-14 repeated 'rock face angle more sensitive'): rock fully engages by a GENTLER slope. Stays above truly-flat (rockSlope~0).
         float wRockSlope = smoothstep(mix(srLo, 0.50, sandRegion), mix(srHi, 0.70, sandRegion), rockSlope);
         // WARPED BIOME BAND EDGES (user 2026-06-14: the snow/rock lines were STRAIGHT horizontal contours
         // viewed side-on; the vTexWarp domain warp was too low-freq (>1.8km waves = ~constant over one
