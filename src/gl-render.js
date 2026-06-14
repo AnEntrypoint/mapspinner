@@ -569,6 +569,13 @@ export async function initMapspinnerRender(gl, opts = {}) {
   const vbo=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,vbo); gl.bufferData(gl.ARRAY_BUFFER,verts,gl.STATIC_DRAW);
   const ibo=gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ibo); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,indices,gl.STATIC_DRAW);
   const instBuf=gl.createBuffer();   // per-instance [ox,oy,l,level,face] (filled per frame in render())
+  // DATA-CONTINUITY CACHE (2026-06-14): terrain + water get their OWN persistent instance buffers so
+  // neither clobbers the other (the shared-buffer clobber forced a re-upload every frame and was the
+  // root of the prior 'water drawn as terrain' regression). On a STATIC frame (same quads array object)
+  // the instance data is identical -> skip the Float32Array build + bufferData + water dedup Set-loop
+  // and just rebind+draw. Pure CPU/GC win (GPU is vertex-bound, the upload is off the critical path).
+  const instBufWater=gl.createBuffer();
+  let _instQuadsRef=null, _instWaterRef=null, _instWaterN=0;
 
   // per-face local->world (cube face -> sphere local frame). Column-major mat3 packed
   // into a Float32Array(9). Matches localToWorld3 convention:
@@ -892,14 +899,19 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // h = composeHeight(dir) for each vertex.
     const FLOATS = 5;   // [ox,oy,l,level,face]
     if (n > 0) {
-      const inst = new Float32Array(n * FLOATS);
-      for (let i = 0; i < n; i++) {
-        const q = quads[i].quad;
-        inst[i*FLOATS+0] = q.ox; inst[i*FLOATS+1] = q.oy; inst[i*FLOATS+2] = q.l; inst[i*FLOATS+3] = q.level;
-        inst[i*FLOATS+4] = quads[i].face;
-      }
+      // STATIC-FRAME SKIP: only rebuild + re-upload the instance data when the quad SET changed (the
+      // orchestrator passes the SAME quads array object on a static camera, a fresh array on rebuild).
+      const _dirty = (quads !== _instQuadsRef);
       gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
-      gl.bufferData(gl.ARRAY_BUFFER, inst, gl.DYNAMIC_DRAW);
+      if (_dirty) {
+        const inst = new Float32Array(n * FLOATS);
+        for (let i = 0; i < n; i++) {
+          const q = quads[i].quad;
+          inst[i*FLOATS+0] = q.ox; inst[i*FLOATS+1] = q.oy; inst[i*FLOATS+2] = q.l; inst[i*FLOATS+3] = q.level;
+          inst[i*FLOATS+4] = quads[i].face;
+        }
+        gl.bufferData(gl.ARRAY_BUFFER, inst, gl.DYNAMIC_DRAW);
+      }
       const STRIDE = FLOATS * 4;
       gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 4, gl.FLOAT, false, STRIDE, 0);          gl.vertexAttribDivisor(1, 1);  // iOffset
       gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 1, gl.FLOAT, false, STRIDE, 4 * 4);      gl.vertexAttribDivisor(2, 1);  // iFace
@@ -926,17 +938,24 @@ export async function initMapspinnerRender(gl, opts = {}) {
         // (~1.6km) sag ~5cm, far under any visible bathymetry, still ~16-64x fewer water verts
         // than the deep terrain leaves.
         const WCAP = 9;
-        const seen = new Set(); const wl = [];
-        for (let i = 0; i < n; i++) {
-          const q = quads[i].quad; let ox = q.ox, oy = q.oy, l = q.l, lv = q.level;
-          if (lv > WCAP) { const A = l * Math.pow(2, lv - WCAP); ox = Math.floor(ox / A) * A; oy = Math.floor(oy / A) * A; l = A; lv = WCAP; }
-          const key = quads[i].face + ':' + ox + ':' + oy + ':' + l;
-          if (seen.has(key)) continue; seen.add(key);
-          wl.push(ox, oy, l, lv, quads[i].face);
+        // OWN persistent buffer (instBufWater) + static-frame skip: on an unchanged quad set, reuse the
+        // cached water instances (skip the dedup Set-loop + Float32Array + bufferData). Separate buffer
+        // means the terrain pass never clobbers it (the prior water-as-terrain regression root).
+        gl.bindBuffer(gl.ARRAY_BUFFER, instBufWater);
+        if (_dirty || quads !== _instWaterRef) {
+          const seen = new Set(); const wl = [];
+          for (let i = 0; i < n; i++) {
+            const q = quads[i].quad; let ox = q.ox, oy = q.oy, l = q.l, lv = q.level;
+            if (lv > WCAP) { const A = l * Math.pow(2, lv - WCAP); ox = Math.floor(ox / A) * A; oy = Math.floor(oy / A) * A; l = A; lv = WCAP; }
+            const key = quads[i].face + ':' + ox + ':' + oy + ':' + l;
+            if (seen.has(key)) continue; seen.add(key);
+            wl.push(ox, oy, l, lv, quads[i].face);
+          }
+          _instWaterN = wl.length / FLOATS;
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(wl), gl.DYNAMIC_DRAW);
+          _instWaterRef = quads;
         }
-        const wn = wl.length / FLOATS;
-        gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(wl), gl.DYNAMIC_DRAW);
+        const wn = _instWaterN;
         gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 4, gl.FLOAT, false, STRIDE, 0);     gl.vertexAttribDivisor(1, 1);
         gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 1, gl.FLOAT, false, STRIDE, 4 * 4); gl.vertexAttribDivisor(2, 1);
         if (_uw) {
@@ -954,6 +973,8 @@ export async function initMapspinnerRender(gl, opts = {}) {
         gl.disable(gl.BLEND);
         if (typeof window !== 'undefined') window.__lastWaterQuads = wn;
       }
+      _instQuadsRef = quads;   // mark this quad set uploaded; next frame with the same array skips the rebuild
+      if (typeof window !== 'undefined') window.__instUploads = (window.__instUploads | 0) + (_dirty ? 1 : 0);
     }
     if (typeof window !== 'undefined') window.__lastDrawCalls = (n > 0) ? 2 : 0;
     return 0;   // glError is checked via checkGlError() once per frame after quadtree (CPU/GPU pipelining)
