@@ -210,6 +210,7 @@ uniform float uIsWater;                    // 0 = terrain pass, 1 = water-surfac
 uniform float uUnderwater;                 // 0 = camera above water, 1 = camera below sea level
 uniform float uBeachTopM;                  // beach ceiling (m): below this, grass/snow yield to sand (window.__beachTop; 30 default)
 uniform float uBeachShelfM;                // land coastal-shelf top (m): h<this is eased (h*h/S) so the coast rises gently from the waterline = wide beach (window.__beachShelf; 300 default). GEOMETRY (composeHeight+vH).
+uniform float uLandBias;                    // metres added to h (cbias+bShape) BEFORE the sea/land split -> raises the hypsometry = MORE LAND vs sea (window.__landBias). composeHeight + VS mirror + probe all add it (parity).
 uniform float uHiFreqCut;                  // hi-freq elevation-noise attenuation, applied to ALL hi-freq sources:
                                            // broadShapeM/MD fine octaves (o>=6) + vtxDisplace micro-relief
                                            // (window.__hiFreqCut; default 0.25 = the user's 4x reduction, 2026-06-06)
@@ -615,7 +616,7 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){   // W7
     ridgeMul  = mix(ridgeMul, max(ridgeMul, 0.9 * volcanic), isleZone);
   }
   highp float bShape = broadShapeM(dir0, reliefMul, ridgeMul);  // W7: metres
-  highp float h = cbias + bShape;                                // W7: composite elevation metres (~13000)
+  highp float h = cbias + bShape + uLandBias;                    // W7: composite elevation metres (~13000); +uLandBias raises hypsometry = more land
   // REALISTIC BATHYMETRY (user 2026-06-11 'the depth under the water doesnt seem right -- the
   // landscape should continue underwater realistically'): raw cbias+bShape plunges at land-relief
   // gradients, so the seabed hit kilometre depths within sight of the beach. Real margins have a
@@ -855,7 +856,7 @@ void main() {
     // entire silhouette+hypsometry. The old wasm upsample-and-add cascade (zfc.x) was REMOVED -- it
     // was a SECOND shape source that diverged per-LOD (the detail-inversion root). bShape amplitude
     // was retuned (A0 6500, off -900) so this single field hits Earth hypso without the cascade.
-    vH = cbias + bShape;
+    vH = cbias + bShape + uLandBias;   // +uLandBias (mirror composeHeight) -> more land vs sea
     // shelf/slope bathymetry remap + underwater displacement -- MUST mirror composeHeight exactly
     // (this is the FS-material running value; composeHeight is the geometry/probe height).
     if (vH < 0.0) {

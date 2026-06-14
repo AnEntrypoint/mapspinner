@@ -422,6 +422,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(loc('canyonDepthMul'), g('canyonDepth', 1.0));
     gl.uniform1f(loc('uVsCheap'),       (typeof window!=='undefined' && window.__vsCheap) ? 1.0 : 0.0);   // VS carve-cost profiling A/B
     gl.uniform1f(loc('uBeachShelfM'),   g('beachShelf', 28000.0));   // land coastal shelf (geometry); probe MUST match render
+    gl.uniform1f(loc('uLandBias'),      g('landBias', 680.0));       // +650m hypsometry bias = ~+30% land:sea (measured: landFrac 0.041 -> 0.054 over a 700-dir sphere grid, user 2026-06-14). window.__landBias dials it live.
     gl.uniform1f(loc('cliffAmt'),       g('cliffAmt', 1.0));
     gl.uniform1i(loc('uFloatLinearOK'), _halfFloatLinearOK ? 1 : 0);
     // FXC unroll-defeat (2026-06-12 AMD d3d11 fix): runtime octave bound for broadShapeM; the shader
@@ -961,6 +962,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(U('canyonDepthMul'), _g('canyonDepth', 1.0));
     gl.uniform1f(U('uVsCheap'),       (typeof window!=='undefined' && window.__vsCheap) ? 1.0 : 0.0);   // VS carve-cost profiling A/B
     gl.uniform1f(U('uBeachShelfM'),   _g('beachShelf', 28000.0));   // land coastal shelf (geometry): h<S eased h*h/S = wide beach
+    gl.uniform1f(U('uLandBias'),      _g('landBias', 680.0));        // +650m hypsometry bias = ~+30% land:sea (window.__landBias); MUST match the probe (setComposeHeightUniforms) for collision parity
     gl.uniform1f(U('uHiFreqCut'),     _g('hiFreqCut', 0.25));   // 0.5->0.25 (2026-06-10 'blotchy' -- see setComposeHeightUniforms)
     gl.uniform1f(U('uVertexAO'),      _g('vertexAO', 1.0));    // per-vertex shading/AO strength (DEFECT 2, 2026-06-06)
     gl.uniform1f(U('cliffAmt'),       _g('cliffAmt', 1.0));
