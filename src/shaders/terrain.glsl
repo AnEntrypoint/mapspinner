@@ -1395,6 +1395,7 @@ float canyonMask(vec3 worldPos, float h, float temp, float humid, float px, out 
 #endif   // biomeClassColor/riverMask/canyonMask: DEBUGVIEW-only (called solely from displayMode blocks) -- excluded from render FS cold-compile (FS-2, workflow w4y1bnrqc)
 
 vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, float humid, highp vec3 worldPos, float pxWorld) {   // highp: worldPos feeds normalize(worldPos)*freq noise UVs (mottle/river/canyon ridge) -- mediump scrambles the lattice up close
+    highp vec3 nwp = normalize(worldPos);   // hoisted: reused by the mottle + river/canyon ridge dirs (was recomputed)
     vec3 c = terrainAlbedo(h, slope, rockSlope, worldPos, pxWorld);
     if (h < 0.0) {
         // SEA ICE: near-polar ocean (very cold) freezes to white-blue pack ice. Pure fn of the
@@ -1430,7 +1431,7 @@ vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, flo
     // soil/moisture/vegetation patchiness mottles albedo. Reuse the snoise3 already evaluated for
     // cliffRock (same normalize(worldPos)*~1k pattern, no new octave) as a VALUE-only multiplier (NO
     // hue jitter, low 1200 freq -> does NOT reintroduce the per-pixel swamp moire the pipeline removed).
-    float mot = snoise3(normalize(worldPos) * 120.0);   // detail-tex-rockface-canyon-10x: *1200->*120 (~10x larger mottle features, user 2026-06-06)
+    float mot = snoise3(nwp * 120.0);   // detail-tex-rockface-canyon-10x: *1200->*120 (~10x larger mottle features, user 2026-06-06)
     c *= (1.0 + uVariationAmt * mot);
     // earlier snow/ice on high ground in cold regions.
     float coldSnow = (1.0 - smoothstep(0.30, 0.75, temp)) * smoothstep(snowEdges.x * 0.5, snowEdges.x, h);
@@ -1480,7 +1481,7 @@ vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, flo
     // the deleted 2026-06-01 detail texturing), value-only (no hue shift), and each octave fades out
     // via a pxWorld Nyquist gate before its features go sub-pixel (no orbit speckle, no leopard band).
     {
-        highp vec3 od = normalize(worldPos);
+        highp vec3 od = nwp;
         float ov = 0.0, oa = 0.0;
         float fq = 75.0, am = 1.0;                 // octaves: ~84km / 17km / 3.4km features (halved to match VS detailFbm)
         int fdOcts = (uFSDetailOcts > 0) ? uFSDetailOcts : 3;
@@ -1538,7 +1539,8 @@ void main() {
     // PER-FRAGMENT tangent frame from vWorld (the sphere position, C0 across quad edges):
     // uz = up (radial), ux = normalize(Y x uz), uy = uz x ux. Continuous across adjacent quads
     // -> no per-quad shading-baseline seam.
-    vec3 uz = normalize(vWorld);
+    highp vec3 nWorld = normalize(vWorld);   // computed ONCE, reused for the tangent up + every band/noise/lighting dir (perf: was ~7 separate normalize() calls)
+    vec3 uz = nWorld;
     // AUDIT FIX 2026-06-06 (audit-tangent-frame-degeneracy): the reference axis was a FIXED vec3(0,1,0),
     // so cross(Y, uz) -> zero-length (NaN normal) wherever uz is parallel to Y -- i.e. the +Y/-Y cube
     // faces and the poles, exactly 'wrong normals in the wrong places'. Pick the world axis LEAST
@@ -1787,7 +1789,7 @@ void main() {
         // SHARED biome-band warp pattern (user 2026-06-14: the SAME warping on snow/rock bands AND the
         // beach->land crossover). 2-oct world-dir noise, 1/4 freq (~13km + ~5km waves). Computed once
         // here; the snow/rock bandWarp below reuses warpN. highp dir for the lattice precision.
-        highp vec3 bwDir = normalize(vWorld);
+        highp vec3 bwDir = nWorld;
         // 3-oct (added the ~1km octave, user 2026-06-14 'make biome bands more interesting') -> the
         // texture-splat rock/snow/beach edges break into finer fingers as you approach, not a hard band.
         float warpN = snoise3(bwDir * 3325.0) + 0.5 * snoise3(bwDir * 7750.0) + 0.35 * snoise3(bwDir * 17000.0);   // ~ +/-1.8
@@ -1944,6 +1946,12 @@ void main() {
         // grey). The 4x detail carries the fine structure for every material.
         vec3 texIdent = texC * (albedo / max(texL, 0.02));
         albedo = clamp(mix(albedo, mix(detail, texIdent, photoF), k), 0.0, 1.0);
+        // FAKE MIDDAY AO from the displacement (user 2026-06-14 'darken the deepest parts of the
+        // displacement textures a little'): the texture's LOWEST displacement = crevices/pits; darken
+        // them ~18% so the surface reads as sunlit-from-above with soft self-occlusion in the lows.
+        // Faded by k so the far field (where the texture mips out) is untouched.
+        float texAO = mix(1.0, mix(0.82, 1.0, smoothstep(0.0, 0.5, texAlb.a)), k);
+        albedo *= texAO;
         // displacement-normal relief: WORLD-SPACE UDN perturbation from surfTriNrm (each projection
         // plane's tangent axes, not the radial frame). Amplitude capped low (scramble lesson d262b5e);
         // applied AFTER the uReliefShade exaggeration below so the exaggeration never amplifies it.
@@ -2204,11 +2212,11 @@ void main() {
             // peak at the terminator (N.sun~0), fall off toward both day-center and night-center, and
             // SQUARE it so the warm band is tight at the day/night line instead of a fat ring round the
             // whole limb. Warm amber (not pure red) so it reads as sunset haze, not a bruise.
-            float gz = 1.0 - abs(dot(normalize(vWorld), sunDir));
+            float gz = 1.0 - abs(dot(nWorld, sunDir));
             float graze = smoothstep(0.55, 1.0, gz); graze *= graze;
             // only on the LIT side of the terminator (mu>0) -- past the line the surface is night and
             // additive amber on near-black extinct land reads as a scorched maroon rim. Day-gate kills it.
-            float termDay = smoothstep(-0.02, 0.18, dot(normalize(vWorld), sunDir));
+            float termDay = smoothstep(-0.02, 0.18, dot(nWorld, sunDir));
             hazed += uTerminatorGlow * graze * termDay * vec3(1.0, 0.55, 0.34) * apGate;
             color = mix(lit, hazed, apGate * uHazeMul);   // uHazeMul lever (2026-06-10 'pale hazy': full-strength haze milked the midground)
         }
@@ -2238,7 +2246,7 @@ void main() {
         // SEABED LIGHTING (user 'floor too flat/dim'): the deep floor gets almost no direct sun, so it
         // read dim+flat. Lift the brightness and add an up-facing fill (brighter where the surface faces
         // up, darker on slopes -> 3D relief) + a touch of slope contrast keyed on the lit normal vNrm.
-        float upFill = mix(0.75, 1.35, clamp(dot(vNrm, normalize(vWorld)) * 0.5 + 0.5, 0.0, 1.0));
+        float upFill = mix(0.75, 1.35, clamp(dot(vNrm, nWorld) * 0.5 + 0.5, 0.0, 1.0));
         color *= upFill * 1.5;
         color = mix(color * uwTrans + uwFog * (1.0 - uwTrans), uwFog, smoothstep(100000.0, 500000.0, dKm * 1000.0));
     }
@@ -2306,7 +2314,7 @@ void main() {
     // SPHERE sun angle to EVERY fragment (land + ocean) so the globe reads 3D: bright at the sub-solar
     // point, falling to dark across the day side into the terminator. dayShade = smoothstep over the
     // surface-normal . sun, with a small ambient floor (0.10) so the night/terminator isn't pure black.
-    float macroMu = dot(normalize(vWorld), sunDir);
+    float macroMu = dot(nWorld, sunDir);
     // SOFT FLOORED TERMINATOR (Real-World Look): a wider, smoother twilight band (uTermWidth) with a
     // night floor (uNightFloor) so framed night longitudes keep faint detail instead of crushing to
     // black (defect #4). The old hard 0.10..-0.12,0.55 band was too steep + too dark.
@@ -2315,7 +2323,7 @@ void main() {
     // rounded 3D form instead of a flat disc. viewGraze = surface-normal . view-dir, ->1 facing the
     // camera (disc centre), ->0 at the limb. Only bites near the limb so it does not dim the main face.
     vec3 viewDir = normalize(camWorld - vWorld);
-    float viewGraze = max(dot(normalize(vWorld), viewDir), 0.0);
+    float viewGraze = max(dot(nWorld, viewDir), 0.0);
     float limb = 0.45 + 0.55 * smoothstep(0.0, 0.45, viewGraze);   // 0.45 at the limb -> 1.0 facing camera
     // NIGHT / SHADOW FILL (user 2026-06-09: 'we want night lights in the SHADOW areas, not city lights'):
     // a UNIFORM dim fill that lifts the unlit hemisphere out of pure black -- a cool ambient night light,
