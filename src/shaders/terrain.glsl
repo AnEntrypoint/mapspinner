@@ -760,7 +760,6 @@ out float vLakeWet;     // lake open-water mask (carve basin)
 out float vRiverWet;    // river thalweg wet line
 out float vWaterDepth;  // metres the flat inland-water plane sits ABOVE the local terrain floor (>0 = submerged)
 out float vCanyonDep;   // canyon gorge depth [0,1]
-out float vConcavity;   // height-field Laplacian / step^2 (1/m, +ve = concave valley/pit) -- ELEVATION AO signal (free from the normal central-diff taps)
 out float vCliffFace;   // cliff/escarpment riser face [0,1] (1 = steep terrace face)
 out float vDuneCrest;   // dune crest [0,1]
 out float vLevel;       // quad LOD level (per-instance iOffset.w) for the patches debug view
@@ -1004,7 +1003,6 @@ void main() {
     // sides of a seam share the same dir0/tangent frame -> consistent normals, no row artifact.
     highp float hN0 = 0.0;
     highp vec3 vN = dir0;
-    highp float concavRaw = 0.0;   // height Laplacian / step^2 (+ve = concave) -- set in the land branches, free from the normal taps
     if (uIsWater < 0.5 && uThc > 0.5) {
         // THC FAST PATH: height + symmetric central-diff normal from the baked pool. 5 bilinear texture
         // taps replace 5 full composeHeight evals (the VS-bound cost). The 4 normal taps use the SAME
@@ -1060,23 +1058,6 @@ void main() {
         vN = normalize(cross(wPU - wMU, wPV - wMV));
         if (dot(vN, dir0) < 0.0) vN = -vN;   // keep it outward (terrain has no overhangs)
     }
-    // ELEVATION-AO CONCAVITY at LARGE scale (user 2026-06-14 'AO is focused on features too small, must
-    // AO the larger features'): the 300m normal-step Laplacian keyed on small/sharp relief (canyons). Take
-    // the Laplacian of broadShapeLowM (the cheap 8-oct LARGE-SCALE shape, no small carves) over a WIDE ~2km
-    // step instead, so the AO darkens broad valleys/basins. broadShapeLowM is the same field the mesa
-    // slope gate uses at a 1.2km step -> a known-cheap large-feature probe. Land only (water needs none).
-    if (uIsWater < 0.5) {
-        const highp float ecM = 2000.0;   // wide finite-diff step = large-feature scale
-        highp vec3 ux = normalize(cross(abs(dir0.y) < 0.99 ? vec3(0.0,1.0,0.0) : vec3(1.0,0.0,0.0), dir0));
-        highp vec3 uy = cross(dir0, ux);
-        highp float h0c = broadShapeLowM(dir0);
-        highp float hxp = broadShapeLowM(normalize(dir0 + ux * (ecM / defRadius)));
-        highp float hxm = broadShapeLowM(normalize(dir0 - ux * (ecM / defRadius)));
-        highp float hyp = broadShapeLowM(normalize(dir0 + uy * (ecM / defRadius)));
-        highp float hym = broadShapeLowM(normalize(dir0 - uy * (ecM / defRadius)));
-        concavRaw = (hxp + hxm + hyp + hym - 4.0 * h0c) / (ecM * ecM);   // 1/m large-scale curvature, +ve = broad valley/basin
-    }
-    vConcavity = concavRaw;
     highp float h = hN0;
     // OCEAN TOP = A SEPARATE, ELEVATION-BASED SURFACE (user 2026-06-10: 'terrain should extend into
     // the ocean, the ocean top separate and elevation based'). composeHeight keeps carrying the TRUE
@@ -1154,7 +1135,6 @@ in float vLakeWet;    // carve masks computed in the VS, interpolated (no per-pi
 in float vRiverWet;
 in float vWaterDepth; // metres of submerged water (>0 = real open inland water at the flat plane)
 in float vCanyonDep;
-in float vConcavity;   // elevation-AO concavity (1/m, +ve = valley/pit)
 in float vCliffFace;
 in float vDuneCrest;
 in float vLevel;          // quad LOD level (patches view)
@@ -2042,26 +2022,9 @@ void main() {
         // longer the base, so NO biome color bleeds into the ground (user 'take away all biome inheritance').
         albedo = clamp(mix(texMatColor, detail, k), 0.0, 1.0);
         albedo = mix(albedo, biomeC, 0.68);   // climate/biome tint back on top of the material color (deserts tanner, forests greener) -- UP 0.16->0.68 (user 2026-06-14 x2 'tinting-according-to-landscape can be intensified, not really visible yet')
-        // FAKE MIDDAY AO from the displacement (user 2026-06-14 'darken the deepest parts of the
-        // displacement textures a little'): the texture's LOWEST displacement = crevices/pits; darken
-        // them ~18% so the surface reads as sunlit-from-above with soft self-occlusion in the lows.
-        // Faded by k so the far field (where the texture mips out) is untouched.
-        // STRONGER fake-midday AO (user 2026-06-14 'should be more intense, we dont really see it'):
-        // darken the recesses harder (0.82->0.5 = up to 50%) over a wider low-displacement range so the
-        // crevices/pits read clearly. Still faded by k so the mipped far field is untouched.
-        float texAO = mix(1.0, mix(0.5, 1.0, smoothstep(0.05, 0.6, texAlb.a)), k);
-        albedo *= texAO;
-        // ELEVATION AO (user 2026-06-14 x3 'similar AO on elevation / still not visible'): the screen-space
-        // curvature of vNrm was ~0 (vNrm is a per-vertex analytic normal, linearly interpolated -> its
-        // fwidth is tiny on the coarse grid = invisible). Replaced with vConcavity = the height-field
-        // LAPLACIAN computed FREE from the VS normal central-diff taps (1/m, +ve = concave valley/pit),
-        // a real object-space relief signal that survives interpolation. Darken concavities up to 65%.
-        // VERY GRADUAL response (user 2026-06-14 'ao works but not gradiated, must be very gradual'): the
-        // hard clamp(.,0.6) flat-topped every valley past a threshold = a visible AO edge + no gradation
-        // between medium and deep concavity. Exponential SOFT saturation instead -- monotonic, smooth
-        // onset AND smooth approach to the 0.6 floor, so darkening grades continuously with depth, no edge.
-        float elevAO = 1.0 - 0.6 * (1.0 - exp(-max(vConcavity, 0.0) * 2500.0));   // concavRaw ~=1/Rc of the LARGE shape (~3-7e-4 for km-scale basins): broad valley eases in, asymptotes to -60%
-        albedo *= elevAO;
+        // (AO REMOVED 2026-06-14 user 'fps dropped a lot, no visual improvement, get rid of all the ao
+        // for texture and landscape': the displacement texAO + the broadShapeLowM-Laplacian elevation AO
+        // are both gone; the latter's 5 wide VS taps were the FPS cost. vConcavity varying also removed.)
         // displacement-normal relief: WORLD-SPACE UDN perturbation from surfTriNrm (each projection
         // plane's tangent axes, not the radial frame). Amplitude capped low (scramble lesson d262b5e);
         // applied AFTER the uReliefShade exaggeration below so the exaggeration never amplifies it.
