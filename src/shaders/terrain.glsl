@@ -1237,7 +1237,11 @@ uniform vec4 uSurfMeanL;     // per-layer mean linear luminance of the photo col
 // binary boundary snaps material across wide areas instead of softly interfingering, and the high-freq
 // octave aliased on bright materials. Reverted to the clean smoothstep boundaries; a non-aliasing
 // 'interesting boundary' technique (e.g. a wide soft transition material band) is a separate future task.
-vec3 terrainAlbedo(float h, float slope, float rockSlope, highp vec3 worldPos) {   // highp: worldPos feeds normalize(worldPos)*freq noise UVs -- mediump would scramble the lattice at close range
+vec3 terrainAlbedo(float h, float slope, float rockSlope, highp vec3 worldPos, float pxW) {   // highp: worldPos feeds normalize(worldPos)*freq noise UVs -- mediump would scramble the lattice at close range
+    // DISTANCE-WIDENED rock-slope band (user 2026-06-14 'hard edge to rock slopes at a distance'): the
+    // close-up height-blend doesn't run far off, so the macro slope gate showed a hard edge. Widen its
+    // upper threshold with distance so the rock->grass slope boundary fades softly when it's far.
+    float rockWiden = smoothstep(20.0, 500.0, pxW) * 0.20;
     vec3 c;
     if (h < 0.0) {
         // SEABED CONTINUES AS LAND MATERIAL (user 2026-06-11 'instead of turning terrain into water,
@@ -1258,7 +1262,7 @@ vec3 terrainAlbedo(float h, float slope, float rockSlope, highp vec3 worldPos) {
         float bandWarp = (snoise3(bww * 210.0) * 1.0 + snoise3(bww * 560.0) * 0.5 + snoise3(bww * 1450.0) * 0.25) * 720.0;
         c = mix(c, bcRock, smoothstep(bandEdgesHi.x + bandWarp, bandEdgesHi.y + bandWarp, h));
         c = mix(c, bcSnow, smoothstep(snowEdges.x + bandWarp, snowEdges.y + bandWarp, h));
-        c = mix(c, bcRock, smoothstep(slopeRock.x, slopeRock.y, rockSlope) * step(0.0, h));
+        c = mix(c, bcRock, smoothstep(slopeRock.x, slopeRock.y + rockWiden, rockSlope) * step(0.0, h));
         // OLD PROCEDURAL GREY ROCKFACE DELETED (max-speed sweep 2026-06-10, user 'replace the original
         // rock completely'): the photo-rock splat owns steep faces; the 3-tap grey fBm fallback is gone.
     }
@@ -1300,7 +1304,7 @@ vec3 biomeColor(float temp, float humid) {
     // FOREST vs MEADOW split (user: they must look distinct, not one green). A CRISPER humidity
     // boundary (0.48->0.56, was 0.46->0.66) so meadow (drier-temperate) and forest (wetter) read
     // as DISTINCT adjacent regions instead of a long ambiguous blend; very-wet deepens to canopy.
-    float wet  = smoothstep(0.48, 0.56, humid);
+    float wet  = smoothstep(0.40, 0.66, humid);   // WIDENED 0.48-0.56 -> 0.40-0.66 (user 2026-06-14 'hard lines between light and dark grass'): soft meadow<->forest blend, not a crisp line
     float veryWet = smoothstep(0.62, 0.80, humid);
     vec3 c = MEADOW;                                          // temperate mid-humidity default
     c = mix(c, FOREST,  wet);                                 // wet -> forest (crisp boundary)
@@ -1391,7 +1395,7 @@ float canyonMask(vec3 worldPos, float h, float temp, float humid, float px, out 
 #endif   // biomeClassColor/riverMask/canyonMask: DEBUGVIEW-only (called solely from displayMode blocks) -- excluded from render FS cold-compile (FS-2, workflow w4y1bnrqc)
 
 vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, float humid, highp vec3 worldPos, float pxWorld) {   // highp: worldPos feeds normalize(worldPos)*freq noise UVs (mottle/river/canyon ridge) -- mediump scrambles the lattice up close
-    vec3 c = terrainAlbedo(h, slope, rockSlope, worldPos);
+    vec3 c = terrainAlbedo(h, slope, rockSlope, worldPos, pxWorld);
     if (h < 0.0) {
         // SEA ICE: near-polar ocean (very cold) freezes to white-blue pack ice. Pure fn of the
         // anchor temp -> seam-safe; the soft threshold gives an irregular (not hard-zonal) margin.
