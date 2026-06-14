@@ -390,7 +390,7 @@ highp vec2 faceWarp(highp vec2 p){ return defRadius * tan((p / defRadius) * 0.78
 uniform float uDetailOverlay;   // amplitude lever (user-tuned 6; 0 = off; __detailOverlay)
 uniform float uGrid;             // interior cells per tile edge (GRID=16); for mesh-based vertex normals
 uniform float uNrmStepM;        // lit-normal FD step in metres (150); uniform-fed to defeat FXC constant folding
-#if defined(_VERTEX_) || defined(_PROBE_)
+#if defined(_VERTEX_) || defined(_PROBE_) || defined(_HEIGHTBAKE_)
 highp float broadShapeM(vec3 dir, float reliefMul, float ridgeMul){   // W7: returns metres (~13000) -> highp
   if (hasHpf == 0) return 0.0;
   float mtnAmp = 1.0;   // mountain-amplitude (was a window.__mtnAmp uniform; inlined at neutral 1.0)
@@ -2227,5 +2227,24 @@ void main(){
     // clamp at use (planet.html Math.max(0, sampleGroundM(...)) at the move-step and ground-track
     // sites), which is where a USE-specific policy belongs -- the instrument now reports truth.
     probeOut = vec4(h, 0.0, 0.0, 1.0);
+}
+#endif
+
+#ifdef _HEIGHTBAKE_
+// THC HEIGHT-CACHE BAKE (2026-06-14): render ONE tile's composeHeight into a height-pool texel grid.
+// Each fragment = one parametric (u,v) of the tile; the dir + faceLocal mapping is IDENTICAL to the
+// mesh VS (faceWarp(vertex.xy*defOffset.z+defOffset.xy), normalize(frame*vec3(faceLocal,defRadius)))
+// so the baked height matches the procedural geometry exactly. NON-DESTRUCTIVE: this is a separate
+// program; the live VS still computes composeHeight until thc-vs-sample switches it to a pool sample.
+uniform mat3 uBakeFrame;    // face-local -> world for this tile's face (== faceFrame(face))
+uniform vec4 uBakeOffset;   // tile (ox, oy, l, level) face-local metres (== iOffset)
+uniform float uBakeRes;     // bake grid resolution (texels per edge)
+out vec4 bakeOut;
+void main(){
+    highp vec2 uv = (gl_FragCoord.xy - 0.5) / max(uBakeRes - 1.0, 1.0);   // texel -> parametric [0,1]
+    highp vec2 faceLocal = faceWarp(uv * uBakeOffset.z + uBakeOffset.xy);
+    highp vec3 dir0 = normalize(uBakeFrame * vec3(faceLocal, defRadius));
+    highp float h = composeHeight(dir0, faceLocal, uBakeOffset.z);
+    bakeOut = vec4(h, 0.0, 0.0, 1.0);
 }
 #endif

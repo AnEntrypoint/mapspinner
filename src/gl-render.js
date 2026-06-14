@@ -272,6 +272,72 @@ export async function initMapspinnerRender(gl, opts = {}) {
     return out[0];
   }
 
+  // ===== THC HEIGHT-CACHE BAKE (2026-06-14, NON-DESTRUCTIVE) =====
+  // A separate program renders composeHeight for one tile into an R32F grid (a fullscreen tri; each
+  // fragment = one tile parametric texel). Used FIRST as a readback witness (bake vs procedural
+  // sampleGroundM) to prove the bake matches the geometry; the pool/LRU + the VS-sample switch are
+  // later DAG nodes. _faceFrames mirror terrain.glsl faceFrame() columns (column-major mat3).
+  const THC_BAKE_RES = 130;
+  const _faceFrames = [
+    [0,0,-1, 0,1,0, 1,0,0], [0,0,1, 0,1,0, -1,0,0],
+    [1,0,0, 0,0,-1, 0,1,0], [1,0,0, 0,0,1, 0,-1,0],
+    [1,0,0, 0,1,0, 0,0,1], [-1,0,0, 0,1,0, 0,0,-1],
+  ];
+  let bakeProg=null, bakeTex=null, bakeFbo=null, _bakeBuilding=null; const _bakeUloc=new Map();
+  const BU = n => { let l=_bakeUloc.get(n); if(l===undefined){ l=gl.getUniformLocation(bakeProg,n); _bakeUloc.set(n,l);} return l; };
+  function ensureBake(){
+    if (bakeProg || _bakeBuilding) return;
+    _bakeBuilding = (async () => {
+      try {
+        const bvs = hdr + 'void main(){ vec2 p=vec2((gl_VertexID==1)?3.0:-1.0,(gl_VertexID==2)?3.0:-1.0); gl_Position=vec4(p,0.0,1.0); }';
+        const bfs = hdr + '\n#define _HEIGHTBAKE_\n' + src;
+        const bv=gl.createShader(gl.VERTEX_SHADER); gl.shaderSource(bv,bvs); gl.compileShader(bv);
+        const bf=gl.createShader(gl.FRAGMENT_SHADER); gl.shaderSource(bf,bfs); gl.compileShader(bf);
+        const bp=gl.createProgram(); gl.attachShader(bp,bv); gl.attachShader(bp,bf); gl.linkProgram(bp);
+        await awaitProgramLink(bp, bv, bf, 'bake');
+        const tex=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R32F, THC_BAKE_RES, THC_BAKE_RES);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        const fbo=gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        _bakeUloc.clear(); bakeTex=tex; bakeFbo=fbo; bakeProg=bp;
+      } catch(e){ bakeProg=null; try{ if(typeof window!=='undefined') window.__bakeErr=String(e.message||e); }catch(_){} }
+      finally { _bakeBuilding=null; }
+    })();
+  }
+  const bakeVao = gl.createVertexArray();
+  // bake ONE tile into bakeTex + read it back (Float32Array of THC_BAKE_RES^2 heights). Returns null
+  // until the program is built (lazy). NON-DESTRUCTIVE: does not touch the live render path.
+  function bakeTileReadback(face, ox, oy, l, level){
+    if (!bakeProg){ ensureBake(); return null; }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, bakeFbo);
+    gl.viewport(0,0,THC_BAKE_RES,THC_BAKE_RES);
+    gl.useProgram(bakeProg);
+    gl.bindVertexArray(bakeVao);
+    if (_hpfTex){ gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D_ARRAY,_hpfTex); gl.uniform1i(BU('hpfPool'),3); }
+    if (_hpfTex2){ gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D_ARRAY,_hpfTex2); gl.uniform1i(BU('hpfPool2'),5); }
+    gl.uniform1i(BU('hasHpf'), _hpfTex?1:0);
+    setComposeHeightUniforms(BU);
+    gl.uniform1f(BU('defRadius'), R);
+    gl.uniformMatrix3fv(BU('uBakeFrame'), false, new Float32Array(_faceFrames[face|0]));
+    gl.uniform4f(BU('uBakeOffset'), ox, oy, l, level);
+    gl.uniform1f(BU('uBakeRes'), THC_BAKE_RES);
+    gl.disable(gl.DEPTH_TEST);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    const buf = new Float32Array(THC_BAKE_RES*THC_BAKE_RES*4);
+    gl.readPixels(0,0,THC_BAKE_RES,THC_BAKE_RES, gl.RGBA, gl.FLOAT, buf);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindVertexArray(null);
+    const out = new Float32Array(THC_BAKE_RES*THC_BAKE_RES);
+    for (let i=0;i<out.length;i++) out[i]=buf[i*4];
+    let dbg=null; try{ dbg={ offLoc: BU('uBakeOffset')!=null, resLoc: BU('uBakeRes')!=null, frameLoc: BU('uBakeFrame')!=null,
+      offRead: BU('uBakeOffset')?Array.from(gl.getUniform(bakeProg, BU('uBakeOffset'))):null,
+      resRead: BU('uBakeRes')?gl.getUniform(bakeProg, BU('uBakeRes')):null }; }catch(e){ dbg={err:String(e)}; }
+    return { heights: out, res: THC_BAKE_RES, dbg };
+  }
+  if (typeof window !== 'undefined') { window.__thcBakeReadback = bakeTileReadback; window.__thcEnsureBake = ensureBake; }
+
   // FLOAT-LINEAR FORMAT PROBE (NOT a quality tier): OES_texture_float_linear lets the HPF atlas pools
   // filter LINEAR in hardware -> hpfSample collapses to one texture() call. 0 = manual 4-tap fallback.
   const _halfFloatLinearOK = !!gl.getExtension('OES_texture_float_linear') || !!gl.getExtension('OES_texture_half_float_linear');
