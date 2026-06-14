@@ -531,16 +531,24 @@ function frameLoop(){
   // the eye lands exactly eyeHeight (2.0m) above it. (The old +130m, then +3m, margin made __altM read
   // a height above an inflated reference -> the eye was really ground+margin+2m, not 2m.) The mirror
   // fallback keeps a small +3m only because the CPU jsBroadShape can under-predict vs the GPU.
+  let doClamp = true;
   if (gpuM != null && isFinite(gpuM)) {
     renderedM = gpuM + 1.0;   // +1m margin for sub-vertex micro-relief (vtxDisplace peaks exceed 2m in rugged terrain)
+  } else if (r >= RADIUS) {
+    renderedM = jsBroadShape(cam.pos[0], cam.pos[1], cam.pos[2]) + 3.0;  // above sea level: mirror is fine for land
   } else {
-    renderedM = jsBroadShape(cam.pos[0], cam.pos[1], cam.pos[2]) + 3.0;  // mirror fallback (CPU under-predicts)
+    // UNDERWATER DIVE FIX (user 2026-06-14 'camera stops at sea level'): below sea level with NO GPU
+    // probe this frame, the CPU mirror (jsBroadShape) OMITS the seaBias/bathymetry remap, so it reports
+    // ~sea-level over ocean and the clamp would shove the camera back up to the surface = 'stuck at sea
+    // level'. Skip the clamp this frame; the GPU probe (the only thing that knows the seabed) resumes
+    // collision next frame, so you can descend through the surface and explore the seabed.
+    doClamp = false; renderedM = -11000.0;
   }
   // cap to composeHeight's CMAX=15000; allow negative for seabed
   const surfElev = Math.min(renderedM, 15000.0) / WEBGL2_TERRAIN_R_M;
   const eyeHeight = 2.0 / WEBGL2_M_PER_UNIT;   // EXACTLY 2.0 m above ground (km-units = 2m / m-per-unit)
   const minR = RADIUS * (1.0 + surfElev) + eyeHeight;
-  if (r < minR) { const s = minR/r; cam.pos[0]*=s; cam.pos[1]*=s; cam.pos[2]*=s; }
+  if (doClamp && r < minR) { const s = minR/r; cam.pos[0]*=s; cam.pos[1]*=s; cam.pos[2]*=s; }
   const maxR = RADIUS * 50;
   if (r > maxR) { const s = maxR/r; cam.pos[0]*=s; cam.pos[1]*=s; cam.pos[2]*=s; }
 

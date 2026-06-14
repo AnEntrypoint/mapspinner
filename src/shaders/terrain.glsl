@@ -1067,7 +1067,11 @@ void main() {
     // water pass: NO skirt (user 2026-06-11) -- the surface is an exact sphere at R, so adjacent
     // LODs agree exactly and there are no T-junction cracks to hide; a skirt would only drape a
     // visible curtain through the transparent shallows.
-    highp float skirt = (vertex.z > 0.5 && uIsWater < 0.5) ? max(defOffset.z * 0.12, 60.0) : 0.0;   // W7: metres (tile-size scaled) -> highp
+    // SKIRT halved (user 2026-06-14 'we keep seeing skirts' -- visible underwater/through the now-clear
+    // water): 0.12->0.06 tile-scaled + floor 60->30. Still reaches below a coarser neighbor to hide the
+    // LOD T-junction crack (the real discontinuity is tens of m, far under 0.06*tilespan), but the
+    // vertical curtain is half as tall = far less visible when the seabed is seen through clear water.
+    highp float skirt = (vertex.z > 0.5 && uIsWater < 0.5) ? max(defOffset.z * 0.06, 30.0) : 0.0;   // W7: metres (tile-size scaled) -> highp
     vWorld = dir0 * (R + hR - skirt);   // ABSOLUTE world pos (RENDER height: ocean top flat) -> FS lighting/atmosphere
     // TEXTURE DOMAIN WARP -- VS-side, DOUBLED BACK (user 2026-06-12): 225/900/3500 -> 450/1800/7000.
     {

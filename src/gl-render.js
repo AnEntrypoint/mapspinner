@@ -1105,7 +1105,11 @@ export async function initMapspinnerRender(gl, opts = {}) {
       // shows. Cap every visible leaf at level WCAP and DEDUP to its ancestor tile: a coarse,
       // LOD-churn-free cover of the same footprint, typically ~10-50x fewer water vertices.
       // __waterSurface=0 disables live.
-      if (typeof window === 'undefined' || window.__waterSurface !== false) {
+      // UNDERWATER: skip the sea-level water surface entirely (user 2026-06-14 'underwater looks weird,
+      // we cant see anything / it must draw the sea bed'). The surface mesh drawn from below was an
+      // opaque sheet that occluded the seabed; with it gone, the underwater camera sees the seabed
+      // terrain directly (with the underwater fog). Above water it draws normally.
+      if ((typeof window === 'undefined' || window.__waterSurface !== false) && !_uw) {
         // WCAP 7 -> 9 (coast witness caught it: a level-7 tile's 16-cell mesh chord sags
         // A_cell^2/(8R) ~ 0.8m below the true sphere mid-cell -- BELOW the metres-deep shelf
         // seabed, so the depth test culled the water across entire shorelines. Level-9 cells
