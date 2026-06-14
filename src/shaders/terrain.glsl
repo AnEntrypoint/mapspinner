@@ -1877,38 +1877,26 @@ void main() {
         wt += vTexWarp * uTexWarp;
         vec3 tw = abs(n); tw = tw * tw; tw /= (tw.x + tw.y + tw.z + 1e-4);
         const vec3 LUMA = vec3(0.299, 0.587, 0.114);
-        float detailFade = (1.0 - smoothstep(1.0, 12.0, pxWorld));
         float bAB = clamp(wA / max(wA + wB, 1e-4), 0.0, 1.0);
-        // PER-LAYER material = base octave (NORMALS ONLY -> albedo flattened to luma, macro color carries
-        // chroma) + the 4x DETAIL octave (albedo STRUCTURE + strong normal) + a per-layer DISPLACEMENT
-        // (coarse base, refined by the 4x near the deck). Each top-2 layer is built FULLY here, then the
-        // two are HEIGHT-BLENDED (below) -- so the detail never flips at the boundary (the 'hard lines up
-        // close ever since the higher octave' bug = the detail used the dominant layer only).
-        vec4 albA = surfTriTap(uSurfAlb, wt, tw, lA);
-        vec3 cA = vec3(dot(albA.rgb, LUMA)); vec3 nA = surfTriNrm(uSurfNrm, wt, tw, lA, n); float dispA = albA.a;
-        if (detailFade > 0.01) {
-            vec4 dA = surfTriTap(uSurfAlb, wt * 4.0, tw, lA);
-            cA *= mix(1.0, clamp(dot(dA.rgb, LUMA) / max(dot(cA, LUMA), 0.04), 0.35, 2.4), detailFade * 1.3);
-            nA += surfTriNrm(uSurfNrm, wt * 4.0, tw, lA, n) * detailFade * 1.4;
-            dispA = mix(dispA, dA.a, detailFade);   // fine displacement poke near the deck
-        }
+        // SINGLE HIGH-FREQUENCY OCTAVE + MIPS (user 2026-06-14 'instead of swapping out texture octaves,
+        // just use the highest one and let it mip and get rid of the fade-in'): sample the material at the
+        // FINE scale (wt*4, ~0.6m/texel) at EVERY distance and let the GPU mip chain average it down far
+        // off (= the old low-freq look) -- no second octave, no detailFade. Albedo = luma STRUCTURE (macro
+        // color carries chroma); normal strong (x1.4); displacement drives the height-blend (mips soften
+        // the displacement, and thus the blend, at distance automatically).
+        highp vec3 wt4 = wt * 4.0;
+        vec4 albA = surfTriTap(uSurfAlb, wt4, tw, lA);
+        vec3 cA = vec3(dot(albA.rgb, LUMA)); vec3 nA = surfTriNrm(uSurfNrm, wt4, tw, lA, n) * 1.4; float dispA = albA.a;
         vec4 texAlb = vec4(cA, dispA); vec3 texNrm = nA;
+        float splatRock = (abs(lA - 1.0) < 0.5) ? 1.0 : 0.0;   // height-blend rock fraction (layer 1 = rock)
         if (wB > 0.02) {   // second layer only where a real transition exists
-            vec4 albB = surfTriTap(uSurfAlb, wt, tw, lB);
-            vec3 cB = vec3(dot(albB.rgb, LUMA)); vec3 nB = surfTriNrm(uSurfNrm, wt, tw, lB, n); float dispB = albB.a;
-            if (detailFade > 0.01) {
-                vec4 dB = surfTriTap(uSurfAlb, wt * 4.0, tw, lB);
-                cB *= mix(1.0, clamp(dot(dB.rgb, LUMA) / max(dot(cB, LUMA), 0.04), 0.35, 2.4), detailFade * 1.3);
-                nB += surfTriNrm(uSurfNrm, wt * 4.0, tw, lB, n) * detailFade * 1.4;
-                dispB = mix(dispB, dB.a, detailFade);
-            }
-            // HEIGHT-BLEND POKE-THROUGH (user 2026-06-14 'each texture's higher areas should poke through
-            // the other, offset by the ramp'): each layer's height = its DISPLACEMENT + a weight-ramp
-            // offset (so the gate still positions the boundary). The higher height wins, blended over a
-            // soft WIDTH so the loser's high bumps still poke through near the ramp -> interlocking
-            // fingers, never a hard line. This is the ONE blend for ALL pairs (slope-rock, height-snow,
-            // climate/area-biome, beach). bw widens close-up (where the detail is rich) for a softer mesh.
-            float bw = mix(0.12, 0.30, detailFade);
+            vec4 albB = surfTriTap(uSurfAlb, wt4, tw, lB);
+            vec3 cB = vec3(dot(albB.rgb, LUMA)); vec3 nB = surfTriNrm(uSurfNrm, wt4, tw, lB, n) * 1.4; float dispB = albB.a;
+            // HEIGHT-BLEND POKE-THROUGH (user 'each texture's higher areas should poke through the other,
+            // offset by the ramp'): height = displacement + a weight-ramp offset (gate positions the
+            // boundary); higher wins over a soft width so the loser's high bumps poke through = fingers,
+            // no hard line. ONE blend for ALL pairs. Mips smooth dispA/dispB at distance -> soft far edge.
+            float bw = 0.25;
             float hA = dispA + (bAB - 0.5) * 1.1;
             float hB = dispB + (0.5 - bAB) * 1.1;
             float mh = max(hA, hB) - bw;
@@ -1916,7 +1904,14 @@ void main() {
             float bSharp = waH / max(waH + wbH, 1e-4);
             texAlb = vec4(mix(cB, cA, bSharp), mix(dispB, dispA, bSharp));
             texNrm = mix(nB, nA, bSharp);
+            splatRock = (abs(lA - 1.0) < 0.5 ? bSharp : 0.0) + (abs(lB - 1.0) < 0.5 ? (1.0 - bSharp) : 0.0);
         }
+        // MATCH COLOR TO NORMAL (user 2026-06-14 'green grassy patches with the rock normals -- should be
+        // rock colored or grass normals'): texNrm follows the displacement height-blend (rock on bumps in
+        // the slope-transition band) but the macro albedo used the slope gate -> grass color under a rock
+        // normal. Push the macro color toward bcRock by the splat's actual rock fraction so the COLOR
+        // follows the same selection the NORMAL does (bounded -- splatRock is 0 where rock isn't in top-2).
+        albedo = mix(albedo, bcRock, splatRock * 0.8);
         float k = uTexMix * texFarFade;
         // macro-tinted detail (user 2026-06-10 'the textured patch must be tinted to the same shade
         // as the spot its replacing'): the texture contributes STRUCTURE + relative chroma only,

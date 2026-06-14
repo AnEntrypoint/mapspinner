@@ -37,7 +37,7 @@ const DEFAULTS = {
     bcLowland: [0.20,0.34,0.15], bcGrass: [0.26,0.40,0.17], bcRock: [0.52,0.43,0.34],   // bcRock -> a clearly WARMER TAN-GREY (R>G>B) so it reads as ROCK when lit, not olive-green (the [0.46,0.42,0.37] near-grey read green next to the biome). state.biome OVERRIDES gl-render defaults via window.__gen.
     bcSnow: [0.92,0.94,0.97],
     bandEdgesLo: [150.0,1200.0], bandEdgesHi: [3500.0,6500.0], snowEdges: [6000.0,8500.0],   // 8000/10500->6000/8500 (user 2026-06-11 'snowy mountains disappeared' -- see gl-render snowEdges note)   // snowEdges 5200/7000->8000/10500 (user 2026-06-10 'entire terrain white': the rock-by-height fix unmasked snow gates tuned pre-4x; full snow from 5.2km whitened the 11.6km massifs; coldSnow onset = snowEdges.x*0.5 follows)   // bandEdgesHi 1600/3200->3500/6500 (user 2026-06-10 'rockface everywhere'): tuned on the pre-4x terrain; with 11.6km peaks everything above 3200m read rock BY HEIGHT alone -- rescale the treeline to the new elevation range
-    seaDepthM: 3000.0, slopeRock: [0.0,0.22],   // hi 0.3->0.22 (user 2026-06-14 'rock face angle more sensitive, gentler slopes turn to rock'): rock fully engages by ~0.22 slope; lo stays 0.0 so truly-flat (rockSlope~0) keeps grass
+    seaDepthM: 3000.0, slopeRock: [-0.0,0.4],   // [-0.0,0.4] USER-SET 2026-06-14 (wider rock-slope band)
   },
   // REAL-WORLD LOOK overhaul (terraformable lighting/shading levers; applyShaderGlobals sets window
   // globals; gl-render reads them via _g()). Beer-Lambert ocean, biome sat, mottle, sky-fill relief,
