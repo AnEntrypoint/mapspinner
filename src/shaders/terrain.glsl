@@ -222,7 +222,7 @@ uniform float uMtnBandWide;                // widen mtn=smoothstep(16.8,18.6,ele
 uniform float uClimateRelief;              // widen wetLowFlat(0.66,0.9,humid) + coldFlat(0.18,0.34,temp) reliefMul gates
 uniform float uIsleWide;                    // widen isleZone seaBias gates (50,350)+(900,1600) -> (30,600)+(600,2200)
 uniform float uCarveWide;                   // widen the river/canyon/lake/dune CLIMATE gates so carve depth fades in over a wide span
-float canyonRidgeField(vec3 dir){ return inciseRidgeField(normalize(dir) + vec3(13.7, -4.2, 8.9), 96.0, 2.07); }  // phase offset matches FS canyonMask. baseFreq 48->96 (user 2026-06-14: double canyon frequency = 2x finer/denser gorge network, more visible at the deck). Shared VS carve + FS mask -> congruent by construction.
+float canyonRidgeField(vec3 dir){ return inciseRidgeField(normalize(dir) + vec3(13.7, -4.2, 8.9), 380.0, 2.07); }  // phase offset matches FS canyonMask. baseFreq 380 = ~100km gorge network (user 2026-06-14: doubled 380->760 to restore deck-visible canyons after a 380->96 regression that put gorges ~400km apart = 'missing', then HALVED 760->380 back to the ~100km baseline). Shared VS carve + FS mask -> congruent by construction.
 // CANYON cross-section now reads as a CANYON, not a V-notch: STEEP WALLS + a FLAT FLOOR.
 //   wall = a sharp smoothstep band -> the carve drops fast over a narrow ridge interval (the cliff
 //          walls), instead of the old gentle bench+gorge blend that made shallow V-troughs.
