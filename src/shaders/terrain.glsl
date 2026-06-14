@@ -760,6 +760,7 @@ out float vLakeWet;     // lake open-water mask (carve basin)
 out float vRiverWet;    // river thalweg wet line
 out float vWaterDepth;  // metres the flat inland-water plane sits ABOVE the local terrain floor (>0 = submerged)
 out float vCanyonDep;   // canyon gorge depth [0,1]
+out float vConcavity;   // height-field Laplacian / step^2 (1/m, +ve = concave valley/pit) -- ELEVATION AO signal (free from the normal central-diff taps)
 out float vCliffFace;   // cliff/escarpment riser face [0,1] (1 = steep terrace face)
 out float vDuneCrest;   // dune crest [0,1]
 out float vLevel;       // quad LOD level (per-instance iOffset.w) for the patches debug view
@@ -1003,6 +1004,7 @@ void main() {
     // sides of a seam share the same dir0/tangent frame -> consistent normals, no row artifact.
     highp float hN0 = 0.0;
     highp vec3 vN = dir0;
+    highp float concavRaw = 0.0;   // height Laplacian / step^2 (+ve = concave) -- set in the land branches, free from the normal taps
     if (uIsWater < 0.5 && uThc > 0.5) {
         // THC FAST PATH: height + symmetric central-diff normal from the baked pool. 5 bilinear texture
         // taps replace 5 full composeHeight evals (the VS-bound cost). The 4 normal taps use the SAME
@@ -1058,6 +1060,23 @@ void main() {
         vN = normalize(cross(wPU - wMU, wPV - wMV));
         if (dot(vN, dir0) < 0.0) vN = -vN;   // keep it outward (terrain has no overhangs)
     }
+    // ELEVATION-AO CONCAVITY at LARGE scale (user 2026-06-14 'AO is focused on features too small, must
+    // AO the larger features'): the 300m normal-step Laplacian keyed on small/sharp relief (canyons). Take
+    // the Laplacian of broadShapeLowM (the cheap 8-oct LARGE-SCALE shape, no small carves) over a WIDE ~2km
+    // step instead, so the AO darkens broad valleys/basins. broadShapeLowM is the same field the mesa
+    // slope gate uses at a 1.2km step -> a known-cheap large-feature probe. Land only (water needs none).
+    if (uIsWater < 0.5) {
+        const highp float ecM = 2000.0;   // wide finite-diff step = large-feature scale
+        highp vec3 ux = normalize(cross(abs(dir0.y) < 0.99 ? vec3(0.0,1.0,0.0) : vec3(1.0,0.0,0.0), dir0));
+        highp vec3 uy = cross(dir0, ux);
+        highp float h0c = broadShapeLowM(dir0);
+        highp float hxp = broadShapeLowM(normalize(dir0 + ux * (ecM / defRadius)));
+        highp float hxm = broadShapeLowM(normalize(dir0 - ux * (ecM / defRadius)));
+        highp float hyp = broadShapeLowM(normalize(dir0 + uy * (ecM / defRadius)));
+        highp float hym = broadShapeLowM(normalize(dir0 - uy * (ecM / defRadius)));
+        concavRaw = (hxp + hxm + hyp + hym - 4.0 * h0c) / (ecM * ecM);   // 1/m large-scale curvature, +ve = broad valley/basin
+    }
+    vConcavity = concavRaw;
     highp float h = hN0;
     // OCEAN TOP = A SEPARATE, ELEVATION-BASED SURFACE (user 2026-06-10: 'terrain should extend into
     // the ocean, the ocean top separate and elevation based'). composeHeight keeps carrying the TRUE
@@ -1135,6 +1154,7 @@ in float vLakeWet;    // carve masks computed in the VS, interpolated (no per-pi
 in float vRiverWet;
 in float vWaterDepth; // metres of submerged water (>0 = real open inland water at the flat plane)
 in float vCanyonDep;
+in float vConcavity;   // elevation-AO concavity (1/m, +ve = valley/pit)
 in float vCliffFace;
 in float vDuneCrest;
 in float vLevel;          // quad LOD level (patches view)
@@ -1921,7 +1941,7 @@ void main() {
         // 3 normal octaves (user 2026-06-14 'add an even lower freq octave, displacement/normals only,
         // 4x less frequent'): wt4 high (detail) + wt low (2.4km) + wt*0.25 VERY-low (9.6km) -- the very-
         // low one breaks the far repetition even more. Normals/displacement only (no albedo).
-        vec3 nA = surfTriNrm(uSurfNrm, wt4, tw, lA, n) * 1.4 + surfTriNrm(uSurfNrm, wt, tw, lA, n) * 0.8 + surfTriNrm(uSurfNrm, wt * 0.25, tw, lA, n) * 2.4;   // very-low octave UP 0.55->2.4 (user 2026-06-14 'dont really see the lower freq octave yet'): at a 9.6km period its slope is gentle, so it needs more weight to read as broad undulation
+        vec3 nA = surfTriNrm(uSurfNrm, wt4, tw, lA, n) * 2.0 + surfTriNrm(uSurfNrm, wt, tw, lA, n) * 0.9 + surfTriNrm(uSurfNrm, wt * 0.25, tw, lA, n) * 1.1;   // REBALANCED (user 2026-06-14 'higher octaves appear gone'): very-low 2.4 swamped the detail -> high (wt4) UP to 2.0 (dominant detail), very-low DOWN to 1.1 (still visible broad) (user 2026-06-14 'dont really see the lower freq octave yet'): at a 9.6km period its slope is gentle, so it needs more weight to read as broad undulation
         float dispA = albA.a;
         // NO BIOME COLOR INHERITANCE (user 2026-06-14 'take away all biome color inheritance, it will
         // speed it up' -- and fixes 'sand near grass tinted green'): each layer wears its OWN material
@@ -1933,7 +1953,7 @@ void main() {
         if (wB > 0.02) {   // second layer only where a real transition exists
             vec4 albB = surfTriTap(uSurfAlb, wt4, tw, lB);
             vec3 cB = vec3(dot(albB.rgb, LUMA));
-            vec3 nB = surfTriNrm(uSurfNrm, wt4, tw, lB, n) * 1.4 + surfTriNrm(uSurfNrm, wt, tw, lB, n) * 0.8 + surfTriNrm(uSurfNrm, wt * 0.25, tw, lB, n) * 2.4;   // very-low octave UP 0.55->2.4 (match nA)
+            vec3 nB = surfTriNrm(uSurfNrm, wt4, tw, lB, n) * 2.0 + surfTriNrm(uSurfNrm, wt, tw, lB, n) * 0.9 + surfTriNrm(uSurfNrm, wt * 0.25, tw, lB, n) * 1.1;   // REBALANCED (match nA)
             float dispB = albB.a;
             // HEIGHT-BLEND POKE-THROUGH (user 'each texture's higher areas should poke through the other,
             // offset by the ramp'): height = displacement + a weight-ramp offset (gate positions the
@@ -2031,13 +2051,16 @@ void main() {
         // crevices/pits read clearly. Still faded by k so the mipped far field is untouched.
         float texAO = mix(1.0, mix(0.5, 1.0, smoothstep(0.05, 0.6, texAlb.a)), k);
         albedo *= texAO;
-        // ELEVATION AO (user 2026-06-14 'similar AO on elevation'): the macro analog of the displacement
-        // AO -- darken CONCAVE relief (valley floors, gorges, recesses) using the screen-space CURVATURE
-        // of the lit normal. curv = d(normal).d(position) / |d(position)|^2 -> +ve where the surface
-        // curves into a pit (concave), -ve on ridges. Cheap (fwidth of the already-computed vNrm/vWorld).
-        highp vec3 ddxP = dFdx(vWorld), ddyP = dFdy(vWorld);
-        float curv = (dot(dFdx(vNrm), ddxP) + dot(dFdy(vNrm), ddyP)) / max(dot(ddxP, ddxP) + dot(ddyP, ddyP), 0.01);
-        float elevAO = 1.0 - clamp(curv * 420.0, 0.0, 0.65);   // concave -> darken up to 65% (user 2026-06-14 x2 'elevation based ao not visible yet': macro relief curvature is small-magnitude, needs big gain 45->420)
+        // ELEVATION AO (user 2026-06-14 x3 'similar AO on elevation / still not visible'): the screen-space
+        // curvature of vNrm was ~0 (vNrm is a per-vertex analytic normal, linearly interpolated -> its
+        // fwidth is tiny on the coarse grid = invisible). Replaced with vConcavity = the height-field
+        // LAPLACIAN computed FREE from the VS normal central-diff taps (1/m, +ve = concave valley/pit),
+        // a real object-space relief signal that survives interpolation. Darken concavities up to 65%.
+        // VERY GRADUAL response (user 2026-06-14 'ao works but not gradiated, must be very gradual'): the
+        // hard clamp(.,0.6) flat-topped every valley past a threshold = a visible AO edge + no gradation
+        // between medium and deep concavity. Exponential SOFT saturation instead -- monotonic, smooth
+        // onset AND smooth approach to the 0.6 floor, so darkening grades continuously with depth, no edge.
+        float elevAO = 1.0 - 0.6 * (1.0 - exp(-max(vConcavity, 0.0) * 2500.0));   // concavRaw ~=1/Rc of the LARGE shape (~3-7e-4 for km-scale basins): broad valley eases in, asymptotes to -60%
         albedo *= elevAO;
         // displacement-normal relief: WORLD-SPACE UDN perturbation from surfTriNrm (each projection
         // plane's tangent axes, not the radial frame). Amplitude capped low (scramble lesson d262b5e);
