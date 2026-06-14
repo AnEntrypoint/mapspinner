@@ -1249,7 +1249,13 @@ vec3 terrainAlbedo(float h, float slope, float rockSlope, highp vec3 worldPos) {
     } else {
         c = mix(bcShore, bcLowland, smoothstep(0.0, bandEdgesLo.x, h));
         c = mix(c, bcGrass, smoothstep(bandEdgesLo.x, bandEdgesLo.y, h));
-        float bandWarp = snoise3(normalize(worldPos) * 400.0) * 500.0;
+        // BIOME-BAND WARP (user 2026-06-14 'hard bands between biomes ... make that more interesting'):
+        // the single-octave warp made smooth wavy contour lines. A 3-octave domain-warped field breaks
+        // the rock/snow boundaries into irregular fingers + patches (height-keyed band wobbles +/-~1.1km
+        // over 1-15km scales), so the biome edge reads natural, not a band. highp dir for the lattice.
+        highp vec3 bwd = normalize(worldPos);
+        highp vec3 bww = bwd + vec3(snoise3(bwd * 130.0)) * 0.004;   // domain warp -> non-parallel fingers
+        float bandWarp = (snoise3(bww * 210.0) * 1.0 + snoise3(bww * 560.0) * 0.5 + snoise3(bww * 1450.0) * 0.25) * 720.0;
         c = mix(c, bcRock, smoothstep(bandEdgesHi.x + bandWarp, bandEdgesHi.y + bandWarp, h));
         c = mix(c, bcSnow, smoothstep(snowEdges.x + bandWarp, snowEdges.y + bandWarp, h));
         c = mix(c, bcRock, smoothstep(slopeRock.x, slopeRock.y, rockSlope) * step(0.0, h));
@@ -1778,10 +1784,19 @@ void main() {
         // beach->land crossover). 2-oct world-dir noise, 1/4 freq (~13km + ~5km waves). Computed once
         // here; the snow/rock bandWarp below reuses warpN. highp dir for the lattice precision.
         highp vec3 bwDir = normalize(vWorld);
-        float warpN = snoise3(bwDir * 3325.0) + 0.5 * snoise3(bwDir * 7750.0);   // ~ +/-1.5
+        // 3-oct (added the ~1km octave, user 2026-06-14 'make biome bands more interesting') -> the
+        // texture-splat rock/snow/beach edges break into finer fingers as you approach, not a hard band.
+        float warpN = snoise3(bwDir * 3325.0) + 0.5 * snoise3(bwDir * 7750.0) + 0.35 * snoise3(bwDir * 17000.0);   // ~ +/-1.8
         // BEACH sand gate tied to uBeachTopM (so the sand TEXTURE scales with the wide beach, not a
         // hardcoded 80m strip) + the shared warp on its LAND edge so the beach->grass line is irregular.
-        float beachW = warpN * uBeachTopM * 0.30;   // warp amplitude scales with the beach band height
+        // FINE BREAK on the grass->sand line (user 2026-06-14 'still a hard straight grass-sand line up
+        // close ... it must gain detail'): warpN breaks it at the km scale; add a high-freq (~80-200m)
+        // octave so the line stays irregular/fingered when you walk right up to it instead of going
+        // straight. Faded in WITH the close-up detail (detailFade-like, via pxWorld) so it never speckles
+        // at distance where the macro band is smooth.
+        float closeBreak = (1.0 - smoothstep(2.0, 40.0, pxWorld));
+        float beachFine = (snoise3(bwDir * 42000.0) + 0.5 * snoise3(bwDir * 95000.0)) * uBeachTopM * 0.45 * closeBreak;
+        float beachW = warpN * uBeachTopM * 0.30 + beachFine;   // warp amplitude scales with the beach band height
         float beach = (1.0 - smoothstep(uBeachTopM * 0.12 + beachW, uBeachTopM + beachW, vH))
                     * (1.0 - smoothstep(0.15, 0.42, slope));
         // SAND BLEED (2026-06-13): patchy sand spills above the main beach line, modulated by VS
@@ -1885,18 +1900,22 @@ void main() {
         // 2m'): the base photo tiles at uTexTileM (~2.4km = ~2.3m/texel, smeared at the deck). Sample the
         // SAME dominant material at 4x frequency (~0.6m/texel) and overlay its luminance + normal so
         // close-up the ground gains sub-metre structure. Faded out by ~12m px so it never moires far off.
+        // LOW-FREQ = NORMALS ONLY, HIGH-FREQ = TEXTURE + STRONG NORMALS (user 2026-06-14): flatten the
+        // base (2.4km) albedo to its luminance so the MACRO biome color carries the chroma -- the base
+        // octave contributes only its NORMAL (relief), not color blotches. The 4x detail octave then
+        // provides the albedo STRUCTURE + a strong normal.
+        texAlb.rgb = vec3(dot(texAlb.rgb, vec3(0.299, 0.587, 0.114)));   // low-freq: normals only (albedo -> flat luma)
         float detailFade = (1.0 - smoothstep(1.0, 12.0, pxWorld));
         if (detailFade > 0.01) {
             vec4 dA = surfTriTap(uSurfAlb, wt * 4.0, tw, lA);
             float dl = dot(dA.rgb, vec3(0.299, 0.587, 0.114));
             float bl = dot(texAlb.rgb, vec3(0.299, 0.587, 0.114));
-            texAlb.rgb *= mix(1.0, clamp(dl / max(bl, 0.04), 0.55, 1.7), detailFade * 0.6);
-            // detail NORMAL: surfTriNrm returns a PERTURBATION vector (texNrm feeds texDn = texNrm*uTexNrmK*k
-            // at the apply site, NOT a unit normal), so the detail is simply ADDED in the same space -- no
-            // normalize (normalizing the perturbation scrambled its magnitude = the 'weird highest-octave
-            // normals'). Half-weight so the fine octave textures relief without overpowering the base.
+            texAlb.rgb *= mix(1.0, clamp(dl / max(bl, 0.04), 0.35, 2.4), detailFade * 1.3);   // HIGH-FREQ albedo structure (heavier)
+            // detail NORMAL: surfTriNrm returns a PERTURBATION vector (texNrm feeds texDn = texNrm*uTexNrmK*k,
+            // NOT a unit normal), so the detail is simply ADDED in the same space -- no normalize (that
+            // scrambled magnitudes = the 'weird highest-octave normals').
             vec3 dN = surfTriNrm(uSurfNrm, wt * 4.0, tw, lA, n);
-            texNrm = texNrm + dN * detailFade * 0.5;
+            texNrm = texNrm + dN * detailFade * 1.4;   // BIGGER normal effect for the high-freq octave (user 2026-06-14)
         }
         float k = uTexMix * texFarFade;
         // macro-tinted detail (user 2026-06-10 'the textured patch must be tinted to the same shade
