@@ -1872,63 +1872,46 @@ void main() {
         // samples through this shared wt, so the warp cannot layer or double-apply.
         wt += vTexWarp * uTexWarp;
         vec3 tw = abs(n); tw = tw * tw; tw /= (tw.x + tw.y + tw.z + 1e-4);
-        vec4 albA = surfTriTap(uSurfAlb, wt, tw, lA);
-        vec3 nrmA = surfTriNrm(uSurfNrm, wt, tw, lA, n);
-        float bAB = clamp(wA / max(wA + wB, 1e-4), 0.0, 1.0);
-        vec4 texAlb = albA; vec3 texNrm = nrmA;
-        if (wB > 0.02) {   // second layer only where a real transition exists (saves 6 taps elsewhere)
-            vec4 albB = surfTriTap(uSurfAlb, wt, tw, lB);
-            vec3 nrmB = surfTriNrm(uSurfNrm, wt, tw, lB, n);
-            // displacement-sharpened transition -- WEIGHT-DOMINANT (user 2026-06-10 'large patches
-            // of rock texture in mountains, not slope-keyed'): the old (hA-hB)*4 let the texture's
-            // 2.4km displacement features decide the material outright wherever the gate weights sat
-            // mid-range, so whole displacement blobs flipped to rock. The slope/snow/climate weight
-            // now dominates (x3) and displacement only crisps the edge (x0.8) within the true
-            // transition band -- material placement is the gates', texture only shapes the seam.
-            // displacement term 0.8 -> 0.3 (user 2026-06-11 'still see bowls of rock texture'):
-            // 0.8 still let the displacement photo's bowl-shaped blobs flip whole patches to rock
-            // inside the transition band; 0.3 only feathers the seam edge.
-            // SOFTENED (2026-06-13): transition sharpening reduced 3->1 so grass/rock/sand/snow
-            // boundaries hold a natural blend band instead of a hard die-cut line. The 1.0 slope
-            // still prefers the dominant layer but leaves a visible transition zone.
-            // DISPLACEMENT-DRIVEN GRADIENT for ALL material pairs (user 2026-06-14 'all textures use the
-            // displacement to mix the gradient'): height-blend the top-2 layers by their displacement so
-            // every boundary (grass/rock, grass/sand, rock/snow...) follows the texture RELIEF = irregular,
-            // not a straight gate line. The displacement weight ramps UP close (0.3 -> 1.3 by the deck)
-            // where the hard lines show, and stays low far off so the 2.4km photo's bowl features never
-            // flip whole patches to rock (the documented bowl-blob lesson -- that was a DISTANT artifact).
-            // UNIVERSAL displacement-driven blend (user 2026-06-14 'this must be ALL texture blends -- the
-            // rock slope and the biome divisions for height and area, wherever we blend textures'): this
-            // bSharp is the ONE blend between the top-2 splat layers, so it already covers every material
-            // pair. WEAKEN the weight term (1.0->0.45) and STRENGTHEN the displacement (-> up to 1.6 close)
-            // so the texture RELIEF -- not the gate weight -- decides the local winner over a WIDE weight
-            // band: every boundary (slope-rock, height-snow, climate/area-biome, beach) fingers along the
-            // texture bumps. Displacement ramps DOWN far off so the 2.4km bowls never flip distant patches.
-            float dispW = mix(0.45, 1.6, 1.0 - smoothstep(3.0, 80.0, pxWorld));
-            float bSharp = clamp((bAB * 2.0 - 1.0) * 0.45 + (albA.a - albB.a) * dispW + 0.5, 0.0, 1.0);
-            texAlb = mix(albB, albA, bSharp);
-            texNrm = mix(nrmB, nrmA, bSharp);
-        }
-        // FINE DETAIL OCTAVE (user 2026-06-14 'add one octave at 4x smaller -> world better scaled at
-        // 2m'): the base photo tiles at uTexTileM (~2.4km = ~2.3m/texel, smeared at the deck). Sample the
-        // SAME dominant material at 4x frequency (~0.6m/texel) and overlay its luminance + normal so
-        // close-up the ground gains sub-metre structure. Faded out by ~12m px so it never moires far off.
-        // LOW-FREQ = NORMALS ONLY, HIGH-FREQ = TEXTURE + STRONG NORMALS (user 2026-06-14): flatten the
-        // base (2.4km) albedo to its luminance so the MACRO biome color carries the chroma -- the base
-        // octave contributes only its NORMAL (relief), not color blotches. The 4x detail octave then
-        // provides the albedo STRUCTURE + a strong normal.
-        texAlb.rgb = vec3(dot(texAlb.rgb, vec3(0.299, 0.587, 0.114)));   // low-freq: normals only (albedo -> flat luma)
+        const vec3 LUMA = vec3(0.299, 0.587, 0.114);
         float detailFade = (1.0 - smoothstep(1.0, 12.0, pxWorld));
+        float bAB = clamp(wA / max(wA + wB, 1e-4), 0.0, 1.0);
+        // PER-LAYER material = base octave (NORMALS ONLY -> albedo flattened to luma, macro color carries
+        // chroma) + the 4x DETAIL octave (albedo STRUCTURE + strong normal) + a per-layer DISPLACEMENT
+        // (coarse base, refined by the 4x near the deck). Each top-2 layer is built FULLY here, then the
+        // two are HEIGHT-BLENDED (below) -- so the detail never flips at the boundary (the 'hard lines up
+        // close ever since the higher octave' bug = the detail used the dominant layer only).
+        vec4 albA = surfTriTap(uSurfAlb, wt, tw, lA);
+        vec3 cA = vec3(dot(albA.rgb, LUMA)); vec3 nA = surfTriNrm(uSurfNrm, wt, tw, lA, n); float dispA = albA.a;
         if (detailFade > 0.01) {
             vec4 dA = surfTriTap(uSurfAlb, wt * 4.0, tw, lA);
-            float dl = dot(dA.rgb, vec3(0.299, 0.587, 0.114));
-            float bl = dot(texAlb.rgb, vec3(0.299, 0.587, 0.114));
-            texAlb.rgb *= mix(1.0, clamp(dl / max(bl, 0.04), 0.35, 2.4), detailFade * 1.3);   // HIGH-FREQ albedo structure (heavier)
-            // detail NORMAL: surfTriNrm returns a PERTURBATION vector (texNrm feeds texDn = texNrm*uTexNrmK*k,
-            // NOT a unit normal), so the detail is simply ADDED in the same space -- no normalize (that
-            // scrambled magnitudes = the 'weird highest-octave normals').
-            vec3 dN = surfTriNrm(uSurfNrm, wt * 4.0, tw, lA, n);
-            texNrm = texNrm + dN * detailFade * 1.4;   // BIGGER normal effect for the high-freq octave (user 2026-06-14)
+            cA *= mix(1.0, clamp(dot(dA.rgb, LUMA) / max(dot(cA, LUMA), 0.04), 0.35, 2.4), detailFade * 1.3);
+            nA += surfTriNrm(uSurfNrm, wt * 4.0, tw, lA, n) * detailFade * 1.4;
+            dispA = mix(dispA, dA.a, detailFade);   // fine displacement poke near the deck
+        }
+        vec4 texAlb = vec4(cA, dispA); vec3 texNrm = nA;
+        if (wB > 0.02) {   // second layer only where a real transition exists
+            vec4 albB = surfTriTap(uSurfAlb, wt, tw, lB);
+            vec3 cB = vec3(dot(albB.rgb, LUMA)); vec3 nB = surfTriNrm(uSurfNrm, wt, tw, lB, n); float dispB = albB.a;
+            if (detailFade > 0.01) {
+                vec4 dB = surfTriTap(uSurfAlb, wt * 4.0, tw, lB);
+                cB *= mix(1.0, clamp(dot(dB.rgb, LUMA) / max(dot(cB, LUMA), 0.04), 0.35, 2.4), detailFade * 1.3);
+                nB += surfTriNrm(uSurfNrm, wt * 4.0, tw, lB, n) * detailFade * 1.4;
+                dispB = mix(dispB, dB.a, detailFade);
+            }
+            // HEIGHT-BLEND POKE-THROUGH (user 2026-06-14 'each texture's higher areas should poke through
+            // the other, offset by the ramp'): each layer's height = its DISPLACEMENT + a weight-ramp
+            // offset (so the gate still positions the boundary). The higher height wins, blended over a
+            // soft WIDTH so the loser's high bumps still poke through near the ramp -> interlocking
+            // fingers, never a hard line. This is the ONE blend for ALL pairs (slope-rock, height-snow,
+            // climate/area-biome, beach). bw widens close-up (where the detail is rich) for a softer mesh.
+            float bw = mix(0.12, 0.30, detailFade);
+            float hA = dispA + (bAB - 0.5) * 1.1;
+            float hB = dispB + (0.5 - bAB) * 1.1;
+            float mh = max(hA, hB) - bw;
+            float waH = max(hA - mh, 0.0), wbH = max(hB - mh, 0.0);
+            float bSharp = waH / max(waH + wbH, 1e-4);
+            texAlb = vec4(mix(cB, cA, bSharp), mix(dispB, dispA, bSharp));
+            texNrm = mix(nB, nA, bSharp);
         }
         float k = uTexMix * texFarFade;
         // macro-tinted detail (user 2026-06-10 'the textured patch must be tinted to the same shade
@@ -1957,7 +1940,10 @@ void main() {
         // ground reads unambiguously as its material (grass green / sand tan / rock grey) without the
         // raw photo's darkness ('terrain gets darker' lesson) and without the macro's biome-brown
         // repaint ('neither grass nor sand' defect). Layer-mean normalized like `detail`.
-        vec3 texIdent = texC * (dot(albedo, vec3(0.2126, 0.7152, 0.0722)) / max(texL, 0.02));
+        // low-freq albedo is now NORMALS-ONLY (texC is luma structure), so the old raw-photo 'identity'
+        // hue is gone; texIdent == detail = MACRO color * structure (keeps rock its macro tan-grey, not
+        // grey). The 4x detail carries the fine structure for every material.
+        vec3 texIdent = texC * (albedo / max(texL, 0.02));
         albedo = clamp(mix(albedo, mix(detail, texIdent, photoF), k), 0.0, 1.0);
         // displacement-normal relief: WORLD-SPACE UDN perturbation from surfTriNrm (each projection
         // plane's tangent axes, not the radial frame). Amplitude capped low (scramble lesson d262b5e);
