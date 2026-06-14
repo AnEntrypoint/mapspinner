@@ -1807,9 +1807,13 @@ void main() {
         // NOT a fractal (user 2026-06-14: 'looking like a fractal, use the materials displacement'). Widen
         // the gate transition band so sand+grass overlap over a broad elevation span -> bSharp picks the
         // local winner by texture relief -> fingered shoreline that follows the actual texture bumps.
+        // MUCH MORE GRADUAL grass<->sand margin (user 2026-06-14): the WEIGHT crosses over slowly across
+        // a wide elevation span (0 -> ~2.5x beachTop); the per-pixel transition is then made HARD by the
+        // displacement height-blend (small bw below) so sand vs grass is a sharp choice distributed by
+        // texture relief = interlocking fingers that thin out with height, never a blendy fade.
         float beachW = warpN * uBeachTopM * 0.30;   // warp amplitude scales with the beach band height
-        float beach = (1.0 - smoothstep(uBeachTopM * 0.10 + beachW, uBeachTopM * 1.15 + beachW, vH))
-                    * (1.0 - smoothstep(0.15, 0.42, slope));
+        float beach = (1.0 - smoothstep(beachW, uBeachTopM * 2.5 + beachW, vH))
+                    * (1.0 - smoothstep(0.18, 0.55, slope));
         // SAND BLEED (2026-06-13): patchy sand spills above the main beach line, modulated by VS
         // warp noise so the edge reads as wind-blown pockets, not a strict elevation cut. At peak it
         // adds ~0.3 sand weight far above the beach, creating a natural dappled transition.
@@ -1912,7 +1916,7 @@ void main() {
             // offset by the ramp'): height = displacement + a weight-ramp offset (gate positions the
             // boundary); higher wins over a soft width so the loser's high bumps poke through = fingers,
             // no hard line. ONE blend for ALL pairs. Mips smooth dispA/dispB at distance -> soft far edge.
-            float bw = 0.25;
+            float bw = 0.06;   // NEAR-HARD crossover (user 2026-06-14 'make the transition hard, let the displacement make the distribution interesting -> far less blendy'): the displacement picks a sharp per-pixel winner; the gate weight only shifts the proportion across the ramp
             float hA = dispA + (bAB - 0.5) * 1.1;
             float hB = dispB + (0.5 - bAB) * 1.1;
             float mh = max(hA, hB) - bw;
