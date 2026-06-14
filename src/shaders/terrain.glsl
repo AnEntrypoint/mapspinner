@@ -1790,14 +1790,13 @@ void main() {
         // BEACH sand gate tied to uBeachTopM (so the sand TEXTURE scales with the wide beach, not a
         // hardcoded 80m strip) + the shared warp on its LAND edge so the beach->grass line is irregular.
         // FINE BREAK on the grass->sand line (user 2026-06-14 'still a hard straight grass-sand line up
-        // close ... it must gain detail'): warpN breaks it at the km scale; add a high-freq (~80-200m)
-        // octave so the line stays irregular/fingered when you walk right up to it instead of going
-        // straight. Faded in WITH the close-up detail (detailFade-like, via pxWorld) so it never speckles
-        // at distance where the macro band is smooth.
-        float closeBreak = (1.0 - smoothstep(2.0, 40.0, pxWorld));
-        float beachFine = (snoise3(bwDir * 42000.0) + 0.5 * snoise3(bwDir * 95000.0)) * uBeachTopM * 0.45 * closeBreak;
-        float beachW = warpN * uBeachTopM * 0.30 + beachFine;   // warp amplitude scales with the beach band height
-        float beach = (1.0 - smoothstep(uBeachTopM * 0.12 + beachW, uBeachTopM + beachW, vH))
+        // close ... it must gain detail'): warpN positions the band irregularly at the km scale; the
+        // FINE break of the grass->sand line is now the texture DISPLACEMENT height-blend (bSharp below),
+        // NOT a fractal (user 2026-06-14: 'looking like a fractal, use the materials displacement'). Widen
+        // the gate transition band so sand+grass overlap over a broad elevation span -> bSharp picks the
+        // local winner by texture relief -> fingered shoreline that follows the actual texture bumps.
+        float beachW = warpN * uBeachTopM * 0.30;   // warp amplitude scales with the beach band height
+        float beach = (1.0 - smoothstep(uBeachTopM * 0.10 + beachW, uBeachTopM * 1.15 + beachW, vH))
                     * (1.0 - smoothstep(0.15, 0.42, slope));
         // SAND BLEED (2026-06-13): patchy sand spills above the main beach line, modulated by VS
         // warp noise so the edge reads as wind-blown pockets, not a strict elevation cut. At peak it
@@ -1898,8 +1897,15 @@ void main() {
             // not a straight gate line. The displacement weight ramps UP close (0.3 -> 1.3 by the deck)
             // where the hard lines show, and stays low far off so the 2.4km photo's bowl features never
             // flip whole patches to rock (the documented bowl-blob lesson -- that was a DISTANT artifact).
-            float dispW = mix(0.3, 1.3, 1.0 - smoothstep(3.0, 60.0, pxWorld));
-            float bSharp = clamp((bAB * 2.0 - 1.0) * 1.0 + (albA.a - albB.a) * dispW + 0.5, 0.0, 1.0);
+            // UNIVERSAL displacement-driven blend (user 2026-06-14 'this must be ALL texture blends -- the
+            // rock slope and the biome divisions for height and area, wherever we blend textures'): this
+            // bSharp is the ONE blend between the top-2 splat layers, so it already covers every material
+            // pair. WEAKEN the weight term (1.0->0.45) and STRENGTHEN the displacement (-> up to 1.6 close)
+            // so the texture RELIEF -- not the gate weight -- decides the local winner over a WIDE weight
+            // band: every boundary (slope-rock, height-snow, climate/area-biome, beach) fingers along the
+            // texture bumps. Displacement ramps DOWN far off so the 2.4km bowls never flip distant patches.
+            float dispW = mix(0.45, 1.6, 1.0 - smoothstep(3.0, 80.0, pxWorld));
+            float bSharp = clamp((bAB * 2.0 - 1.0) * 0.45 + (albA.a - albB.a) * dispW + 0.5, 0.0, 1.0);
             texAlb = mix(albB, albA, bSharp);
             texNrm = mix(nrmB, nrmA, bSharp);
         }
