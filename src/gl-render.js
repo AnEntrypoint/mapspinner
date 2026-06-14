@@ -788,7 +788,12 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // extends the horizon to tens of km at low altitude so near-shore relief stays in view (negligible
     // depth-precision cost: 500m vs R~6.37e6). Both the cull and the draw use this (single source).
     const RHORIZON = R - 500.0;
-    const horizon = Math.sqrt(Math.max(0.0, camDist*camDist - RHORIZON*RHORIZON));
+    // UNDERWATER FAR-PLANE FIX (user 2026-06-14 'at -214m visible, at -500m it disappears'): when the
+    // camera is more than 500m below sea level, camDist < RHORIZON so the sea-level horizon is imaginary
+    // (-> 0) and alt is negative; the old max(horizon, alt*8) then collapsed the far plane to ~0 and the
+    // whole scene vanished past -500m deep (= the 'ocean looks shallow/empty' when exploring). Floor the
+    // far reach to 60km when submerged so the seabed + the underwater view stay visible.
+    const horizon = (camDist > RHORIZON) ? Math.sqrt(camDist*camDist - RHORIZON*RHORIZON) : 60000.0;
     // MATCH render()'s near exactly (2026-06-14 jank fix): the cull frustum must use the SAME near
     // as the draw frustum, else behind-limb/screen-AABB culling diverges from what is actually drawn
     // at the deck (cull near was max(*0.1,0.1) while render used the <2m 0.05 branch).
@@ -831,7 +836,12 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // extends the horizon to tens of km at low altitude so near-shore relief stays in view (negligible
     // depth-precision cost: 500m vs R~6.37e6). Both the cull and the draw use this (single source).
     const RHORIZON = R - 500.0;
-    const horizon = Math.sqrt(Math.max(0.0, camDist*camDist - RHORIZON*RHORIZON));
+    // UNDERWATER FAR-PLANE FIX (user 2026-06-14 'at -214m visible, at -500m it disappears'): when the
+    // camera is more than 500m below sea level, camDist < RHORIZON so the sea-level horizon is imaginary
+    // (-> 0) and alt is negative; the old max(horizon, alt*8) then collapsed the far plane to ~0 and the
+    // whole scene vanished past -500m deep (= the 'ocean looks shallow/empty' when exploring). Floor the
+    // far reach to 60km when submerged so the seabed + the underwater view stay visible.
+    const horizon = (camDist > RHORIZON) ? Math.sqrt(camDist*camDist - RHORIZON*RHORIZON) : 60000.0;
     const near = altAboveTerrain < 2.0 ? 0.05 : Math.max(altAboveTerrain * 0.1, 0.05);
     const _fBlend = Math.min(1.0, Math.max(0.0, (alt - 500000.0) / 4500000.0));
     const farGround = Math.max(horizon, alt * 8.0);
