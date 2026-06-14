@@ -631,10 +631,14 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){   // W7
       // whole ocean into 'almost-land everywhere', user 2026-06-14) with the flat-at-waterline curve so
       // both sides meet the waterline at slope 0 (no crease); beyond SEABED_EASE the true bathymetry
       // resumes so the ocean goes DEEP.
-      const highp float SEABED_EASE = 300.0;   // metres of depth flattened at the shore (decoupled from the land beach)
+      const highp float SEABED_EASE = 120.0;   // metres of depth flattened at the shore (decoupled from the land beach)
       highp float d0 = -h;
       highp float d = (d0 < SEABED_EASE) ? (d0 * d0 / SEABED_EASE) * (2.0 - d0 / SEABED_EASE) : d0;
-      h = -(min(d, 500.0) * 0.24 + max(d - 500.0, 0.0) * 1.19);
+      // STEEPER DROP-OFF (user 2026-06-14 'seabed flat/close to waterline; steeper + more relief'):
+      // narrow shelf 500->150m raw, steeper shelf 0.24->0.6, steeper continental slope 1.19->1.5 so the
+      // seabed plunges to deep water just offshore (less flat shallow shelf) and the deep bathymetry
+      // carries 1.5x the bShape relief = more dramatic underwater terrain to explore.
+      h = -(min(d, 150.0) * 0.6 + max(d - 150.0, 0.0) * 1.5);
       h = max(h, -11000.0);   // cap depth at Mariana Trench (~11km)
   } else {
       // LAND COASTAL SHELF (user 2026-06-14: 'beaches not wide enough'): the underwater shelf above
@@ -652,7 +656,10 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){   // W7
   }
   // displacement now continues UNDERWATER (the old land-only gate served the flat-clamped ocean,
   // gone since 026d530): the seabed carries the same micro-relief as land = realistic continuation.
-  h += vDisp;
+  // SEABED RELIEF BOOST (user 2026-06-14 'more relief' to explore): amplify the micro-relief with DEPTH
+  // (1x at the shore -> 2.2x by 600m down) so the deep seabed is rugged/interesting, while shallow water
+  // stays calm so the boost never lifts the bed toward sea level (no 'almost-land').
+  h += vDisp * mix(1.0, 2.2, clamp((h + 50.0) / -550.0, 0.0, 1.0));
   // PERLIN-EVERYWHERE ELEVATION (user 2026-06-10 'it must also affect elevation'): the same detailFbm
   // the FS albedo overlay shows, as real relief (~30m per lever unit -> ~180m at the user-tuned 6).
   // Shore-gated (fades in over the first 250m of land) so the coastline and the flat water planes are
@@ -862,17 +869,17 @@ void main() {
     // shelf/slope bathymetry remap + underwater displacement -- MUST mirror composeHeight exactly
     // (this is the FS-material running value; composeHeight is the geometry/probe height).
     if (vH < 0.0) {
-        const highp float SEABED_EASE = 300.0;   // mirror composeHeight: narrow waterline ease, deep ocean beyond
+        const highp float SEABED_EASE = 120.0;   // mirror composeHeight: narrow waterline ease, deep ocean beyond
         highp float dSea0 = -vH;
         highp float dSea = (dSea0 < SEABED_EASE) ? (dSea0 * dSea0 / SEABED_EASE) * (2.0 - dSea0 / SEABED_EASE) : dSea0;
-        vH = -(min(dSea, 500.0) * 0.24 + max(dSea - 500.0, 0.0) * 1.19);
+        vH = -(min(dSea, 150.0) * 0.6 + max(dSea - 150.0, 0.0) * 1.5);   // steeper drop-off (mirror composeHeight)
         vH = max(vH, -11000.0);   // cap depth at Mariana Trench (~11km)
     } else {
         highp float bShelf = uBeachShelfM > 1.0 ? uBeachShelfM : 600.0;   // LAND COASTAL SHELF -- mirror composeHeight exactly (wide beach, user 2026-06-14); guard stale/unset uniform
         if (vH < bShelf) vH = (vH * vH / bShelf) * (2.0 - vH / bShelf);   // C1-continuous (mirror composeHeight) -- removes the beach-top slope kink / hard shading line
 
     }
-    vH += vDisp;
+    vH += vDisp * mix(1.0, 2.2, clamp((vH + 50.0) / -550.0, 0.0, 1.0));   // seabed relief boost (mirror composeHeight)
     vH += detailFbm(dir0) * uDetailOverlay * 30.0 * step(0.0, vH);
     // FLAT-AREA VALLEY NETWORKS + LAKES (user 2026-06-13): incised valley systems in low-relief
     // plains -- must mirror composeHeight for FS material consistency.
