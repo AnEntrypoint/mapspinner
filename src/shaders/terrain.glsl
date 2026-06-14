@@ -143,7 +143,7 @@ float snoise3(highp vec3 P){ highp vec3 i=floor(P),f=fract(P); highp vec3 u=f*f*
 // the same class as the historical snoise3-in-VS-only bug). Pure fn of world dir -> seam-safe +
 // LOD-invariant. Each has an EROSION profile: a wide graded shoulder/valley/bench that blends into
 // terrain plus a deeper core, and returns a wet/depth mask the FS colours.
-const float LAKE_CARVE_DEPTH = 90.0;   // metres of bowl depth at basin centre
+const float LAKE_CARVE_DEPTH = 220.0;   // 90->220 metres of bowl depth (user 2026-06-14 'lakes super shallow+flat'): deeper basins
 float lakeBasinField(vec3 dir){ return 0.5 + 0.5 * snoise3(dir * 55.0 + vec3(4.0, 9.0, 1.0)); }
 float lakeCarveM(vec3 dir, out float wet){
     float basin = lakeBasinField(dir);
@@ -186,7 +186,7 @@ float inciseRidgeField(vec3 d, float baseFreq, float freqMul){
     }
     return sum / norm;                                         // ->1 on the channel network
 }
-const float RIVER_INCISE_DEPTH = 120.0;   // metres at the channel thalweg
+const float RIVER_INCISE_DEPTH = 280.0;   // 120->280 metres at the channel thalweg (user 2026-06-14 'rivers/channels super shallow+flat'): deeper incision
 float riverRidgeField(vec3 dir){ return inciseRidgeField(normalize(dir), 40.0, 2.03); }
 float riverCarveM(vec3 dir, out float wet){
     float ridge = riverRidgeField(dir);
@@ -2220,8 +2220,10 @@ void main() {
     // bypasses it via vH<0). Gating on vWaterDepth (NOT the whole carve mask) makes the water LINE UP
     // with the flat carved surface -- the graded erosion banks above the waterline stay dry land.
     if (vH >= 0.0 && vWaterDepth > 0.0) {
-        // submergence 0..1 over ~0..40m -> shoreline (thin water, terrain shows through) to deep.
-        float sub = clamp(vWaterDepth / 40.0, 0.0, 1.0);
+        // submergence 0..1 over ~0..160m (40->160, user 2026-06-14 'water super shallow+flat'): the color
+        // saturated at 40m so every deeper lake/river read one flat tone; stretch it so depth shows as a
+        // shallow-edge -> deep-center gradient (thin transparent rim, deep dark center).
+        float sub = clamp(vWaterDepth / 160.0, 0.0, 1.0);
         // wave-perturbed water normal (small inland ripple), same tangent frame as the ground.
         highp vec3 wOriginL = floor(camWorld / 1024.0) * 1024.0;   // W7: ~6.4e6 m snapped anchor -> highp
         highp vec2 wpL = vec2(dot(vWorld - wOriginL, ux), dot(vWorld - wOriginL, uy));   // W7: highp camera-relative wave coord
