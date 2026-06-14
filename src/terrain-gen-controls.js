@@ -46,7 +46,7 @@ const DEFAULTS = {
     exposure: 1.0, skyFill: 0.45, biomeSat: 0.72, variationAmt: 0.04, colorVar: 0.5, vertexAO: 1.0,     reliefShade: 2.5,   // variationAmt 0.08->0.04 (user 2026-06-10 'blotchy': the ~50km value mottle painted light/dark patches across the massifs)
     nightFloor: 0.16, termWidth: 0.25, terminatorGlow: 0.30, lookSat: 1.15, lookContrast: 1.08,   // nightFloor 0.05->0.16: no black night terrain (2026-06-09)
     detailOverlay: 6.0, hazeMul: 0.65,   // 2026-06-10 'pale hazy + featureless': perlin-everywhere albedo+elevation fbm (user-tuned 6) + aerial-perspective strength cut
-    ocean: { deep: [0.008,0.025,0.06], shallow: [0.07,0.22,0.26], k: [0.016,0.007,0.0028] },   // k halved (user 2026-06-14 'see the land under the water'): clearer water, bed visible through shallow/medium depth. OVERRIDES the gl-render uOceanK default via window.__uOceanK.
+    ocean: { deep: [0.008,0.025,0.06], shallow: [0.07,0.22,0.26], k: [0.009,0.004,0.0018] },   // k lowered again (user 2026-06-14 'water properly transparent so we see the surface under it'): clearer, the seabed shows through shallow/medium water; deep basins still opaque. OVERRIDES gl-render via window.__uOceanK.
   },
   // HPF band scales (multipliers on the anchor-field band base values; anchor-field.setBandScales).
   hpf: {

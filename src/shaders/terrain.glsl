@@ -631,14 +631,16 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){   // W7
       // whole ocean into 'almost-land everywhere', user 2026-06-14) with the flat-at-waterline curve so
       // both sides meet the waterline at slope 0 (no crease); beyond SEABED_EASE the true bathymetry
       // resumes so the ocean goes DEEP.
-      const highp float SEABED_EASE = 120.0;   // metres of depth flattened at the shore (decoupled from the land beach)
+      const highp float SEABED_EASE = 25.0;   // metres of depth flattened at the shore (decoupled from the land beach)
       highp float d0 = -h;
       highp float d = (d0 < SEABED_EASE) ? (d0 * d0 / SEABED_EASE) * (2.0 - d0 / SEABED_EASE) : d0;
-      // STEEPER DROP-OFF (user 2026-06-14 'seabed flat/close to waterline; steeper + more relief'):
-      // narrow shelf 500->150m raw, steeper shelf 0.24->0.6, steeper continental slope 1.19->1.5 so the
+      // NO 'SECOND BEACH' (user 2026-06-14 'shallow ring of water around land / making a second beach'):
+      // the wide flat shelf read as a shallow underwater beach ring. Shelf cut to a tiny 25m-raw lip then
+      // a STEEP 1.9 plunge so the water drops to real depth immediately off the actual beach -- no shelf.
+      // (former: narrow shelf 500->150m raw, steeper shelf 0.24->0.6, steeper continental slope 1.19->1.5 so the
       // seabed plunges to deep water just offshore (less flat shallow shelf) and the deep bathymetry
       // carries 1.5x the bShape relief = more dramatic underwater terrain to explore.
-      h = -(min(d, 150.0) * 0.6 + max(d - 150.0, 0.0) * 1.5);
+      h = -(min(d, 25.0) * 0.4 + max(d - 25.0, 0.0) * 1.9);
       h = max(h, -11000.0);   // cap depth at Mariana Trench (~11km)
   } else {
       // LAND COASTAL SHELF (user 2026-06-14: 'beaches not wide enough'): the underwater shelf above
@@ -869,10 +871,10 @@ void main() {
     // shelf/slope bathymetry remap + underwater displacement -- MUST mirror composeHeight exactly
     // (this is the FS-material running value; composeHeight is the geometry/probe height).
     if (vH < 0.0) {
-        const highp float SEABED_EASE = 120.0;   // mirror composeHeight: narrow waterline ease, deep ocean beyond
+        const highp float SEABED_EASE = 25.0;   // mirror composeHeight: tiny waterline lip, steep plunge (no 'second beach')
         highp float dSea0 = -vH;
         highp float dSea = (dSea0 < SEABED_EASE) ? (dSea0 * dSea0 / SEABED_EASE) * (2.0 - dSea0 / SEABED_EASE) : dSea0;
-        vH = -(min(dSea, 150.0) * 0.6 + max(dSea - 150.0, 0.0) * 1.5);   // steeper drop-off (mirror composeHeight)
+        vH = -(min(dSea, 25.0) * 0.4 + max(dSea - 25.0, 0.0) * 1.9);   // steep drop-off (mirror composeHeight)
         vH = max(vH, -11000.0);   // cap depth at Mariana Trench (~11km)
     } else {
         highp float bShelf = uBeachShelfM > 1.0 ? uBeachShelfM : 600.0;   // LAND COASTAL SHELF -- mirror composeHeight exactly (wide beach, user 2026-06-14); guard stale/unset uniform
@@ -1878,6 +1880,23 @@ void main() {
             float bSharp = clamp((bAB * 2.0 - 1.0) * 1.0 + (albA.a - albB.a) * 0.3 + 0.5, 0.0, 1.0);
             texAlb = mix(albB, albA, bSharp);
             texNrm = mix(nrmB, nrmA, bSharp);
+        }
+        // FINE DETAIL OCTAVE (user 2026-06-14 'add one octave at 4x smaller -> world better scaled at
+        // 2m'): the base photo tiles at uTexTileM (~2.4km = ~2.3m/texel, smeared at the deck). Sample the
+        // SAME dominant material at 4x frequency (~0.6m/texel) and overlay its luminance + normal so
+        // close-up the ground gains sub-metre structure. Faded out by ~12m px so it never moires far off.
+        float detailFade = (1.0 - smoothstep(1.0, 12.0, pxWorld));
+        if (detailFade > 0.01) {
+            vec4 dA = surfTriTap(uSurfAlb, wt * 4.0, tw, lA);
+            float dl = dot(dA.rgb, vec3(0.299, 0.587, 0.114));
+            float bl = dot(texAlb.rgb, vec3(0.299, 0.587, 0.114));
+            texAlb.rgb *= mix(1.0, clamp(dl / max(bl, 0.04), 0.55, 1.7), detailFade * 0.6);
+            // detail NORMAL: surfTriNrm returns a PERTURBATION vector (texNrm feeds texDn = texNrm*uTexNrmK*k
+            // at the apply site, NOT a unit normal), so the detail is simply ADDED in the same space -- no
+            // normalize (normalizing the perturbation scrambled its magnitude = the 'weird highest-octave
+            // normals'). Half-weight so the fine octave textures relief without overpowering the base.
+            vec3 dN = surfTriNrm(uSurfNrm, wt * 4.0, tw, lA, n);
+            texNrm = texNrm + dN * detailFade * 0.5;
         }
         float k = uTexMix * texFarFade;
         // macro-tinted detail (user 2026-06-10 'the textured patch must be tinted to the same shade
