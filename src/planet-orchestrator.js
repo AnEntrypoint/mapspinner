@@ -177,7 +177,7 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
   // count (orbit 860->20, lowalt 1272->328). 1.0 is the calibrated default; override live
   // via window.__splitFactor.
   const splitFactor = opts.splitFactor ?? 1.0;
-  const gridMeshSize = opts.gridMeshSize || 8;   // 16->11 FPS lever (triangle-throughput bound, not ALU; GRID 8 jagged biome crossovers, see gl-render.js GRID)
+  const gridMeshSize = opts.gridMeshSize || 11;   // 16->11 FPS lever (triangle-throughput bound, not ALU; GRID 8 jagged biome crossovers, see gl-render.js GRID)
 
   gl.getExtension('EXT_color_buffer_float');   // RGBA32F atlas render targets
   // OES_texture_float_linear lets the driver LINEAR-filter the RGBA32F HPF/elevation textures. When
