@@ -1892,7 +1892,14 @@ void main() {
             // SOFTENED (2026-06-13): transition sharpening reduced 3->1 so grass/rock/sand/snow
             // boundaries hold a natural blend band instead of a hard die-cut line. The 1.0 slope
             // still prefers the dominant layer but leaves a visible transition zone.
-            float bSharp = clamp((bAB * 2.0 - 1.0) * 1.0 + (albA.a - albB.a) * 0.3 + 0.5, 0.0, 1.0);
+            // DISPLACEMENT-DRIVEN GRADIENT for ALL material pairs (user 2026-06-14 'all textures use the
+            // displacement to mix the gradient'): height-blend the top-2 layers by their displacement so
+            // every boundary (grass/rock, grass/sand, rock/snow...) follows the texture RELIEF = irregular,
+            // not a straight gate line. The displacement weight ramps UP close (0.3 -> 1.3 by the deck)
+            // where the hard lines show, and stays low far off so the 2.4km photo's bowl features never
+            // flip whole patches to rock (the documented bowl-blob lesson -- that was a DISTANT artifact).
+            float dispW = mix(0.3, 1.3, 1.0 - smoothstep(3.0, 60.0, pxWorld));
+            float bSharp = clamp((bAB * 2.0 - 1.0) * 1.0 + (albA.a - albB.a) * dispW + 0.5, 0.0, 1.0);
             texAlb = mix(albB, albA, bSharp);
             texNrm = mix(nrmB, nrmA, bSharp);
         }
