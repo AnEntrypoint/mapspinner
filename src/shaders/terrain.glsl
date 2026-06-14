@@ -1391,7 +1391,13 @@ vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, flo
         return mix(c, vec3(0.82, 0.88, 0.94), seaIce * 0.9);
     }
     // biome weight: full on gentle lowland, fading where rock/snow/steep takes over.
-    float veg = (1.0 - smoothstep(bandEdgesHi.x, bandEdgesHi.y, h)) * (1.0 - smoothstep(slopeRock.x, slopeRock.y, slope));
+    // VEG SLOPE GATE (user 2026-06-14 'hard line of light grass around rocks'): the gate faded veg over
+    // `slope` (the macro, gentler) while the ROCK blend keys off `rockSlope` (the raw geometric normal,
+    // steeper). The two thresholds didn't coincide, so on the approach to a rock the dark biome-green
+    // vegetation dropped out a beat BEFORE the rock arrived -> a light bare-grass ring. Key veg off the
+    // SAME rockSlope so vegetation fades EXACTLY as rock fades in -> grass stays dark right up to the
+    // rock with no light gap, and veg is 0 wherever rock is full (no biome-green bleeding onto rock).
+    float veg = (1.0 - smoothstep(bandEdgesHi.x, bandEdgesHi.y, h)) * (1.0 - smoothstep(slopeRock.x, slopeRock.y, rockSlope));
     // ELEVATION + LATITUDE BIOME BIAS (user 2026-06-02: 'the hypsometric ramp should influence biome
     // distribution, pulling biomes out of their anchor areas a bit for better distribution'). On top
     // of the anchor climate temp/humid, bias the EFFECTIVE temperature DOWN with elevation (lapse rate
