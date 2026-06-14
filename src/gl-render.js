@@ -338,6 +338,74 @@ export async function initMapspinnerRender(gl, opts = {}) {
   }
   if (typeof window !== 'undefined') { window.__thcBakeReadback = bakeTileReadback; window.__thcEnsureBake = ensureBake; }
 
+  // ===== THC HEIGHT POOL + LRU (the VS-sample consumer; the FPS win) =====
+  // The VS samples a baked per-tile height (O(1) texture fetch) instead of composeHeight 5x/vertex,
+  // when window.__thc is on. A 2D-array pool holds one BAKE_RES^2 R32F layer per live tile; a leaf
+  // gets a layer (baked once) on first sight, LRU-evicted when the pool is full. Default OFF -> the
+  // live render is unchanged (composeHeight), so this is safe to ship behind the toggle.
+  const THC_POOL_LAYERS = 512;
+  let heightPool=null, poolFbo=null;
+  const _tcMap = new Map();                                   // tileKey -> layer
+  const _tcLayerKey = new Array(THC_POOL_LAYERS).fill(null);  // layer -> tileKey (evict bookkeeping)
+  const _tcUsed = new Int32Array(THC_POOL_LAYERS);            // layer -> last-used frame
+  let _tcFrame = 0, _tcNextFree = 0, _tcBakesThisFrame = 0;
+  // BAKE-ON-EDIT: terraform/HPF changes make every baked layer stale -> drop the whole map so each
+  // visible tile re-bakes on next sight (synchronously, before its draw -> no black/stale frame).
+  function invalidatePool(){ _tcMap.clear(); _tcLayerKey.fill(null); _tcNextFree = 0; }
+  function ensurePool(){
+    if (heightPool) return;
+    heightPool = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D_ARRAY, heightPool);
+    gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.R32F, THC_BAKE_RES, THC_BAKE_RES, THC_POOL_LAYERS);
+    const lin = _halfFloatLinearOK ? gl.LINEAR : gl.NEAREST;   // R32F LINEAR needs OES_texture_float_linear; else VS does manual bilinear
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, lin); gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, lin);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    poolFbo = gl.createFramebuffer();
+  }
+  function bakeTileToLayer(face,ox,oy,l,level,layer){
+    gl.bindFramebuffer(gl.FRAMEBUFFER, poolFbo);
+    gl.framebufferTextureLayer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, heightPool, 0, layer);
+    gl.viewport(0,0,THC_BAKE_RES,THC_BAKE_RES);
+    gl.useProgram(bakeProg); gl.bindVertexArray(bakeVao);
+    if (_hpfTex){ gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D_ARRAY,_hpfTex); gl.uniform1i(BU('hpfPool'),3); }
+    if (_hpfTex2){ gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D_ARRAY,_hpfTex2); gl.uniform1i(BU('hpfPool2'),5); }
+    gl.uniform1i(BU('hasHpf'), _hpfTex?1:0);
+    setComposeHeightUniforms(BU);
+    gl.uniform1f(BU('defRadius'), R);
+    gl.uniformMatrix3fv(BU('uBakeFrame'), false, new Float32Array(_faceFrames[face|0]));
+    gl.uniform4f(BU('uBakeOffset'), ox, oy, l, level);
+    gl.uniform1f(BU('uBakeRes'), THC_BAKE_RES);
+    gl.disable(gl.DEPTH_TEST);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    _tcBakesThisFrame++;
+  }
+  // pool layer for a tile, baked on first sight; LRU-evicts when full. Returns -1 if not yet bakeable.
+  function ensureTileLayer(face,ox,oy,l,level){
+    const key = face+':'+ox+':'+oy+':'+l;
+    let layer = _tcMap.get(key);
+    if (layer === undefined){
+      if (_tcNextFree < THC_POOL_LAYERS){ layer = _tcNextFree++; }
+      else { let lru=0, lruF=_tcUsed[0]; for(let k=1;k<THC_POOL_LAYERS;k++) if(_tcUsed[k]<lruF){lruF=_tcUsed[k];lru=k;} layer=lru; const old=_tcLayerKey[lru]; if(old!=null) _tcMap.delete(old); }
+      _tcMap.set(key, layer); _tcLayerKey[layer]=key;
+      bakeTileToLayer(face,ox,oy,l,level,layer);
+    }
+    _tcUsed[layer]=_tcFrame;
+    return layer;
+  }
+  // THC active = toggle on AND both programs/pool ready. Builds them lazily; returns false until ready
+  // so the first frames fall back to composeHeight (uThc=0) with no garbage.
+  let _tcInvSeen = 0;
+  function thcActive(){
+    if (typeof window==='undefined' || !window.__thc) return false;
+    if (!bakeProg){ ensureBake(); return false; }
+    ensurePool();
+    // live re-bake hook: window.__thcInvalidate() bumps __thcInval; any composeHeight-shaping edit
+    // (e.g. __gen biome/relief dials) should call it so the baked pool refreshes.
+    const inv = (window.__thcInval|0);
+    if (inv !== _tcInvSeen){ _tcInvSeen = inv; invalidatePool(); }
+    return !!heightPool;
+  }
+  if (typeof window !== 'undefined') window.__thcInvalidate = () => { window.__thcInval = (window.__thcInval|0) + 1; };
+
   // FLOAT-LINEAR FORMAT PROBE (NOT a quality tier): OES_texture_float_linear lets the HPF atlas pools
   // filter LINEAR in hardware -> hpfSample collapses to one texture() call. 0 = manual 4-tap fallback.
   const _halfFloatLinearOK = !!gl.getExtension('OES_texture_float_linear') || !!gl.getExtension('OES_texture_half_float_linear');
@@ -642,7 +710,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
   // the instance data is identical -> skip the Float32Array build + bufferData + water dedup Set-loop
   // and just rebind+draw. Pure CPU/GC win (GPU is vertex-bound, the upload is off the critical path).
   const instBufWater=gl.createBuffer();
-  let _instQuadsRef=null, _instWaterRef=null, _instWaterN=0;
+  let _instQuadsRef=null, _instWaterRef=null, _instWaterN=0, _lastThc=false;
 
   // per-face local->world (cube face -> sphere local frame). Column-major mat3 packed
   // into a Float32Array(9). Matches localToWorld3 convention:
@@ -962,14 +1030,27 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniformMatrix4fv(U('defViewProjRel'), false, viewProjRel);
     gl.uniform1f(U('defRadius'), R);
     const n = quads.length;
-    // SINGLE-SOURCE HEIGHT: every leaf is the pure per-vertex composeHeight() function, evaluated every
-    // frame -- no bake cache. The instance buffer carries [ox,oy,l,level,face] (5 floats); the VS computes
-    // h = composeHeight(dir) for each vertex.
-    const FLOATS = 5;   // [ox,oy,l,level,face]
+    // Instance buffer: [ox,oy,l,level,face, iLayer] (6 floats). iLayer = the THC pool layer for this
+    // tile (when __thc on); the VS samples the baked height there instead of composeHeight.
+    const FLOATS = 6;   // [ox,oy,l,level,face, iLayer]
     if (n > 0) {
-      // STATIC-FRAME SKIP: only rebuild + re-upload the instance data when the quad SET changed (the
-      // orchestrator passes the SAME quads array object on a static camera, a fresh array on rebuild).
-      const _dirty = (quads !== _instQuadsRef);
+      // THC: when active, ensure every visible tile has a baked pool layer (bake on first sight). The
+      // bakes clobber the FBO/program/viewport -> restore the canvas render state afterward.
+      const _thc = thcActive();
+      let _layers = null;
+      if (_thc) {
+        _tcFrame++; _tcBakesThisFrame = 0;
+        _layers = new Float32Array(n);
+        for (let i = 0; i < n; i++) { const q = quads[i].quad; _layers[i] = ensureTileLayer(quads[i].face, q.ox, q.oy, q.l, q.level); }
+        gl.bindVertexArray(null);   // bakeTileToLayer left bakeVao bound; the main path uses the default VAO
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+        gl.enable(gl.DEPTH_TEST);   // bakeTileToLayer disabled depth
+        gl.useProgram(_activeProg);
+        if (typeof window !== 'undefined') window.__thcBakes = _tcBakesThisFrame;
+      }
+      // STATIC-FRAME SKIP: rebuild only when the quad set changed OR the toggle flipped (iLayer needs writing).
+      const _dirty = (quads !== _instQuadsRef) || (_thc !== _lastThc);
       gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
       if (_dirty) {
         const inst = new Float32Array(n * FLOATS);
@@ -977,12 +1058,17 @@ export async function initMapspinnerRender(gl, opts = {}) {
           const q = quads[i].quad;
           inst[i*FLOATS+0] = q.ox; inst[i*FLOATS+1] = q.oy; inst[i*FLOATS+2] = q.l; inst[i*FLOATS+3] = q.level;
           inst[i*FLOATS+4] = quads[i].face;
+          inst[i*FLOATS+5] = _layers ? _layers[i] : 0.0;
         }
         gl.bufferData(gl.ARRAY_BUFFER, inst, gl.DYNAMIC_DRAW);
       }
+      _lastThc = _thc;
       const STRIDE = FLOATS * 4;
       gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 4, gl.FLOAT, false, STRIDE, 0);          gl.vertexAttribDivisor(1, 1);  // iOffset
       gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 1, gl.FLOAT, false, STRIDE, 4 * 4);      gl.vertexAttribDivisor(2, 1);  // iFace
+      gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 1, gl.FLOAT, false, STRIDE, 5 * 4);      gl.vertexAttribDivisor(3, 1);  // iLayer (THC pool layer)
+      gl.uniform1f(U('uThc'), _thc ? 1.0 : 0.0);
+      if (_thc) { gl.activeTexture(gl.TEXTURE8); gl.bindTexture(gl.TEXTURE_2D_ARRAY, heightPool); gl.uniform1i(U('uHeightPool'), 8); gl.uniform1f(U('uPoolRes'), THC_BAKE_RES); gl.uniform1f(U('uPoolLinear'), _halfFloatLinearOK ? 1.0 : 0.0); }
       gl.uniform1f(U('uIsWater'), 0.0);
       // UNDERWATER DETECTION: camera below sea level enables underwater shading + water surface
       // rendering from below. Set before the terrain draw so the FS can apply underwater fog.
@@ -1017,7 +1103,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
             if (lv > WCAP) { const A = l * Math.pow(2, lv - WCAP); ox = Math.floor(ox / A) * A; oy = Math.floor(oy / A) * A; l = A; lv = WCAP; }
             const key = quads[i].face + ':' + ox + ':' + oy + ':' + l;
             if (seen.has(key)) continue; seen.add(key);
-            wl.push(ox, oy, l, lv, quads[i].face);
+            wl.push(ox, oy, l, lv, quads[i].face, 0);   // iLayer unused for water (VS pins sea level)
           }
           _instWaterN = wl.length / FLOATS;
           gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(wl), gl.DYNAMIC_DRAW);
@@ -1080,6 +1166,6 @@ export async function initMapspinnerRender(gl, opts = {}) {
     }
     return out;
   }
-  function setHpf(tex, res, tex2) { _hpfTex = tex; _hpfRes = res|0; _hpfTex2 = tex2 || null; }   // tex2 = RG8(temp,humid) pack (W12)
+  function setHpf(tex, res, tex2) { _hpfTex = tex; _hpfRes = res|0; _hpfTex2 = tex2 || null; invalidatePool(); }   // tex2 = RG8(temp,humid) pack (W12); HPF change -> re-bake THC tiles
   return { get prog(){ return prog; }, render, checkGlError, probe, sampleGroundM, cullMatrix, recompile, setHpf, GRID, indexCount: indices.length, M4 };
 }

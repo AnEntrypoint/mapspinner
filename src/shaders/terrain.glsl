@@ -693,6 +693,25 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){   // W7
 layout(location=0) in vec3 vertex;   // vertex.xy in [0,1] parametric quad coord
 layout(location=1) in highp vec4 iOffset;  // W7: PER-INSTANCE (ox, oy, l, level) face-local metres ~6.4e6 -> highp
 layout(location=2) in float iFace;   // PER-INSTANCE cube face index 0..5
+layout(location=3) in float iLayer;  // THC: PER-INSTANCE height-pool array layer for this tile (uThc on)
+// THC (Tile Heightmap Cache): when uThc>0.5 the VS reads the baked composeHeight from uHeightPool
+// (a 2D-array, one layer per visible tile, parametric uv = vertex.xy) instead of re-evaluating
+// composeHeight 5x/vertex. uPoolLinear=0 -> manual bilinear (R32F not linear-filterable).
+uniform float uThc;
+uniform sampler2DArray uHeightPool;
+uniform float uPoolRes;
+uniform float uPoolLinear;
+highp float thcSample(highp vec2 uv, float layer){
+    highp vec2 t = clamp(uv, 0.0, 1.0) * (uPoolRes - 1.0);
+    if (uPoolLinear > 0.5) return texture(uHeightPool, vec3((t + 0.5) / uPoolRes, layer)).r;
+    highp vec2 f = floor(t); highp vec2 fr = t - f;
+    highp vec2 b0 = (f + 0.5) / uPoolRes, b1 = (f + 1.5) / uPoolRes;
+    highp float h00 = texture(uHeightPool, vec3(b0.x, b0.y, layer)).r;
+    highp float h10 = texture(uHeightPool, vec3(b1.x, b0.y, layer)).r;
+    highp float h01 = texture(uHeightPool, vec3(b0.x, b1.y, layer)).r;
+    highp float h11 = texture(uHeightPool, vec3(b1.x, b1.y, layer)).r;
+    return mix(mix(h00, h10, fr.x), mix(h01, h11, fr.x), fr.y);
+}
 out highp vec3 vWorld;   // W7 highp ISLAND: absolute world pos ~6.4e6 m (FS lighting/atmosphere) -- fp16 would jitter it
 out highp float vH;      // W7: signed elevation (metres, ~13000) -- highp for the material ramp / strata / ocean depth
 out highp vec3 vNrm;     // W8: world-space per-vertex analytic normal (fixed-step central diff of the FULL composeHeight). The SOLE FS lit normal -- replaces the jittery cross(dFdx,dFdy). highp to match vWorld on the ~6.4e6 m planet.
@@ -949,7 +968,26 @@ void main() {
     // sides of a seam share the same dir0/tangent frame -> consistent normals, no row artifact.
     highp float hN0 = 0.0;
     highp vec3 vN = dir0;
-    if (uIsWater < 0.5) {
+    if (uIsWater < 0.5 && uThc > 0.5) {
+        // THC FAST PATH: height + symmetric central-diff normal from the baked pool. 5 bilinear texture
+        // taps replace 5 full composeHeight evals (the VS-bound cost). The 4 normal taps use the SAME
+        // parametric step as the composeHeight path; the dir at each tap is a cheap faceWarp+normalize
+        // (no field eval). uNrmStepM-scaled step => the same smoothed (low-pass) normal as the slow path.
+        hN0 = thcSample(vertex.xy, iLayer);
+        highp float nStepM = (uNrmStepM > 0.0) ? uNrmStepM : 300.0;
+        highp float duP = clamp(nStepM / max(defOffset.z, 1.0), 1.0 / ((uGrid > 0.0) ? uGrid : 16.0), 0.34);
+        highp float hPU = thcSample(vertex.xy + vec2(duP, 0.0), iLayer);
+        highp float hMU = thcSample(vertex.xy + vec2(-duP, 0.0), iLayer);
+        highp float hPV = thcSample(vertex.xy + vec2(0.0, duP), iLayer);
+        highp float hMV = thcSample(vertex.xy + vec2(0.0, -duP), iLayer);
+        highp vec3 dPU = normalize(defLocalToWorld * vec3(faceWarp((vertex.xy + vec2(duP,0.0)) * defOffset.z + defOffset.xy), defRadius));
+        highp vec3 dMU = normalize(defLocalToWorld * vec3(faceWarp((vertex.xy + vec2(-duP,0.0)) * defOffset.z + defOffset.xy), defRadius));
+        highp vec3 dPV = normalize(defLocalToWorld * vec3(faceWarp((vertex.xy + vec2(0.0,duP)) * defOffset.z + defOffset.xy), defRadius));
+        highp vec3 dMV = normalize(defLocalToWorld * vec3(faceWarp((vertex.xy + vec2(0.0,-duP)) * defOffset.z + defOffset.xy), defRadius));
+        vN = normalize(cross(dPU * (defRadius + hPU) - dMU * (defRadius + hMU),
+                             dPV * (defRadius + hPV) - dMV * (defRadius + hMV)));
+        if (dot(vN, dir0) < 0.0) vN = -vN;
+    } else if (uIsWater < 0.5) {
         hN0 = composeHeight(dir0, faceLocal, defOffset.z);   // center = the geometry height h
         // VERTEX NORMAL = CENTRAL DIFFERENCE in PARAMETRIC MESH SPACE over the FULL composeHeight (2026-06-14
         // jagged-normal fix). Two earlier methods both jagged: (a) interior FORWARD mesh-cell cross product
