@@ -1410,7 +1410,13 @@ vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, flo
     // vegetation dropped out a beat BEFORE the rock arrived -> a light bare-grass ring. Key veg off the
     // SAME rockSlope so vegetation fades EXACTLY as rock fades in -> grass stays dark right up to the
     // rock with no light gap, and veg is 0 wherever rock is full (no biome-green bleeding onto rock).
-    float veg = (1.0 - smoothstep(bandEdgesHi.x, bandEdgesHi.y, h)) * (1.0 - smoothstep(slopeRock.x, slopeRock.y, rockSlope));
+    // BREAK THE VEG RING (user 2026-06-14 'hard separation between dark and light grass, a hard circle
+    // around mountains'): veg dropped at a clean elevation+slope threshold -> a dark->light grass ring
+    // circling every peak. Warp BOTH thresholds with ONE cheap noise (~2-3km) so the dark/light grass
+    // boundary fingers irregularly instead of a contour ring. (Reuses the hoisted nwp; one snoise3.)
+    float vegN = snoise3(nwp * 2400.0);
+    float veg = (1.0 - smoothstep(bandEdgesHi.x + vegN * 850.0, bandEdgesHi.y + vegN * 850.0, h))
+              * (1.0 - smoothstep(slopeRock.x, slopeRock.y + vegN * 0.13, rockSlope));
     // ELEVATION + LATITUDE BIOME BIAS (user 2026-06-02: 'the hypsometric ramp should influence biome
     // distribution, pulling biomes out of their anchor areas a bit for better distribution'). On top
     // of the anchor climate temp/humid, bias the EFFECTIVE temperature DOWN with elevation (lapse rate
@@ -1886,14 +1892,22 @@ void main() {
         // off (= the old low-freq look) -- no second octave, no detailFade. Albedo = luma STRUCTURE (macro
         // color carries chroma); normal strong (x1.4); displacement drives the height-blend (mips soften
         // the displacement, and thus the blend, at distance automatically).
+        // LOW-OCTAVE NORMAL BLEND (user 2026-06-14 'blend the higher octave with the lower octave's
+        // NORMALS for a less repetitive faraway look -- dont fade it, draw both'): the high octave (wt4)
+        // tiles tightly so it repeats visibly far off; ADD the low octave (wt, 2.4km, less repetitive)
+        // NORMAL on top -- ALWAYS, no fade -- to break that repetition. Albedo stays high-octave only.
         highp vec3 wt4 = wt * 4.0;
         vec4 albA = surfTriTap(uSurfAlb, wt4, tw, lA);
-        vec3 cA = vec3(dot(albA.rgb, LUMA)); vec3 nA = surfTriNrm(uSurfNrm, wt4, tw, lA, n) * 1.4; float dispA = albA.a;
+        vec3 cA = vec3(dot(albA.rgb, LUMA));
+        vec3 nA = surfTriNrm(uSurfNrm, wt4, tw, lA, n) * 1.4 + surfTriNrm(uSurfNrm, wt, tw, lA, n) * 0.8;   // high + low-octave normal
+        float dispA = albA.a;
         vec4 texAlb = vec4(cA, dispA); vec3 texNrm = nA;
         float splatRock = (abs(lA - 1.0) < 0.5) ? 1.0 : 0.0;   // height-blend rock fraction (layer 1 = rock)
         if (wB > 0.02) {   // second layer only where a real transition exists
             vec4 albB = surfTriTap(uSurfAlb, wt4, tw, lB);
-            vec3 cB = vec3(dot(albB.rgb, LUMA)); vec3 nB = surfTriNrm(uSurfNrm, wt4, tw, lB, n) * 1.4; float dispB = albB.a;
+            vec3 cB = vec3(dot(albB.rgb, LUMA));
+            vec3 nB = surfTriNrm(uSurfNrm, wt4, tw, lB, n) * 1.4 + surfTriNrm(uSurfNrm, wt, tw, lB, n) * 0.8;   // high + low-octave normal
+            float dispB = albB.a;
             // HEIGHT-BLEND POKE-THROUGH (user 'each texture's higher areas should poke through the other,
             // offset by the ramp'): height = displacement + a weight-ramp offset (gate positions the
             // boundary); higher wins over a soft width so the loser's high bumps poke through = fingers,
