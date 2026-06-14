@@ -2179,10 +2179,17 @@ void main() {
         // under the ocean'): the old absorb (4,0.8,0.3)/km + a 50->500m hard fog fade closed the view to
         // opaque blue within ~500m. Lower the coefficients (still red-first absorption) and push the hard
         // fade to ~3-15km so the seabed landscape is explorable; red still fades fast (realistic blue cast).
-        vec3 absorb = vec3(1.0, 0.30, 0.15) * (1.0 + depth * 0.0002);
+        // MUCH CLEARER (user 2026-06-14 'we cant see the ocean floor properly'): the deep-ocean floor is
+        // km below, so even 'clear' (1.0/0.30/0.15) water + a 3-15km fade hid it. Drop the coefficients
+        // hard and push the fade to ~10-50km so the ocean FLOOR reads as terrain from a long way off
+        // (game-clarity over physical realism; red still absorbs first for a natural blue-green cast).
+        // FOG 10x LESS (user 2026-06-14 'make the fog 10x less / doesnt look right under the water'):
+        // extinction /10 and the hard fade pushed 10x out so the ocean floor reads clearly from a long
+        // way off with only a faint blue tint, not a wash of fog.
+        vec3 absorb = vec3(0.035, 0.010, 0.005) * (1.0 + depth * 0.0001);
         vec3 uwTrans = exp(-absorb * dKm);
-        vec3 uwFog = vec3(0.004, 0.10, 0.22) + vec3(0.0, 0.02, 0.04) * depth / 1000.0;
-        color = mix(color * uwTrans + uwFog * (1.0 - uwTrans), uwFog, smoothstep(3000.0, 15000.0, dKm * 1000.0));
+        vec3 uwFog = vec3(0.004, 0.09, 0.18) + vec3(0.0, 0.015, 0.03) * depth / 1000.0;
+        color = mix(color * uwTrans + uwFog * (1.0 - uwTrans), uwFog, smoothstep(100000.0, 500000.0, dKm * 1000.0));
     }
     // RIVERS post-lighting (witnessed browser-2115/2118: the river-blue in ALBEDO is multiplied
     // by the warm sun irradiance (sunIrr.b is low) so land rivers lose their blue in the lit
