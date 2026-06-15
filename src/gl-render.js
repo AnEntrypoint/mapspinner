@@ -1031,7 +1031,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(U('uTriSharp'),   _g('triSharp', 4.0));     // triplanar weight exponent (2026-06-15 ^8 'normals flipping between two states' -> 4 smooth)
     gl.uniform1f(U('uNrmFade0'),   _g('nrmFade0', 40000.0)); // normal-texture fade start (m) -- DOUBLED from 20km (2026-06-15)
     gl.uniform1f(U('uNrmFade1'),   _g('nrmFade1', 80000.0)); // normal-texture fade end (m) -- DOUBLED from 40km
-    gl.uniform1f(U('uBeachWarp'),  _g('beachWarp', 2.8));    // grass<->beach line warp x beachTop -- DOUBLED 1.4->2.8 (user 2026-06-15 'double its effect'); was 0.30
+    gl.uniform1f(U('uBeachWarp'),  _g('beachWarp', 5.6));    // grass<->beach line warp x beachTop -- DOUBLED again 2.8->5.6 (user 2026-06-15 'double its effect width'); was 0.30
     gl.uniform1f(U('uBandWarp'),   _g('bandWarp', 1100.0));  // snow/rock band warp amplitude (m), low-freq (2026-06-15 'snow warp stronger + 3x lower freq')
     gl.uniform1f(U('uBeachDet0'),  _g('beachDet0', 30000.0)); // beach<->grass fine-detail fade start (m) -- 10x further (user 2026-06-15 'mipping right at the camera')
     gl.uniform1f(U('uBeachDet1'),  _g('beachDet1', 100000.0));// beach<->grass fine-detail fade end (m) -- 10x further
