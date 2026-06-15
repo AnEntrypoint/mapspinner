@@ -424,7 +424,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(loc('uHiFreqCut'),     g('hiFreqCut', 0.25));   // DECISIVE: ungated *= at terrain.glsl fine octaves; 0.5->0.25 (2026-06-10 'blotchy': the 4x fine band read as leopard dapple at altitude -- live-isolated, hiFreqCut=0 removed it entirely)
     gl.uniform1f(loc('uDetailOverlay'), g('detailOverlay', 6.0));  // perlin-everywhere ELEVATION term in composeHeight -- probe must match the VS or collision diverges
     gl.uniform1f(loc('vtxDetail'),      g('vtxDetail', 1.0));    // DECISIVE: vtxDisplace strength (early-return on 0)
-    gl.uniform1f(loc('canyonDepthMul'), g('canyonDepth', 2.0));   // DEFAULT MUST MATCH the render set (line ~972) or the _PROBE_ collision carves shallower than the rendered geometry = 'collision trace not matching elevation' (2026-06-15). Doubled 1.0->2.0 with the render.
+    gl.uniform1f(loc('canyonDepthMul'), g('canyonDepth', 0.6));   // DEFAULT MUST MATCH the render set (line ~982) or the _PROBE_ collision carves shallower than the rendered geometry = 'collision trace not matching elevation' (2026-06-15). 2.0->0.6 (user 2026-06-16 'intensity way too much, walls too hard'): a 2800m gorge cut clear to the +5 floor = a near-vertical wall; 0.6 = ~840m max incision = gentler. LIVE-tunable via window.__canyonDepth.
     gl.uniform1f(loc('uVsCheap'),       (typeof window!=='undefined' && window.__vsCheap) ? 1.0 : 0.0);   // VS carve-cost profiling A/B
     gl.uniform1f(loc('uBeachShelfM'),   g('beachShelf', 0.0));   // land coastal shelf (geometry); probe MUST match render
     gl.uniform1f(loc('uLandBias'),      g('landBias', 0.0));       // +650m hypsometry bias = ~+30% land:sea (measured: landFrac 0.041 -> 0.054 over a 700-dir sphere grid, user 2026-06-14). window.__landBias dials it live.
@@ -979,7 +979,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // + strata band thickness and cliff-strata material strength (FS texturing). Defaults = the tuned
     // literals so the look is unchanged until the user dials a window global.
     const _g = (n,d)=> (typeof window!=='undefined' && window['__'+n]!=null) ? +window['__'+n] : d;
-    gl.uniform1f(U('canyonDepthMul'), _g('canyonDepth', 2.0));   // DOUBLED 1.0->2.0 (user 2026-06-15 'double the canyon intensity, not really visible')
+    gl.uniform1f(U('canyonDepthMul'), _g('canyonDepth', 0.6));   // 2.0->0.6 (user 2026-06-16 'intensity way too much, walls too hard'); must match the probe default (line ~427). LIVE-tunable via window.__canyonDepth.
     gl.uniform1f(U('uVsCheap'),       (typeof window!=='undefined' && window.__vsCheap) ? 1.0 : 0.0);   // VS carve-cost profiling A/B
     gl.uniform1f(U('uBeachShelfM'),   _g('beachShelf', 0.0));   // land coastal shelf (geometry): h<S eased h*h/S = wide beach
     gl.uniform1f(U('uLandBias'),      _g('landBias', 0.0));        // +650m hypsometry bias = ~+30% land:sea (window.__landBias); MUST match the probe (setComposeHeightUniforms) for collision parity
