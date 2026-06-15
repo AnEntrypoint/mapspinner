@@ -1023,7 +1023,12 @@ void main() {
                              dPV * (defRadius + hPV) - dMV * (defRadius + hMV)));
         if (dot(vN, dir0) < 0.0) vN = -vN;
     } else if (uIsWater < 0.5) {
-        hN0 = composeHeight(dir0, faceLocal, defOffset.z);   // center = the geometry height h
+        // DEDUP (2026-06-15 caching rearch): vH (computed inline 832-962) IS composeHeight(dir0,faceLocal,defOffset.z)
+        // -- the identical carve cascade in the identical order. Reuse it for the geometry-height center instead of a
+        // 2nd full eval/vertex. The 4 OFFSET taps below stay their own single composeHeight instance (the FXC
+        // normal-divergence fix is about the taps agreeing with EACH OTHER; the center only feeds scalar h, not the
+        // normal cross-difference 1056-1058, so reusing vH cannot reintroduce the per-callsite normal triad).
+        hN0 = vH;   // center = the geometry height h (== composeHeight, dedup)
         // VERTEX NORMAL = CENTRAL DIFFERENCE in PARAMETRIC MESH SPACE over the FULL composeHeight (2026-06-14
         // jagged-normal fix). Two earlier methods both jagged: (a) interior FORWARD mesh-cell cross product
         // = each vertex got its forward triangle's FACE normal (faceted) at a vertex-spacing step (noisy);
