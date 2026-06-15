@@ -187,7 +187,7 @@ float inciseRidgeField(vec3 d, float baseFreq, float freqMul){
     return sum / norm;                                         // ->1 on the channel network
 }
 const float RIVER_INCISE_DEPTH = 280.0;   // 120->280 metres at the channel thalweg (user 2026-06-14 'rivers/channels super shallow+flat'): deeper incision
-float riverRidgeField(vec3 dir){ return inciseRidgeField(dir, 40.0, 2.03); }   // T-1: callers pass unit dir (dir0 / normalize(worldPos))
+float riverRidgeField(vec3 dir){ return inciseRidgeField(dir, 24.0, 2.03); }   // freq 40->24 (user 2026-06-15 'no visible canyons'): wider river valleys the coarse mesh resolves into visible relief
 float riverCarveM(vec3 dir, out float wet){
     float ridge = riverRidgeField(dir);
     // (2026-06-15: 'widen the valley' did not help -- reverted; depth carries visibility.)
@@ -224,7 +224,7 @@ uniform float uMtnBandWide;                // widen mtn=smoothstep(16.8,18.6,ele
 uniform float uClimateRelief;              // widen wetLowFlat(0.66,0.9,humid) + coldFlat(0.18,0.34,temp) reliefMul gates
 uniform float uIsleWide;                    // widen isleZone seaBias gates (50,350)+(900,1600) -> (30,600)+(600,2200)
 uniform float uCarveWide;                   // widen the river/canyon/lake/dune CLIMATE gates so carve depth fades in over a wide span
-float canyonRidgeField(vec3 dir){ return inciseRidgeField(dir + vec3(13.7, -4.2, 8.9), 190.0, 2.07); }  // T-1: callers pass unit dir. phase offset matches FS canyonMask. baseFreq 190 = ~200km gorge network (user 2026-06-14: HALVED 380->190 = fewer, wider-spaced gorges, easier for the coarse grid to represent). Shared VS carve + FS mask -> congruent by construction.
+float canyonRidgeField(vec3 dir){ return inciseRidgeField(dir + vec3(13.7, -4.2, 8.9), 90.0, 2.07); }  // baseFreq 190->90 (user 2026-06-15 'canyons completely flat, read as a thin line'): a 200km gorge crest is still NARROWER than the coarse-LOD mesh cell at altitude -> the mesh straddles it (flat) while the probe+normal carve = 'normals-only'. 90 ~= 420km = each gorge ~2x WIDER so the mesh resolves visible canyon WALLS + floor. Shared VS carve + FS mask -> congruent.
 // CANYON cross-section now reads as a CANYON, not a V-notch: STEEP WALLS + a FLAT FLOOR.
 //   wall = a sharp smoothstep band -> the carve drops fast over a narrow ridge interval (the cliff
 //          walls), instead of the old gentle bench+gorge blend that made shallow V-troughs.
