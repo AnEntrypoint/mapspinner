@@ -1014,6 +1014,9 @@ export async function initMapspinnerRender(gl, opts = {}) {
       cam.eye[1] - Math.floor(cam.eye[1] / _texTileM) * _texTileM,
       cam.eye[2] - Math.floor(cam.eye[2] / _texTileM) * _texTileM);
     gl.uniform1f(U('uTexNrmK'),    _g('texNrmK', 2.0));   // user-dialed 2026-06-15 (live window.__texNrmK). texture detail-normal strength
+    gl.uniform1f(U('uBiomeTint'),  _g('biomeTint', 0.22)); // macro biome color mixed over the texture (2026-06-15 'doesnt look like the texture color' -- was hard 0.5)
+    gl.uniform1f(U('uTexBright'),  _g('texBright', 0.92)); // overall ground brightness
+    gl.uniform1f(U('uTexSat'),     _g('texSat', 1.0));     // texture chroma saturation (>1 = more vivid photo hue)
     gl.uniform1f(U('uTexMix'),     _g('texMix', 0.85));     // splat blend amount (0 = off)
     gl.uniform1f(U('uTexWarp'),    _g('texWarp', 0.23));    // anti-repetition warp amplitude (-30% from 0.325, grass warp too intense)
     gl.uniform1f(U('uTexPhoto'),   _g('texPhoto', 0.0));    // raw photo-color fraction (0 = patch matches the macro shade exactly)

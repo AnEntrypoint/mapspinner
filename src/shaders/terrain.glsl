@@ -1268,6 +1268,9 @@ uniform float uTexPhotoNear; // near-field MATERIAL-IDENTITY fraction (__texPhot
                              // grass or sand but is neither' -- the full macro tint painted biome browns/greys onto
                              // every layer). Far field returns to the shade-matched macro (no distance pop).
 uniform vec4 uSurfMeanL;     // per-layer mean linear luminance of the photo color (loader-computed; shade-match divisor)
+uniform float uBiomeTint;    // how much macro biome/climate color is mixed OVER the texture (__biomeTint, default 0.22; was a hard 0.5 = washed the photo color out). 0 = pure texture color, 1 = pure biome.
+uniform float uTexBright;    // overall ground brightness multiplier (__texBright, default 0.92)
+uniform float uTexSat;       // texture chroma saturation around its own luma (__texSat, default 1.0; >1 = more vivid photo color)
 // MATERIAL-BOUNDARY DITHER REVERTED (2026-06-05): the threshold-perturbation approach (matEdgeNoise on
 // the smoothstep input) produced HARD-EDGED PATCHES + a UV-like grid on uniform grass/snow (user live
 // eye: 'hard uninteresting lines between rocky/grass', 'grass/snow UV problem') -- perturbing a near-
@@ -2047,6 +2050,11 @@ void main() {
         // deviation visible while the patch average lands exactly on the macro shade.
         float mA = uSurfMeanL[int(lA + 0.5)];
         float texL = wB > 0.02 ? mix(uSurfMeanL[int(lB + 0.5)], mA, bAB) : mA;
+        // SATURATE the photo chroma around its own luma (user 2026-06-15 'doesnt look like the color of
+        // the textures at all'): push texC away from grey by uTexSat so the real hue reads, THEN rescale
+        // to the material brightness. uTexSat=1 keeps the photo native; >1 = more vivid.
+        float texCL = dot(texC, LUMA);
+        texC = max(mix(vec3(texCL), texC, uTexSat), 0.0);
         vec3 detail = texC * (dot(texMatColor, LUMA) / max(texL, 0.02));   // texture's OWN color (cA/cB now RGB) at the MATERIAL brightness (layer-mean normalized) -> chroma expressed, shade-matched (2026-06-15)
         // ROCK SHOWS THE TRUE PHOTO (user 2026-06-10 'we still see the original rock texture --
         // replace completely'): tinting rock to the macro shade just reproduced the old grey/tan,
@@ -2067,8 +2075,8 @@ void main() {
         // base = flat MATERIAL color (far/low-k); near = structured detail. The macro biome albedo is no
         // longer the base, so NO biome color bleeds into the ground (user 'take away all biome inheritance').
         albedo = clamp(mix(texMatColor, detail, k), 0.0, 1.0);
-        albedo = mix(albedo, biomeC, 0.5);   // 0.34->0.5 (2026-06-15 'too bright/cartoony'): restore some landscape/biome tint to ground the texture color (between the 0.68 wash and the 0.34 cartoony)
-        albedo *= 0.85;   // 2026-06-15 'still a bit overbright': pull overall ground brightness down ~15%
+        albedo = mix(albedo, biomeC, uBiomeTint);   // LIVE LEVER (2026-06-15 'doesnt look like the texture color at all'): the hard 0.5 biome mix washed the photo color out -> default 0.22, dial via window.__biomeTint
+        albedo *= uTexBright;   // overall ground brightness (__texBright, default 0.92)
         // (AO REMOVED 2026-06-14 user 'fps dropped a lot, no visual improvement, get rid of all the ao
         // for texture and landscape': the displacement texAO + the broadShapeLowM-Laplacian elevation AO
         // are both gone; the latter's 5 wide VS taps were the FPS cost. vConcavity varying also removed.)
