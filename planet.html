@@ -486,9 +486,11 @@ function frameLoop(){
   // is 2m, max terrain ~15km, the jsBroadShape mirror is within a few hundred m) -- skip the stall and
   // take the existing CPU-mirror fallback. Below 20km (where collision is load-bearing) keep GPU-exact.
   const _altRoughKm = _camLenMv - RADIUS;
-  const _gpuGM = (_altRoughKm < 20.0 && _orchMv && _orchMv.render && _orchMv.render.sampleGroundM) ? _orchMv.render.sampleGroundM(_camDirMv) : null;
-  const _surfM = (_gpuGM != null && isFinite(_gpuGM)) ? _gpuGM
-               : jsBroadShape(cam.pos[0],cam.pos[1],cam.pos[2]);
+  // moveStep speed-scaling + anti-tunnel guard use the CPU mirror (1-frame-lag-tolerant). The AUTHORITATIVE
+  // GPU collision sample is taken AFTER the move below at the POST-move direction (2026-06-15 'our 2m
+  // collision puts the camera under the ground'): the old pre-move _gpuGM clamped against the ground BEHIND
+  // the eye, so moving into rising terrain (esp. the now-2x canyon walls) clipped one frame late.
+  const _surfM = jsBroadShape(cam.pos[0],cam.pos[1],cam.pos[2]);
   const altSurfElev = Math.min(_surfM, 9500.0) / WEBGL2_TERRAIN_R_M;
   const altKmAbove = Math.max(1e-3, (Math.hypot(...cam.pos) - RADIUS*(1.0 + altSurfElev)));
   // CAMERA MOVE-STEP. NO ELEVATION SLOWDOWN (user 2026-06-05: 'get rid of the camera slowdown code').
@@ -517,10 +519,13 @@ function frameLoop(){
   // VS uses, into a 1px R32F target). This can NEVER diverge from the rendered surface (the old CPU
   // jsBroadShape mirror under-predicted -> camera went under). Fall back to the mirror only if the
   // probe is unavailable. + a small vDisp micro-relief margin so the sub-vertex relief is cleared.
-  // REUSE the GPU ground sample taken above for moveStep (_gpuGM) so the move-gap surface and the
-  // collision surface are bit-identical (movestep-zero-speed-root) and we do ONE 1px readback per frame.
+  // AUTHORITATIVE GPU collision sample at the POST-MOVE camera direction (2026-06-15 'under the ground'
+  // fix): sample the exact rendered ground directly beneath the eye's NEW position so moving into rising
+  // terrain can't clip a frame late. Still ONE 1px readback per frame (the pre-move sample was removed).
   let renderedM;
-  const gpuM = _gpuGM;
+  const _rDir = r > 1e-9 ? [cam.pos[0]/r, cam.pos[1]/r, cam.pos[2]/r] : [0,0,1];
+  const gpuM = (_altRoughKm < 20.0 && _orchMv && _orchMv.render && _orchMv.render.sampleGroundM)
+             ? _orchMv.render.sampleGroundM(_rDir) : null;
   // The GPU probe sampleGroundM IS the exact rendered terrain height under the camera (same
   // hpfSample+broadShapeM the mesh VS uses), so no large clearance margin is needed. The old +130m
   // "vDisp micro-relief margin" parked the eye ~132m above the ground (user: "place us 2.0m from the
