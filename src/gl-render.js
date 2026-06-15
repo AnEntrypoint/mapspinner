@@ -1029,8 +1029,8 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(U('uTexBright'),  _g('texBright', 0.92)); // overall ground brightness
     gl.uniform1f(U('uTexSat'),     _g('texSat', 1.0));     // texture chroma saturation (>1 = more vivid photo hue)
     gl.uniform1f(U('uNrmLow'),     _g('nrmLow', 1.0));     // low-octave rock normal strength (2026-06-15 'dont see lower-freq octave normals')
-    gl.uniform1f(U('uXFade0'),     _g('xFade0', 3000.0));  // crossover-displacement fade start (m) -- DOUBLED 1500->3000 (user 2026-06-15 'double the mip distance for the displacement crossover')
-    gl.uniform1f(U('uXFade1'),     _g('xFade1', 9000.0));  // crossover-displacement fade end (m) -- DOUBLED 4500->9000
+    gl.uniform1f(U('uXFade0'),     _g('xFade0', 8000.0));   // crossover-displacement fade start (m) (user 2026-06-15: gone by 10km, want it to hold further)
+    gl.uniform1f(U('uXFade1'),     _g('xFade1', 20000.0));  // crossover-displacement fade end (m) -- 'fully faded by ~20km would be more appropriate'
     gl.uniform1f(U('uTriSharp'),   _g('triSharp', 4.0));     // triplanar weight exponent (2026-06-15 ^8 'normals flipping between two states' -> 4 smooth)
     gl.uniform1f(U('uNrmFade0'),   _g('nrmFade0', 40000.0)); // normal-texture fade start (m) -- DOUBLED from 20km (2026-06-15)
     gl.uniform1f(U('uNrmFade1'),   _g('nrmFade1', 80000.0)); // normal-texture fade end (m) -- DOUBLED from 40km
