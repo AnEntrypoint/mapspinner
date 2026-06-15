@@ -1828,7 +1828,7 @@ void main() {
     vec3 texDn = vec3(0.0);   // photo-texture WORLD-SPACE normal perturbation, applied after uReliefShade
     // SPLAT RUNS UNDERWATER TOO (user 2026-06-11 'continue under water as sand and rock'): the old
     // vH > -2 gate cut the photo textures at the waterline, leaving the seabed flat-colored.
-    float texFarFade = 1.0 - smoothstep(8000.0, 10000.0, pxWorld);
+    float texFarFade = 1.0 - smoothstep(4000.0, 26000.0, pxWorld);   // WIDE gentle band (user 2026-06-15 'hard line through the middle'): the old 8000-10000 (2000-wide) splat->biome fade compressed to a sharp horizontal LINE at grazing angle; spread over 22000 px-world so the detail->flat-biome handoff is gradual, no line.
     if (uHasSurfTex > 0.5 && uTexMix > 0.001 && texFarFade > 0.001) {
         vec3 biomeC = albedo;   // SUBTLE landscape color variation (user 2026-06-14 're-introduce ... use existing data, make it subtle'): the macro biome/climate color is ALREADY computed; save it now and mix a touch back after the material override (no new computation).
         // material weights from the existing gates (climate = vClimate: z=temp, w=humid)
