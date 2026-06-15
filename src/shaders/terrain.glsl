@@ -1930,7 +1930,12 @@ void main() {
         // touches texture coordinates; every layer tap (albedo A/B, normal A/B, all four materials)
         // samples through this shared wt, so the warp cannot layer or double-apply.
         wt += vTexWarp * uTexWarp;
-        vec3 tw = abs(n); tw = tw * tw; tw = tw * tw; tw /= (tw.x + tw.y + tw.z + 1e-4);   // ^4 (2026-06-15 'overlapping textures up close'): sharper triplanar weights -> the dominant axis wins, far less 2-3 projection ghosting/overlap (the 'faded/overlapped' look)
+        // TRIPLANAR DOMINANT-AXIS (2026-06-15 'two textures overlaid that independently jump'): on a tilted
+        // surface the blend of two axis-projections = two copies of the texture each anchored to a different
+        // world axis -> they parallax-swim independently = the ghosting. Sharpen the weights hard (^8) so the
+        // dominant axis wins almost everywhere (single projection, no overlay); only a thin ~45deg diagonal
+        // still blends. abs(n)^8, normalized.
+        vec3 tw = abs(n); tw = tw * tw; tw = tw * tw; tw = tw * tw; tw /= (tw.x + tw.y + tw.z + 1e-4);
         const vec3 LUMA = vec3(0.299, 0.587, 0.114);
         float bAB = clamp(wA / max(wA + wB, 1e-4), 0.0, 1.0);
         // SINGLE HIGH-FREQUENCY OCTAVE + MIPS (user 2026-06-14 'instead of swapping out texture octaves,
@@ -2062,7 +2067,7 @@ void main() {
         // displacement-normal relief: WORLD-SPACE UDN perturbation from surfTriNrm (each projection
         // plane's tangent axes, not the radial frame). Amplitude capped low (scramble lesson d262b5e);
         // applied AFTER the uReliefShade exaggeration below so the exaggeration never amplifies it.
-        texDn = texNrm * (uTexNrmK * k);
+        texDn = texNrm * (uTexNrmK * k) * (1.0 - smoothstep(20000.0, 40000.0, length(camWorld - vWorld)));   // NORMAL textures fade out 20->40km (user 2026-06-15 'mip the normal textures closer, gone by 40km') -- distant relief is carried by the macro lit normal, not the photo normal
     }
 #ifdef _DEBUGVIEW_
     // DIAG displayMode 7: raw river field -> blue where the river line fires, grey ridge field
