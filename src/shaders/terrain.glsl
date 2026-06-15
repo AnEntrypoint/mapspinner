@@ -2111,6 +2111,12 @@ void main() {
         albedo = clamp(mix(texMatColor, detail, k), 0.0, 1.0);
         albedo = mix(albedo, biomeC, uBiomeTint);   // LIVE LEVER (2026-06-15 'doesnt look like the texture color at all'): the hard 0.5 biome mix washed the photo color out -> default 0.22, dial via window.__biomeTint
         albedo *= uTexBright;   // overall ground brightness (__texBright, default 0.92)
+        // FAR CONTINUITY (user 2026-06-15 'weird crossover at ~6Mm [altitude]'): outside the splat radius this
+        // whole block is SKIPPED -> far terrain = the PURE macro biome albedo (biomeC), but inside the block
+        // the splat applied the biome mix (0.22) + brightness (0.92) -> a visible RING where the two formulas
+        // meet at the splat fade edge. Blend the splat result back to EXACTLY biomeC as texFarFade->0 so the
+        // inner (splat) and outer (skipped) albedo are identical at the boundary = no ring.
+        albedo = mix(biomeC, albedo, texFarFade);
         // (AO REMOVED 2026-06-14 user 'fps dropped a lot, no visual improvement, get rid of all the ao
         // for texture and landscape': the displacement texAO + the broadShapeLowM-Laplacian elevation AO
         // are both gone; the latter's 5 wide VS taps were the FPS cost. vConcavity varying also removed.)
