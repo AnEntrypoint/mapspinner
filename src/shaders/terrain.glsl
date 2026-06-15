@@ -1549,7 +1549,7 @@ vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, flo
 // SURFACE PHOTO-TEXTURE triplanar tap: 3 axis-projected samples of one array layer, blended by
 // the pow-softened |n| weights (same continuous-projection rationale as the rock bump biplanar --
 // no hard dominant-axis flip). wt = world pos in tile units (fragment-anchored, fp32-precise).
-const float TEX_LOD_BIAS = 1.0;   // MIP CLOSER (2026-06-15 user 'we can mip textures closer / coords jumping up close'): +1 LOD bias -> coarser mips sooner = hides the up-close grain + the fp32 large-world texture-coordinate jumping/aliasing. 0 = sharpest, higher = blurrier/cheaper.
+const float TEX_LOD_BIAS = 0.0;   // 1.0->0.0 (2026-06-15): the +1 bias selected a COARSER mip -> bigger texels -> the diamond/cross-hatch magnification grid (shot.png) got worse. 0 = sharpest mip (finest available detail up close).
 vec4 surfTriTap(sampler2DArray sm, highp vec3 wt, vec3 bw, float layer) {
     return texture(sm, vec3(wt.y, wt.z, layer), TEX_LOD_BIAS) * bw.x
          + texture(sm, vec3(wt.x, wt.z, layer), TEX_LOD_BIAS) * bw.y
@@ -1912,7 +1912,13 @@ void main() {
         // fp32 precision = visible UV stairs. Snap step = 1024 tiles exactly, so wt jumps by an
         // integer tile count across a snap boundary = identical wrapped sample (REPEAT), no phase
         // reset, camera-independent.
-        highp float snapM = uTexTileM * 1024.0;
+        // PRECISION FIX (2026-06-15 'UV jumps wildly up close + diamond/cross-hatch grid'): snapM was
+        // uTexTileM*1024 -> wt ranged 0..1024 (wt4 ~2048), and fp32 at that magnitude can't resolve
+        // sub-texel -> the bilinear weights quantized = diamond grid + jumping as the camera moves.
+        // 1024->32: wt stays 0..32 (full sub-texel fp32 precision) and the wrap seam moves to ~77km
+        // (uTexTileM*32), far beyond the splat's ~10km pxWorld fade so it is never visible. Tile phase
+        // preserved (snapM is still an integer multiple of uTexTileM -> seamless REPEAT wrap).
+        highp float snapM = uTexTileM * 32.0;
         highp vec3 wt = (vWorld - floor(vWorld / snapM) * snapM) / uTexTileM;
         // DOMAIN WARP anti-repetition (user 2026-06-10 'distort the textures so they dont look
         // repeated' + 'distort more, waves a bit large'): 2-octave world-dir warp -- ~11km waves at
