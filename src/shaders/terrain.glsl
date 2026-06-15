@@ -590,25 +590,23 @@ highp float detailFbm(vec3 dir) {
 // construction, no parallel mirror to drift. Returns the signed elevation h (metres) for dir0; the
 // caller adds nothing (cbias is folded in here). dir0 = world dir of the sample (faceWarp'd),
 // faceLocal = face-local warped metres (for vtxDisplace), tileM = quad size (Nyquist fade).
-highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){   // W7: faceLocal metres + returned h -> highp islands
-  vec4 hpf0 = hpfSample(dir0);          // (seaBias=r, elevAmp=g, temp=b, humid=a)
-  highp float cbias = hpf0.r;           // W7: seaBias metres
+// vs-param-cache (2026-06-15): the HPF-FIELD-derived params (cbias/rugged/reliefMul/ridgeMul) are a pure
+// fn of the continental HPF field (~50km/texel) -> ~CONSTANT over the +/-~300m lit-normal tap radius.
+// Compute them ONCE per vertex (computeHCache) and reuse across the 4 normal taps via the single
+// composeHeightC call-site (preserves the FXC single-instance normal invariant). The taps then skip
+// hpfSample + the climate/isle smoothstep derivation, re-evaluating only the per-tap-VARYING fields
+// (broadShapeM + carves). composeHeight() below self-derives the cache for _PROBE_/bake single calls.
+struct HCache { highp vec4 hpf0; float rugged; float reliefMul; float ridgeMul; };
+HCache computeHCache(vec3 dir0){
+  highp vec4 hpf0 = hpfSample(dir0);          // (seaBias=r, elevAmp=g, temp=b, humid=a)
+  highp float cbias = hpf0.r;                 // W7: seaBias metres
   float rugged = ruggedFromElevAmp(hpf0.g);
-  float vDisp = vtxDisplace(faceLocal, tileM, rugged);
-  // per-biome relief from the anchor sample (mirror of the old VS main morphology)
   float bTemp = hpf0.b, bHum = hpf0.a, bAmp = hpf0.g;
-  // mtn band: uMtnBandWide=1 spreads the 16.8->18.6 contour to 14.5->19.5 (covers the live elevAmp
-  // range ~14.5-18.9) so the belt-massif/reliefMul transition is a planet-wide gradient, not a thin
-  // iso-contour snapping a 2600m bulk lift on across gentle land (workflow wrxo0rr7a topSuspect, 2600m).
   float mtn = smoothstep(mix(16.8, 14.5, uMtnBandWide), mix(18.6, 19.5, uMtnBandWide), bAmp);
-  // climate reliefMul gates: uClimateRelief=1 widens both bands so the cold/wet flattening fades over
-  // latitude/moisture gradients instead of a per-cell contour (wrxo0rr7a coldFlat/wetLowFlat 80m+).
   float wetLowFlat = smoothstep(mix(0.66, 0.50, uClimateRelief), mix(0.9, 1.0, uClimateRelief), bHum) * (1.0 - mtn);
   float coldFlat = (1.0 - smoothstep(mix(0.18, 0.05, uClimateRelief), mix(0.34, 0.45, uClimateRelief), bTemp));
   float reliefMul = clamp(0.45 + 1.25 * mtn - 0.30 * wetLowFlat - 0.25 * coldFlat, 0.40, 1.7);
   float ridgeMul  = clamp(mtn * 1.1, 0.0, 1.0);
-  // ISLAND-TYPE VARIETY (pure fn of world dir) -- mirror of the VS main isle block.
-  // uIsleWide=1 spreads the seaBias double-gate so the volcanic/atoll remix ramps in (wrxo0rr7a 2000m).
   float isleZone = smoothstep(mix(50.0, 30.0, uIsleWide), mix(350.0, 600.0, uIsleWide), cbias)
                  * (1.0 - smoothstep(mix(900.0, 600.0, uIsleWide), mix(1600.0, 2200.0, uIsleWide), cbias));
   if (isleZone > 0.0) {
@@ -618,6 +616,15 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){   // W7
     reliefMul = mix(reliefMul, mix(reliefMul, 1.6, volcanic) * (1.0 - 0.7 * atoll), isleZone);
     ridgeMul  = mix(ridgeMul, max(ridgeMul, 0.9 * volcanic), isleZone);
   }
+  return HCache(hpf0, rugged, reliefMul, ridgeMul);
+}
+highp float composeHeightC(vec3 dir0, highp vec2 faceLocal, float tileM, HCache C){   // W7: faceLocal metres + returned h -> highp islands
+  highp vec4 hpf0 = C.hpf0;              // (seaBias=r, elevAmp=g, temp=b, humid=a)
+  highp float cbias = hpf0.r;           // W7: seaBias metres
+  float rugged = C.rugged;
+  float vDisp = vtxDisplace(faceLocal, tileM, rugged);
+  float reliefMul = C.reliefMul;
+  float ridgeMul  = C.ridgeMul;
   highp float bShape = broadShapeM(dir0, reliefMul, ridgeMul);  // W7: metres
   highp float h = cbias + bShape + uLandBias;                    // W7: composite elevation metres (~13000); +uLandBias raises hypsometry = more land
   // REALISTIC BATHYMETRY (user 2026-06-11 'the depth under the water doesnt seem right -- the
@@ -717,7 +724,11 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){   // W7
   h += duneV;
   return h;
 }
-#endif   // broadShapeM/broadShape/vtxDisplace/composeHeight: VS/PROBE (excluded from render FS, FS-1)
+// Self-deriving wrapper: probe/bake + any single-call site compute the cache inline (one hpfSample, no waste).
+highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){
+  return composeHeightC(dir0, faceLocal, tileM, computeHCache(dir0));
+}
+#endif   // broadShapeM/broadShape/vtxDisplace/composeHeight + computeHCache/composeHeightC: VS/PROBE (excluded from render FS, FS-1)
 
 #ifdef _VERTEX_
 layout(location=0) in vec3 vertex;   // vertex.xy in [0,1] parametric quad coord
@@ -1050,11 +1061,16 @@ void main() {
         highp float hPU = 0.0, hMU = 0.0, hPV = 0.0, hMV = 0.0;
         highp vec3 dPU = dir0, dMU = dir0, dPV = dir0, dMV = dir0;
         int fdIters = (uGrid >= 0.0) ? 4 : 1;   // 4 offset taps; runtime-bounded (FXC unroll-defeat, see uOctMax)
+        // vs-param-cache: HPF-derived params are ~constant over the +/-duP (~300m) tap radius -> compute
+        // ONCE at the vertex centre and reuse for all 4 taps; each tap then evaluates only broadShapeM +
+        // carves (the per-tap-varying fields). Single composeHeightC call-site = one FXC instance (the
+        // normal-divergence fix is preserved; the taps still difference against each other consistently).
+        HCache nCache = computeHCache(dir0);
         for (int i = 0; i < fdIters; i++) {
             highp vec2 off = (i == 0) ? vec2(duP, 0.0) : (i == 1) ? vec2(-duP, 0.0) : (i == 2) ? vec2(0.0, duP) : vec2(0.0, -duP);
             highp vec2 fl = faceWarp((vertex.xy + off) * defOffset.z + defOffset.xy);
             highp vec3 dd = normalize(defLocalToWorld * vec3(fl, defRadius));
-            highp float hh = composeHeight(dd, fl, defOffset.z);
+            highp float hh = composeHeightC(dd, fl, defOffset.z, nCache);
             if (i == 0) { hPU = hh; dPU = dd; } else if (i == 1) { hMU = hh; dMU = dd; }
             else if (i == 2) { hPV = hh; dPV = dd; } else { hMV = hh; dMV = dd; }
         }
