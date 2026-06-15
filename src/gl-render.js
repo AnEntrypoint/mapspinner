@@ -1083,12 +1083,33 @@ export async function initMapspinnerRender(gl, opts = {}) {
       const _dirty = (quads !== _instQuadsRef) || (_thc !== _lastThc);
       gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
       if (_dirty) {
-        const inst = new Float32Array(n * FLOATS);
+        // FRONT-TO-BACK SORT (overdraw cut, 2026-06-15): emit instances near->far so hardware early-Z
+        // rejects occluded far fragments BEFORE the expensive terrain FS runs (the terrain pass does not
+        // discard, so early-Z is active). Pure draw-ORDER change -> the depth test owns correctness =
+        // visual-neutral. CPU sort of n (~hundreds) on rebuild only (the static-frame cache skips it).
+        // d2 = |cam.eye - quad sea-level world centre|^2; _faceFrames[face] = [u0..2,v0..2,c0..2] (col-major).
+        const _d2 = new Float64Array(n);
+        const ord = new Array(n);
+        const WK = Math.PI / 4.0;
         for (let i = 0; i < n; i++) {
+          const q = quads[i].quad; const ff = _faceFrames[quads[i].face | 0];
+          const cx = q.ox + q.l * 0.5, cy = q.oy + q.l * 0.5;
+          const wx = R * Math.tan((cx / R) * WK), wy = R * Math.tan((cy / R) * WK);
+          const il = 1.0 / (Math.hypot(wx, wy, R) || 1);
+          const dx = (wx*il)*ff[0] + (wy*il)*ff[3] + (R*il)*ff[6];
+          const dy = (wx*il)*ff[1] + (wy*il)*ff[4] + (R*il)*ff[7];
+          const dz = (wx*il)*ff[2] + (wy*il)*ff[5] + (R*il)*ff[8];
+          const ex = dx*R - cam.eye[0], ey = dy*R - cam.eye[1], ez = dz*R - cam.eye[2];
+          _d2[i] = ex*ex + ey*ey + ez*ez; ord[i] = i;
+        }
+        ord.sort((a, b) => _d2[a] - _d2[b]);
+        const inst = new Float32Array(n * FLOATS);
+        for (let k = 0; k < n; k++) {
+          const i = ord[k];
           const q = quads[i].quad;
-          inst[i*FLOATS+0] = q.ox; inst[i*FLOATS+1] = q.oy; inst[i*FLOATS+2] = q.l; inst[i*FLOATS+3] = q.level;
-          inst[i*FLOATS+4] = quads[i].face;
-          inst[i*FLOATS+5] = _layers ? _layers[i] : 0.0;
+          inst[k*FLOATS+0] = q.ox; inst[k*FLOATS+1] = q.oy; inst[k*FLOATS+2] = q.l; inst[k*FLOATS+3] = q.level;
+          inst[k*FLOATS+4] = quads[i].face;
+          inst[k*FLOATS+5] = _layers ? _layers[i] : 0.0;
         }
         gl.bufferData(gl.ARRAY_BUFFER, inst, gl.DYNAMIC_DRAW);
       }
