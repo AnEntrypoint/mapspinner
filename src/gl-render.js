@@ -1026,8 +1026,6 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(U('uNrmLow'),     _g('nrmLow', 1.0));     // low-octave rock normal strength (2026-06-15 'dont see lower-freq octave normals')
     gl.uniform1f(U('uXFade0'),     _g('xFade0', 1500.0));  // crossover-displacement fade start (m) -- PULLED IN 3000->1500 (user 2026-06-15 'crossover textures mip too far away')
     gl.uniform1f(U('uXFade1'),     _g('xFade1', 4500.0));  // crossover-displacement fade end (m) -- 9000->4500 -- anti-sparkle, mips closer
-    gl.uniform1f(U('uAlbFade0'),   _g('albFade0', 12000.0)); // albedo high-detail fade start (m) -- DOUBLED 6->12km (user 2026-06-15 'push the albedo fade in to double the distance')
-    gl.uniform1f(U('uAlbFade1'),   _g('albFade1', 32000.0)); // albedo high-detail fade end (m) -- DOUBLED 16->32km -> collapses to flat material color past here
     gl.uniform1f(U('uTriSharp'),   _g('triSharp', 4.0));     // triplanar weight exponent (2026-06-15 ^8 'normals flipping between two states' -> 4 smooth)
     gl.uniform1f(U('uNrmFade0'),   _g('nrmFade0', 40000.0)); // normal-texture fade start (m) -- DOUBLED from 20km (2026-06-15)
     gl.uniform1f(U('uNrmFade1'),   _g('nrmFade1', 80000.0)); // normal-texture fade end (m) -- DOUBLED from 40km

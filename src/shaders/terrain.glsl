@@ -1274,8 +1274,6 @@ uniform float uTexSat;       // texture chroma saturation around its own luma (_
 uniform float uNrmLow;       // low-octave normal strength (__nrmLow, default 1.0) -- scales the two lower octaves of the rock normal pyramid
 uniform float uXFade0;       // crossover-displacement fade start metres (__xFade0, default 3000)
 uniform float uXFade1;       // crossover-displacement fade end metres (__xFade1, default 9000) -- high-octave disp gone past here (anti-sparkle)
-uniform float uAlbFade0;     // albedo high-detail fade start metres (__albFade0, default 6000)
-uniform float uAlbFade1;     // albedo high-detail fade end metres (__albFade1, default 16000) -- albedo -> flat material color past here
 uniform float uTriSharp;     // triplanar weight exponent (__triSharp, default 4.0) -- higher = harder dominant-axis pick (8+ flips at 45deg), lower = softer blend
 uniform float uNrmFade0;     // normal-texture fade start metres (__nrmFade0, default 40000)
 uniform float uNrmFade1;     // normal-texture fade end metres (__nrmFade1, default 80000) -- texture normals gone past here
@@ -1480,9 +1478,15 @@ vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, flo
     float tempEff  = clamp(temp - elevCool - latCool * uBiomeBandBias, 0.0, 1.0);
     float humidEff = clamp(humid + clamp(h / 9000.0, 0.0, 0.12) * uBiomeBandBias, 0.0, 1.0);
     vec3 biome = biomeColor(tempEff, humidEff);
-    // STRONG blend (0.82) so the biome DOMINATES the lowland color -> regions read distinct,
-    // not the faint 0.55 tint that made the whole continent look the same.
-    c = mix(c, biome, veg * 0.82);
+    // VALUE-PRESERVING biome tint (user 2026-06-15 'a light-grass ring encircles every mountain where the
+    // grass is dark'): the old `mix(c, biome, veg*0.82)` shifted BRIGHTNESS as veg fell off toward rock --
+    // dark biome-tinted grass on flat ground, light un-tinted grass near rock = a bright ring around peaks.
+    // Tint the HUE toward the biome at c's OWN luminance so the veg gradient changes color, never value ->
+    // no brightness ring. (regions still read distinct by hue.)
+    float cLv = dot(c, vec3(0.299, 0.587, 0.114));
+    float bLv = dot(biome, vec3(0.299, 0.587, 0.114));
+    vec3  biomeV = biome * (cLv / max(bLv, 1e-3));   // biome hue at c's brightness
+    c = mix(c, biomeV, veg * 0.82);
     // INTRA-BIOME VALUE MOTTLE (Real-World Look): real terrain is never one flat color per biome --
     // soil/moisture/vegetation patchiness mottles albedo. Reuse the snoise3 already evaluated for
     // cliffRock (same normalize(worldPos)*~1k pattern, no new octave) as a VALUE-only multiplier (NO
@@ -1990,11 +1994,10 @@ void main() {
         highp float camDist = length(camWorld - vWorld);
         float texFade   = 1.0 - smoothstep(uNrmFade0, uNrmFade1, camDist);   // DOUBLED 20/40 -> 40/80km (user 2026-06-15 'double the distance of the max normal textures'); dial __nrmFade0/__nrmFade1
         float crossFade = 1.0 - smoothstep(uXFade0, uXFade1, camDist);
-        // albFade (uAlbFade0->uAlbFade1, default 6->16km) mips the ALBEDO high-freq structure toward the flat
-        // material color closer -- user 'mip the albedo closer, its high detail remains too far away'. The
-        // single-octave albedo (wt4) tiled tightly so its fine structure survived far out; collapse it to the
-        // averaged material color earlier (= what the mip chain would eventually reach, just sooner).
-        float albFade   = 1.0 - smoothstep(uAlbFade0, uAlbFade1, camDist);
+        // albFade REMOVED (user 2026-06-15 'a curved line circles the mountain, lighter grass'): the manual
+        // detail->flat-material collapse created a visible ARC at its transition distance (proven by A/B: the
+        // arc vanishes when the collapse is pushed all-near or all-far -- it IS the transition zone). The GPU
+        // mip chain already fades the albedo detail gradually with distance (no discrete boundary), so let it.
         if (wB > 0.02) {   // second layer only where a real transition exists
             vec4 albB = surfTriTap(uSurfAlb, wt4, tw, lB);
             vec3 cB = albB.rgb;   // CHROMA EXPRESSED (match cA)
@@ -2080,7 +2083,6 @@ void main() {
         float texCL = dot(texC, LUMA);
         texC = max(mix(vec3(texCL), texC, uTexSat), 0.0);
         vec3 detail = texC * (dot(texMatColor, LUMA) / max(texL, 0.02));   // texture's OWN color (cA/cB now RGB) at the MATERIAL brightness (layer-mean normalized) -> chroma expressed, shade-matched (2026-06-15)
-        detail = mix(texMatColor, detail, albFade);   // MIP ALBEDO CLOSER (user 2026-06-15): collapse the high-freq albedo structure to the flat material color past ~16km (the texL-normalized mean) so fine detail does not persist too far
         // ROCK SHOWS THE TRUE PHOTO (user 2026-06-10 'we still see the original rock texture --
         // replace completely'): tinting rock to the macro shade just reproduced the old grey/tan,
         // so the rock layer takes the raw photo color; grass/sand/snow stay shade-matched.
