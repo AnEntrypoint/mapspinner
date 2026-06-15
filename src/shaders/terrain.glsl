@@ -261,10 +261,14 @@ float canyonCarveM(vec3 dir, out float depth){
     // carve to that band: a defined rim->wall->floor descent over ridge 0.45..0.85 so mesh vertices land
     // on the walls AND the floor = real canyon CONTRAST at altitude (not the over-broad 0.12 basin that
     // sank the whole region uniformly, nor the over-narrow 0.58 gorge that fell between vertices).
-    float wall  = smoothstep(0.45, 0.72, ridge);               // broad cliff wall (rim -> wall)
-    float floorF= smoothstep(0.62, 0.85, ridge);               // flat gorge floor, then clamp
+    // GENTLER WALLS (user 2026-06-16 'we see canyons now, their slopes are too hard'): widen the wall +
+    // floor smoothstep bands so the rim->floor descent is spread over a WIDER ridge range = a softer
+    // world-space slope, while the canyon still reaches full depth at the centre (ridge near 1) and stays
+    // mesh-resolvable. (Not back to the 0.12 basin that sank whole regions = no contrast/invisible.)
+    float wall  = smoothstep(0.28, 0.82, ridge);               // gentle cliff wall (rim -> wall over a wide band)
+    float floorF= smoothstep(0.55, 0.93, ridge);               // gentle approach to the flat gorge floor
     depth = max(wall, floorF);
-    float profile = max(wall, floorF);                          // wide but defined gorge (mesh-resolvable rim-vs-floor contrast)
+    float profile = max(wall, floorF);                          // wide, soft-walled gorge (mesh-resolvable, gentle slopes)
     float dmul = canyonDepthMul > 0.0 ? canyonDepthMul : 1.0;   // 0 = uniform unset (e.g. probe prog)
     float carve = -CANYON_INCISE_DEPTH * dmul * profile;
     // FINE TRIBUTARY GULLIES (user 2026-06-02: 'at 2m our canyons are <2m'). The main canyon network
@@ -281,9 +285,9 @@ float canyonCarveM(vec3 dir, out float depth){
     // high frequency fractals'). DEEPENED + sharpened 2026-06-14 (user: mountains need visible canyons):
     // the main 100km gorge network keeps full CANYON_INCISE_DEPTH; the tributary octaves incise deeper
     // with narrower walls so ravines read at the deck. g3 subdivides the bigger gullies at maxLevel.
-    carve += -450.0 * dmul * smoothstep(0.66, 0.90, g1);   // ~10km tributaries (deeper, narrower)
-    carve += -200.0 * dmul * smoothstep(0.70, 0.92, g2);   // ~2.5km gullies
-    carve +=  -90.0 * dmul * smoothstep(0.72, 0.93, g3);   // ~1.2km branching ravines
+    carve += -450.0 * dmul * smoothstep(0.50, 0.92, g1);   // ~10km tributaries (widened band = gentler walls, user 2026-06-16 'slopes too hard')
+    carve += -200.0 * dmul * smoothstep(0.55, 0.93, g2);   // ~2.5km gullies (gentler)
+    carve +=  -90.0 * dmul * smoothstep(0.58, 0.94, g3);   // ~1.2km branching ravines (gentler)
     return carve;
 }
 float canyonCarveM(vec3 dir){ float dd; return canyonCarveM(dir, dd); }
@@ -722,13 +726,15 @@ highp float composeHeightC(vec3 dir0, highp vec2 faceLocal, float tileM, HCache 
   float riverWet   = smoothstep(mix(0.30, 0.20, uCarveWide), mix(0.55, 0.65, uCarveWide), hpf0.a) * smoothstep(mix(0.20, 0.12, uCarveWide), mix(0.34, 0.46, uCarveWide), hpf0.b);
   float riverWetMask; float riverCarveV = riverCarveM(dir0, riverWetMask) * riverWet * step(0.0, h);
   float canyonDepMask; float canyonCarveV = canyonCarveM(dir0, canyonDepMask) * step(0.0, h);
-  float inciseTot = riverCarveV + canyonCarveV;
-  // min(...,0): the floor term goes POSITIVE for any h below -60 and was LIFTING the entire ocean
-  // floor to exactly -60m -- the whole seabed was a uniform pan (root of 'depth under the water
-  // doesnt seem right'; probe-witnessed minSeen -60 planet-wide). Carves still cannot punch land
-  // below -60; the ocean keeps its real bathymetry.
-  inciseTot = max(inciseTot, min(5.0 - h, 0.0));             // land floor +5 (user 2026-06-15 'NONE of the canyons affect elevation' ROOT: a -60 floor cut low-terrain canyons BELOW sea level -> the flat ocean water-plane pass rendered OVER them = the canyon read as flat water, not a valley. Clamp the carve floor ABOVE sea (+5m) so canyons stay DRY visible valleys; the carve self-limits by available headroom so high terrain still gets deep gorges.)
-  h += inciseTot;
+  highp float inciseTot = riverCarveV + canyonCarveV;        // <=0 downcut (kept for the FS strata masks below)
+  // FXC-ROBUST FLOORED CARVE (user 2026-06-16 'no canyon' -- witnessed on a FRESH cache-disabled load +
+  // WIREFRAME on the user's own ANGLE AMD/d3d11 stack: the rendered mesh is FLAT at a +5 gorge the collision
+  // probe carves through the SAME composeHeightC). The old nested clamp `inciseTot = max(inciseTot, min(5-h,0))`
+  // was mis-compiled by FXC in the VERTEX program (the carve was dropped) but NOT in the PROBE program nor a
+  // plain end-of-function dip -> 'canyon in field/probe, flat in elevation'. A plain BRANCH is not reorderable
+  // the same way: carve only real land (h>5) and floor the result at +5m (dry visible valley); leave the
+  // near-shore band (h<=5) untouched so there is no +5 coastal step.
+  if (h > 5.0) { h = max(h + inciseTot, 5.0); }
   // CLIFF TERRACING (mesa/butte benches) -- after carves so canyon walls + risers compose
   float cliffFaceMask; float cliffCarveV = cliffTerraceM(dir0, h, cliffFaceMask) * step(0.0, h);
   h += cliffCarveV;
@@ -743,6 +749,7 @@ highp float composeHeightC(vec3 dir0, highp vec2 faceLocal, float tileM, HCache 
   float duneSand = smoothstep(mix(0.62, 0.50, uCarveWide), mix(0.85, 0.95, uCarveWide), 1.0 - hpf0.a) * smoothstep(mix(0.40, 0.30, uCarveWide), mix(0.58, 0.68, uCarveWide), hpf0.b) * (1.0 - smoothstep(40.0, 160.0, h));
   float duneCrest; float duneV = duneFieldM(dir0, duneCrest) * duneSand * step(0.0, h);
   h += duneV;
+  h += 4000.0 * canyonRidgeField(dir0) * step(0.0, h);   // TEMP TEST 2 (2026-06-16): canyonRidgeField directly. displayMode 6 sinuous NETWORK lines => canyonRidgeField works in the VS (carve-loss is canyonCarveM's profile); UNIFORM green wash => canyonRidgeField/inciseRidgeField returns ~flat in the VS program. REVERT.
   return h;
 }
 // Self-deriving wrapper: probe/bake + any single-call site compute the cache inline (one hpfSample, no waste).
@@ -966,9 +973,8 @@ void main() {
     // so post-carve land bottoms out at a small floor (-60m: a gorge may reach near sea level but never
     // carves a deep basin below it). Bounded against the PRE-carve vH so deep inland canyons keep full
     // depth while coastal ones are limited by their own available headroom.
-    float inciseTot = riverCarveV + canyonCarveV;               // both negative (downcut)
-    inciseTot = max(inciseTot, min(5.0 - vH, 0.0));            // land floor +5 (mirror composeHeightC; canyons stay DRY above the water plane = visible valleys, not flooded flat water)
-    vH += inciseTot;
+    highp float inciseTot = riverCarveV + canyonCarveV;         // both negative (downcut)
+    if (vH > 5.0) { vH = max(vH + inciseTot, 5.0); }            // FXC-robust floored carve (mirror composeHeightC; the nested max(min()) was dropped by FXC in the VS = flat canyons)
     // CLIFF TERRACING: snap the arid+elevated land into flat benches with steep risers (mesa/butte
     // cliff country). Gated by the SAME canyonArid mask so cliffs share canyon regions (a coherent
     // arid badlands look). The snap delta is added to vH; cliffFaceMask (->1 on a riser face) goes to
