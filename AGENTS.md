@@ -5,17 +5,18 @@
 SDK changes must be validated against the test suite and verified in both the dev demo (planet.html) and external consumer examples. No changes ship without passing tests.
 
 ## Architecture (GPU one-fractal)
-- Height pool: **R16F**, **1024 layers**, **4 mip levels**, 130-texel tiles. The ONLY runtime branch is a
-  FORMAT capability probe (`_useR16F` = half-float color+storage+linear) that falls back to the
-  numerically-equivalent R32F when the GPU lacks half-float — correctness, not a quality tier.
-  (`THC_CACHE_LAYERS` clamps to `MAX_ARRAY_TEXTURE_LAYERS`; 1024 was tuned from a live eviction
-  measurement — 512 evicted ~3155/s at the deck where ~594 leaves are visible, 1024 → 0/s. ~35MB vs
-  the old 138MB R32F/2048 = ~90% VRAM cut.)
-- Shader precision: **global `mediump float`** with explicit **highp islands** on every planet-scale
-  quantity (`vRel`/`vWorld`/`vH`, `defRadius`/`defViewProj*`/`defCam*`, all noise lattices + their args,
-  `broadShapeM`/`broadShapeLowM`/`faceWarp`/`vtxDisplace` metre accumulators, coordinate-snapped noise
-  anchors `rockO`/`wOrigin`). Validated SAFE live: `d.assertElevLinear()` pass, `d.pxPerPoly()` ~238k
-  tris rasterized. fp16 leaking onto a planet-scale value collapses the geometry — keep the islands.
+- LIVE height path = **procedural `composeHeight` per-vertex in the VS** (`terrain.glsl`): every vertex
+  evaluates broadShapeM + carves directly. There is NO baked height pool on the default path.
+- THC height pool (OPTIONAL, **default-OFF** behind `window.__thc`): **R32F**, **130-texel tiles**,
+  **512 layers** (`THC_BAKE_RES`/`THC_POOL_LAYERS`, `gl-render.js`). An O(1) baked-tile fetch that
+  replaces composeHeight when enabled. MEASURED NET-NEGATIVE at the deck (cuts VS but pushes the cost to
+  FS, full-frame flat-to-worse — 2026-06-15) so it stays off; keep it as a lever, do not default it on.
+  (Any AGENTS history claiming "R16F/1024 live" was aspirational doc-drift, corrected 2026-06-15.)
+- Shader precision: **global default `highp float`** (`gl-render.js` hdr = `precision highp float`). The
+  earlier mediump-default experiment was REVERTED — any world-scale noise UV (freq up to ~9000) evaluated
+  in fp16 scrambled the lattice at close range, and chasing per-site highp islands kept missing sites.
+  highp-default kills the whole class in one line; the explicit highp islands left in the shader are now
+  redundant-but-harmless. int + sampler2DArray stay highp. fp16 on a planet-scale value collapses geometry.
 - Reduced octaves: `broadShapeM` 14→12, `vtxDisplace` 9→6, single-octave rock detail; tanh ceiling
   `tanh(x/8000)` gives pointed peaks (CLI `shapeReport allGatesPass`). Distance-gated cheap FS far path.
   Tightened LOD (`planet-orchestrator` splitFactor + near-radius). Dead atlas apparatus deleted.
@@ -33,13 +34,11 @@ camera you can't aim. Use the DATA diagnostics — `__diag.pxPerPoly()` (on-scre
 ## The terrain pipeline in one page (read this before touching terrain)
 
 Earth-scale terrain SDK, WebGL2, served at `http://localhost:8080/` (entry `planet.html`, `server.js`).
-GPU one-fractal: no tile producer. A finer
-LOD is a denser sample of the SAME field. The procedural broadShapeM fractal is the LIVE render
-path (hasAtlas==0, the default). The baked atlas is opt-in (planet-orchestrator.js opts.atlas===true;
-live `window.__toggleAtlas(on)` / `__forceAtlas`); its bake is CLI-validated faithful (atlas-bake.mjs
-`interiorExact` gate) and `broadShapeMD` central-differences `atlasHeight` so atlas-on land shades with
-relief. Do NOT delete the procedural path while the atlas is opt-in. Recall
-"tv8-atlas-flat-is-flat-normals-root-2026-06-07" + "tv8-reliable-visual-witness-method-2026-06-03".
+GPU one-fractal: no tile producer, no atlas. A finer
+LOD is a denser sample of the SAME field. The procedural broadShapeM fractal is the ONLY render
+path. (The baked-atlas apparatus was REMOVED in prior work — only historical comments remain across
+src/; any AGENTS history describing an opt-in atlas / `__toggleAtlas` / `atlas-bake.mjs` is stale
+doc-drift, corrected 2026-06-15. Recall "tv8-reliable-visual-witness-method-2026-06-03".)
 
 THE SPOOL `browser` VERB IS A FULL BROWSER, NOT HEADLESS (user correction 2026-06-11): it drives a
 locally-profiled Chromium with the REAL GPU + real ANGLE backend (witnessed: ANGLE AMD D3D11 -- the
