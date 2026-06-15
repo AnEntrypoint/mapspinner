@@ -88,8 +88,7 @@ float atm_distToGround(highp float r, float mu) {
 // A-6: precomputed constants (mul instead of div; squared radii once).
 const float ATM_INV_RAYLEIGH_H = 1.0 / ATM_RAYLEIGH_H;
 const float ATM_INV_MIE_H      = 1.0 / ATM_MIE_H;
-float atm_rayleighDensity(highp float r) { return exp(-(r - ATM_BOTTOM) * ATM_INV_RAYLEIGH_H); }
-float atm_mieDensity(highp float r)      { return exp(-(r - ATM_BOTTOM) * ATM_INV_MIE_H); }
+// dead-code (2026-06-15): atm_rayleighDensity/atm_mieDensity removed -- all call sites use atm_densities.
 // A-5: merged densities -- compute the altitude (r - ATM_BOTTOM) ONCE for both species (called
 // hundreds of times per sky pixel + per AP march step). Mathematically identical to the pair above.
 void atm_densities(highp float r, out float dR, out float dM) {
