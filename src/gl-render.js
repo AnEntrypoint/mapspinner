@@ -1009,10 +1009,16 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // tile period in fp64 here on the CPU, pass the small remainder. The shader builds the UV from
     // (vTexRel + uTexCamFrac) so no 6.4e6m fp32 quantization reaches the texture coord. Dropping whole tiles is
     // REPEAT-wrap-invariant -> world-anchored, seam-free.
+    // WRAP PERIOD = 8 tiles, NOT 1 (2026-06-15 'texture normals popping/jumping at intervals as we move'):
+    // the texture NORMAL pyramid samples FRACTIONAL octaves of wt (wt4*0.5 = wt*1, wt4*0.25 = wt*0.5). A 1-tile
+    // camera-frac wrap shifts wt by exactly 1 -> integer-safe for albedo (wt*2) but a HALF-tile shift for the
+    // wt*0.5 octave = a different texel = the normal pops every time the camera crosses a tile boundary. Wrap on
+    // 8*tileM so the dropped amount shifts wt by 8 -> every octave down to wt*0.125 stays integer-aligned (no pop).
+    const _wrapM = _texTileM * 8.0;
     gl.uniform3f(U('uTexCamFrac'),
-      cam.eye[0] - Math.floor(cam.eye[0] / _texTileM) * _texTileM,
-      cam.eye[1] - Math.floor(cam.eye[1] / _texTileM) * _texTileM,
-      cam.eye[2] - Math.floor(cam.eye[2] / _texTileM) * _texTileM);
+      cam.eye[0] - Math.floor(cam.eye[0] / _wrapM) * _wrapM,
+      cam.eye[1] - Math.floor(cam.eye[1] / _wrapM) * _wrapM,
+      cam.eye[2] - Math.floor(cam.eye[2] / _wrapM) * _wrapM);
     gl.uniform1f(U('uTexNrmK'),    _g('texNrmK', 2.0));   // user-dialed 2026-06-15 (live window.__texNrmK). texture detail-normal strength
     gl.uniform1f(U('uBiomeTint'),  _g('biomeTint', 0.22)); // macro biome color mixed over the texture (2026-06-15 'doesnt look like the texture color' -- was hard 0.5)
     gl.uniform1f(U('uTexBright'),  _g('texBright', 0.92)); // overall ground brightness
