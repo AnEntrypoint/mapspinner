@@ -187,7 +187,7 @@ float inciseRidgeField(vec3 d, float baseFreq, float freqMul){
     return sum / norm;                                         // ->1 on the channel network
 }
 const float RIVER_INCISE_DEPTH = 280.0;   // 120->280 metres at the channel thalweg (user 2026-06-14 'rivers/channels super shallow+flat'): deeper incision
-float riverRidgeField(vec3 dir){ return inciseRidgeField(normalize(dir), 40.0, 2.03); }
+float riverRidgeField(vec3 dir){ return inciseRidgeField(dir, 40.0, 2.03); }   // T-1: callers pass unit dir (dir0 / normalize(worldPos))
 float riverCarveM(vec3 dir, out float wet){
     float ridge = riverRidgeField(dir);
     float valley  = smoothstep(0.30, 0.94, ridge);             // gentle eroded valley sides, start wider
@@ -223,7 +223,7 @@ uniform float uMtnBandWide;                // widen mtn=smoothstep(16.8,18.6,ele
 uniform float uClimateRelief;              // widen wetLowFlat(0.66,0.9,humid) + coldFlat(0.18,0.34,temp) reliefMul gates
 uniform float uIsleWide;                    // widen isleZone seaBias gates (50,350)+(900,1600) -> (30,600)+(600,2200)
 uniform float uCarveWide;                   // widen the river/canyon/lake/dune CLIMATE gates so carve depth fades in over a wide span
-float canyonRidgeField(vec3 dir){ return inciseRidgeField(normalize(dir) + vec3(13.7, -4.2, 8.9), 190.0, 2.07); }  // phase offset matches FS canyonMask. baseFreq 190 = ~200km gorge network (user 2026-06-14: HALVED 380->190 = fewer, wider-spaced gorges, easier for the coarse grid to represent). Shared VS carve + FS mask -> congruent by construction.
+float canyonRidgeField(vec3 dir){ return inciseRidgeField(dir + vec3(13.7, -4.2, 8.9), 190.0, 2.07); }  // T-1: callers pass unit dir. phase offset matches FS canyonMask. baseFreq 190 = ~200km gorge network (user 2026-06-14: HALVED 380->190 = fewer, wider-spaced gorges, easier for the coarse grid to represent). Shared VS carve + FS mask -> congruent by construction.
 // CANYON cross-section now reads as a CANYON, not a V-notch: STEEP WALLS + a FLAT FLOOR.
 //   wall = a sharp smoothstep band -> the carve drops fast over a narrow ridge interval (the cliff
 //          walls), instead of the old gentle bench+gorge blend that made shallow V-troughs.
@@ -252,7 +252,7 @@ float canyonCarveM(vec3 dir, out float depth){
     // gullies/ravines (~55m + ~16m deep) so arid terrain shows branching erosion channels at the 10-
     // 100m scale the low-altitude camera sees. Pure world-dir (LOD-invariant); the mesh resolves them
     // at maxLevel 16 (~7m cells). Each gully octave = a thinned ridged field, depth scaled to its wl.
-    vec3 dn = normalize(dir);
+    vec3 dn = dir;   // T-1: canyonCarveM is called with unit dir0 (VS) -- normalize was redundant
     float g1 = inciseRidgeField(dn + vec3(5.1, 8.3, -2.7), 219.0, 2.11);   // ~40km tributaries (was 875->438)
     float g2 = inciseRidgeField(dn + vec3(-7.4, 1.9, 6.2), 875.0, 2.05);  // ~10km gullies (was 3500->1750)
     float g3 = inciseRidgeField(dn + vec3(2.2, -4.1, 8.8), 1750.0, 2.02); // ~1.2km branching ravines (deck scale)
@@ -1454,7 +1454,7 @@ vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, flo
     // BAND by height+latitude: high ground -> alpine/tundra/ice, lowland keeps its anchor biome. This
     // spreads biomes into their physically-expected bands so grass/forest isnt one anchor blob. humid
     // also rises slightly on windward high ground (orographic) for variety. uBiomeBandBias scales it.
-    float lat = asin(clamp(worldPos.y / max(length(worldPos), 1.0), -1.0, 1.0));
+    float lat = asin(clamp(nwp.y, -1.0, 1.0));   // T-4: nwp is already normalize(worldPos)
     float latCool = 0.18 * (abs(lat) / 1.5708);                  // poles cooler
     float elevCool = clamp(h / 4500.0, 0.0, 0.55) * uBiomeBandBias;  // lapse rate -> alpine bands
     float tempEff  = clamp(temp - elevCool - latCool * uBiomeBandBias, 0.0, 1.0);
@@ -1769,7 +1769,7 @@ void main() {
     // detail + microAO + chromatic colorVar switched OFF across most of the visible deck -- the realism
     // never reached the FPS range the user actually flies (tens-to-hundreds of m/px). 180m keeps the whole
     // near-ground swath engaged while still fully fading by orbit (8m floor unchanged -> no orbit shimmer).
-    float nearFade = 1.0 - smoothstep(8.0, 180.0, pxWorld);   // macro crease-AO distance fade (vAO only)
+    // T-8: nearFade removed -- it was dead (vAO uses fsShadeAO directly at all distances per the FADE-IN FIX).
     // PROCEDURAL ROCK DETAIL-NORMAL DELETED (max-speed sweep 2026-06-10): the photo-rock
     // displacement normal owns rock micro-relief; the 3-tap snoise3D biplanar bump is gone.
     // microSlope/microCurv keep their macro defaults for the material/AO consumers below.
@@ -1886,7 +1886,7 @@ void main() {
         // whitens cold lowland (biomeColor gate 1-smoothstep(0.10,0.18,tempEff)) at ANY elevation, but
         // wSnow was elevation-gated only -- polar snowfields were splatting the GRASS layer. Match the
         // effective-temperature ice gate (raw temp minus the elevation/latitude lapse the biome uses).
-        float lat2 = asin(clamp(vWorld.y / max(length(vWorld), 1.0), -1.0, 1.0));
+        float lat2 = asin(clamp(nWorld.y, -1.0, 1.0));   // T-4: nWorld is already normalize(vWorld)
         float tempEff2 = clamp(climate.z - clamp(vH / 4500.0, 0.0, 0.55) * uBiomeBandBias
                                         - 0.18 * (abs(lat2) / 1.5708) * uBiomeBandBias, 0.0, 1.0);
         float iceClimate = (1.0 - smoothstep(0.10, 0.20, tempEff2)) * step(0.0, vH);   // no snow layer on the seabed
@@ -2263,8 +2263,10 @@ void main() {
     {
         highp vec3 camA  = atmPos(camWorld, terrainR);     // W7: km-scale -> highp
         highp vec3 segKm = pAtm - camA;                    // W7: camera->fragment in km (cancellation of two km-scale points)
-        highp float dKm  = length(segKm);
         // gate: 0 below ~3km path, ramping to full by ~120km. keeps ground crisp, distance hazed.
+        // T-7: defer the sqrt -- most close-up fragments have dKm<3km (dKm2<9) where apGate is 0.
+        highp float dKm2 = dot(segKm, segKm);
+        highp float dKm = dKm2 > 9.0 ? sqrt(dKm2) : 0.0;
         float apGate = smoothstep(3.0, 120.0, dKm);
         if (apGate > 0.002) {
             vec3 vRay = segKm / max(dKm, 1e-4);
@@ -2272,23 +2274,24 @@ void main() {
             float apdt = dKm / float(APN);
             vec3 inscatR = vec3(0.0), inscatM = vec3(0.0);
             float odR = 0.0, odM = 0.0;                    // optical depth camera->sample
+            vec3 tView = vec3(1.0);                         // T-6: hoisted; last iteration == apTrans
             for (int i = 0; i < APN; i++) {
                 highp vec3 p = camA + vRay * (apdt * (float(i) + 0.5));   // W7: km-scale march point -> highp
-                highp float pr = length(p);
-                float dR = atm_rayleighDensity(pr) * apdt;
-                float dM = atm_mieDensity(pr) * apdt;
+                float dRd, dMd; atm_densities(length(p), dRd, dMd);       // T-9: shared altitude once
+                float dR = dRd * apdt;
+                float dM = dMd * apdt;
                 odR += dR; odM += dM;
-                vec3 tView = exp(-(ATM_RAYLEIGH * odR + ATM_MIE_EXT * odM));
+                tView = exp(-(ATM_RAYLEIGH * odR + ATM_MIE_EXT * odM));
                 vec3 tSun  = atm_transmittanceToSun(p, sunDir);
                 vec3 t = tView * tSun;
                 inscatR += t * dR;
                 inscatM += t * dM;
             }
             float nu = dot(vRay, sunDir);
-            vec3 apTrans = exp(-(ATM_RAYLEIGH * odR + ATM_MIE_EXT * odM));
+            vec3 apTrans = tView;   // T-6: == exp(-(tau)) of the last sample, no recompute
             vec3 apInscat = ATM_SOLAR_IRRADIANCE * (
                 inscatR * ATM_RAYLEIGH * atm_rayleighPhase(nu) +
-                inscatM * ATM_MIE      * atm_miePhase(ATM_MIE_G, nu));
+                inscatM * ATM_MIE      * atm_miePhase(nu));
             // HORIZON HAZE FLOOR (Real-World Look): real aerial perspective fades distant terrain toward
             // a pale blue-grey sky, NEVER to black. When apTrans collapses (long limb path) the physical
             // single-scatter inscatter can dip in low-phase directions, leaving a black silhouette band.

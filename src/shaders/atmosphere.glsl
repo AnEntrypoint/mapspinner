@@ -42,6 +42,14 @@ const vec3  ATM_MIE      = vec3(0.003996, 0.003996, 0.003996);
 const vec3  ATM_MIE_EXT  = vec3(0.003996) * (1.0 / 0.9); // Mie extinction = scat/ssa, ssa~0.9
 const vec3  ATM_SOLAR_IRRADIANCE = vec3(1.474, 1.8504, 1.91198);
 const float ATM_SUN_ANGULAR_RADIUS = 0.004675;
+// A-6: squared shell radii (computed once at compile, not per ray).
+const float ATM_BOTTOM2 = ATM_BOTTOM * ATM_BOTTOM;
+const float ATM_TOP2    = ATM_TOP * ATM_TOP;
+// A-6/A-8: Mie phase constants folded (g is always ATM_MIE_G) + Rayleigh phase constant.
+const float ATM_MIE_G2 = ATM_MIE_G * ATM_MIE_G;
+const float ATM_MIE_2G = 2.0 * ATM_MIE_G;
+const float ATM_MIE_K  = (3.0 / (8.0 * ATM_PI)) * (1.0 - ATM_MIE_G2) / (2.0 + ATM_MIE_G2);
+const float ATM_RAYLEIGH_PHASE_K = 3.0 / (16.0 * ATM_PI);
 
 // Map a render-space world position (meters, surface radius R_m) into atmosphere
 // space (km, surface at ATM_BOTTOM). Preserves altitude fractions across the shell.
@@ -51,23 +59,23 @@ vec3 atmPos(highp vec3 worldMeters, highp float R_m) {
     return worldMeters * (ATM_BOTTOM / R_m);
 }
 
-float atm_rayleighPhase(float nu) { return (3.0/(16.0*ATM_PI)) * (1.0 + nu*nu); }
-float atm_miePhase(float g, float nu) {
-    float k = 3.0/(8.0*ATM_PI) * (1.0-g*g)/(2.0+g*g);
-    return k * (1.0+nu*nu) / pow(max(1.0 + g*g - 2.0*g*nu, 1e-4), 1.5);
+float atm_rayleighPhase(float nu) { return ATM_RAYLEIGH_PHASE_K * (1.0 + nu*nu); }
+float atm_miePhase(float nu) {   // A-8: g folded to consts; A-7: pow(x,1.5) == x*sqrt(x) (1 sqrt vs 2 transcendentals)
+    float base = max(1.0 + ATM_MIE_G2 - ATM_MIE_2G*nu, 1e-4);
+    return ATM_MIE_K * (1.0+nu*nu) / (base * sqrt(base));
 }
 
 // Distance from a point at radius r along direction with cosine mu to the top shell.
 // Returns -1 if the ray escapes without entering the atmosphere from outside.
 // W7: r ~6360 km so r*r ~4e7 OVERFLOWS fp16 (max 65504) -> r + the disc quadratic MUST be highp.
 float atm_distToTop(highp float r, float mu) {
-    highp float disc = r*r*(mu*mu - 1.0) + ATM_TOP*ATM_TOP;
+    highp float disc = r*r*(mu*mu - 1.0) + ATM_TOP2;
     if (disc < 0.0) return -1.0;
     return max(-r*mu + sqrt(disc), 0.0);
 }
 // Distance to ground sphere (ATM_BOTTOM), or -1 if no hit ahead.
 float atm_distToGround(highp float r, float mu) {
-    highp float disc = r*r*(mu*mu - 1.0) + ATM_BOTTOM*ATM_BOTTOM;
+    highp float disc = r*r*(mu*mu - 1.0) + ATM_BOTTOM2;
     if (disc < 0.0) return -1.0;
     highp float d = -r*mu - sqrt(disc);
     return d >= 0.0 ? d : -1.0;
@@ -77,8 +85,18 @@ float atm_distToGround(highp float r, float mu) {
 // W7: r ~6360 (km-scale planet radius) and the (r - ATM_BOTTOM) altitude cancellation are highp -- at
 // mediump fp16 the ~6360 radius resolves to ~4 km steps and the density profile (scale-height tens of
 // km) would band/collapse. The exp() RESULT narrows to the mediump default.
-float atm_rayleighDensity(highp float r) { return exp(-(r - ATM_BOTTOM)/ATM_RAYLEIGH_H); }
-float atm_mieDensity(highp float r)      { return exp(-(r - ATM_BOTTOM)/ATM_MIE_H); }
+// A-6: precomputed constants (mul instead of div; squared radii once).
+const float ATM_INV_RAYLEIGH_H = 1.0 / ATM_RAYLEIGH_H;
+const float ATM_INV_MIE_H      = 1.0 / ATM_MIE_H;
+float atm_rayleighDensity(highp float r) { return exp(-(r - ATM_BOTTOM) * ATM_INV_RAYLEIGH_H); }
+float atm_mieDensity(highp float r)      { return exp(-(r - ATM_BOTTOM) * ATM_INV_MIE_H); }
+// A-5: merged densities -- compute the altitude (r - ATM_BOTTOM) ONCE for both species (called
+// hundreds of times per sky pixel + per AP march step). Mathematically identical to the pair above.
+void atm_densities(highp float r, out float dR, out float dM) {
+    highp float alt = r - ATM_BOTTOM;
+    dR = exp(-alt * ATM_INV_RAYLEIGH_H);
+    dM = exp(-alt * ATM_INV_MIE_H);
+}
 
 // Optical depth (Rayleigh,Mie line integral) from point p0 along dir for distance d.
 // Cheap fixed-step trapezoid; cheap enough for a fullscreen pass.
@@ -88,9 +106,9 @@ void atm_opticalDepth(highp vec3 p0, vec3 dir, float d, out float odR, out float
     odR = 0.0; odM = 0.0;
     for (int i = 0; i < N; i++) {
         highp vec3 p = p0 + dir * (dt * (float(i) + 0.5));   // W7: km-scale march point
-        highp float r = length(p);
-        odR += atm_rayleighDensity(r) * dt;
-        odM += atm_mieDensity(r) * dt;
+        float dRd, dMd; atm_densities(length(p), dRd, dMd);  // A-5: shared altitude once
+        odR += dRd * dt;
+        odM += dMd * dt;
     }
 }
 
@@ -105,8 +123,6 @@ vec3 atm_transmittanceSeg(highp vec3 p0, vec3 dir, float d) {   // W7: km-scale 
 vec3 atm_transmittanceToSun(highp vec3 p, vec3 sun) {   // W7: km-scale p -> highp
     highp float r = length(p);
     float mu = dot(p, sun) / r;
-    float d = atm_distToTop(r, mu);
-    if (d < 0.0) return vec3(1.0);
     // SOFT sea-level horizon (user 2026-06-11 'shading indicates depth not slope' -- THE math bug):
     // the old branch returned a BINARY vec3(0) whenever the sun ray intersected the ATM_BOTTOM
     // sphere. ATM_BOTTOM is SEA LEVEL, so at low sun the direct light became a hard step function
@@ -114,9 +130,11 @@ vec3 atm_transmittanceToSun(highp vec3 p, vec3 sun) {   // W7: km-scale p -> hig
     // full sun) -- slope-blind, elevation-keyed dark patches that read as 'depth shading' + dark
     // rocky blobs. Replace with a smooth attenuation over ~2 deg of sun dip below the sea horizon:
     // night stays dark, the elevation step is gone, slopes drive the shading again.
-    float muHoriz = -sqrt(max(0.0, 1.0 - (ATM_BOTTOM * ATM_BOTTOM) / (r * r)));
+    float muHoriz = -sqrt(max(0.0, 1.0 - ATM_BOTTOM2 / (r * r)));
     float soft = smoothstep(muHoriz - 0.035, muHoriz + 0.005, mu);
-    if (soft <= 0.0) return vec3(0.0);
+    if (soft <= 0.0) return vec3(0.0);          // A-3: night-side returns BEFORE the optical-depth march
+    float d = atm_distToTop(r, mu);
+    if (d < 0.0) return vec3(1.0);
     return atm_transmittanceSeg(p, sun, d) * soft;
 }
 
@@ -149,14 +167,15 @@ vec3 atm_skyRadiance(highp vec3 cameraIn, vec3 viewRay, vec3 sun, out vec3 trans
     vec3 inscatM = vec3(0.0);
     float odR = 0.0, odM = 0.0; // accumulated optical depth from camera to sample
 
+    vec3 tView = vec3(1.0);   // A-4: hoisted; the last iteration's value IS the view transmittance
     for (int i = 0; i < N; i++) {
         highp vec3 p = camera + viewRay * (dt * (float(i) + 0.5));   // W7: km-scale march point -> highp
-        highp float pr = length(p);
-        float dR = atm_rayleighDensity(pr) * dt;
-        float dM = atm_mieDensity(pr) * dt;
+        float dRd, dMd; atm_densities(length(p), dRd, dMd);          // A-5: shared altitude once
+        float dR = dRd * dt;
+        float dM = dMd * dt;
         odR += dR; odM += dM;
         // transmittance camera->sample
-        vec3 tView = exp(-(ATM_RAYLEIGH * odR + ATM_MIE_EXT * odM));
+        tView = exp(-(ATM_RAYLEIGH * odR + ATM_MIE_EXT * odM));
         // transmittance sample->sun
         vec3 tSun = atm_transmittanceToSun(p, sun);
         vec3 t = tView * tSun;
@@ -164,12 +183,12 @@ vec3 atm_skyRadiance(highp vec3 cameraIn, vec3 viewRay, vec3 sun, out vec3 trans
         inscatM += t * dM;
     }
     float nu = dot(viewRay, sun);
-    transmittance = exp(-(ATM_RAYLEIGH * odR + ATM_MIE_EXT * odM));
+    transmittance = tView;   // A-4: == exp(-(tau)) of the last sample, no recompute
     if (ground) transmittance = vec3(0.0);
 
     vec3 radiance = ATM_SOLAR_IRRADIANCE * (
         inscatR * ATM_RAYLEIGH * atm_rayleighPhase(nu) +
-        inscatM * ATM_MIE      * atm_miePhase(ATM_MIE_G, nu));
+        inscatM * ATM_MIE      * atm_miePhase(nu));
     return radiance;
 }
 
