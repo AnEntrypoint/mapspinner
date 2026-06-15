@@ -190,12 +190,8 @@ const float RIVER_INCISE_DEPTH = 280.0;   // 120->280 metres at the channel thal
 float riverRidgeField(vec3 dir){ return inciseRidgeField(dir, 40.0, 2.03); }   // T-1: callers pass unit dir (dir0 / normalize(worldPos))
 float riverCarveM(vec3 dir, out float wet){
     float ridge = riverRidgeField(dir);
-    // WIDER, GENTLER VALLEY (user 2026-06-15 'rocky/dark streak with no elevation -- material doesnt match
-    // elevation'): the river WAS carved (the streak shows in normals+albedo) but the valley band was too
-    // narrow/steep for the coarse LOD mesh to render as relief -> the drop fell between vertices = flat mesh
-    // with a dark water line + rock banks painted on it. Widen the valley sides (0.30->0.08) so the 280m drop
-    // spreads over a much wider horizontal band = low gradient the mesh resolves = the valley reads as ELEVATION.
-    float valley  = smoothstep(0.08, 0.94, ridge);             // WIDE eroded valley sides (mesh-resolvable gradient)
+    // (2026-06-15: 'widen the valley' did not help -- reverted; depth carries visibility.)
+    float valley  = smoothstep(0.30, 0.94, ridge);             // gentle eroded valley sides
     float thalweg = smoothstep(0.75, 0.96, ridge);             // deep channel core
     wet = smoothstep(0.78, 0.94, ridge);                       // flowing-water line
     return -RIVER_INCISE_DEPTH * (0.7 * valley + 0.3 * thalweg);   // more valley, gentler banking
@@ -243,11 +239,12 @@ float canyonCarveM(vec3 dir, out float depth){
     // GENTLER WALLS (user 2026-06-14 'make canyon slopes more gentle, easier for the rough grid to
     // represent'): widen every band so the same depth descends over a wider ridge interval = lower
     // gradient -> the coarse LOD grid samples the wall without aliasing the cliff.
+    // (2026-06-15: the 'widen the approach' attempt REGRESSED -- gentler walls read as MORE flat, user 'still
+    // no elevation'. Reverted to the defined gorge; visibility comes from DEPTH (the -120 floor below) instead.)
     float bench = smoothstep(0.50, 0.74, ridge);               // wide eroded rim shoulder
     float wall  = smoothstep(0.58, 0.90, ridge);               // gentle cliff wall (wide band)
     float floorF= smoothstep(0.72, 0.96, ridge);               // reach the flat gorge floor, then clamp
     depth = max(wall, floorF);
-    // 0.18 rim shoulder + 0.82 wall-to-floor; floorF clamps so the bottom is flat (no infinite V).
     float profile = 0.18 * bench + 0.82 * max(wall, floorF);
     float dmul = canyonDepthMul > 0.0 ? canyonDepthMul : 1.0;   // 0 = uniform unset (e.g. probe prog)
     float carve = -CANYON_INCISE_DEPTH * dmul * profile;
@@ -711,7 +708,7 @@ highp float composeHeightC(vec3 dir0, highp vec2 faceLocal, float tileM, HCache 
   // floor to exactly -60m -- the whole seabed was a uniform pan (root of 'depth under the water
   // doesnt seem right'; probe-witnessed minSeen -60 planet-wide). Carves still cannot punch land
   // below -60; the ocean keeps its real bathymetry.
-  inciseTot = max(inciseTot, min(-60.0 - h, 0.0));           // land: h + inciseTot >= -60m; ocean: untouched
+  inciseTot = max(inciseTot, min(-120.0 - h, 0.0));          // land floor -60->-120 (user 2026-06-15 'canyons not visible as elevation'): allow gorges to cut twice as deep -> the gorge bottom drops a clear ~120m below the rim = unmistakable elevation (gorge bottoms go below sea = a real river canyon, not a fake inland sea)
   h += inciseTot;
   // CLIFF TERRACING (mesa/butte benches) -- after carves so canyon walls + risers compose
   float cliffFaceMask; float cliffCarveV = cliffTerraceM(dir0, h, cliffFaceMask) * step(0.0, h);
@@ -951,7 +948,7 @@ void main() {
     // carves a deep basin below it). Bounded against the PRE-carve vH so deep inland canyons keep full
     // depth while coastal ones are limited by their own available headroom.
     float inciseTot = riverCarveV + canyonCarveV;               // both negative (downcut)
-    inciseTot = max(inciseTot, min(-60.0 - vH, 0.0));           // land floor only -- ocean keeps real depth (see composeHeight note)
+    inciseTot = max(inciseTot, min(-120.0 - vH, 0.0));          // land floor -60->-120 (mirror composeHeightC; deeper visible gorges, user 2026-06-15)
     vH += inciseTot;
     // CLIFF TERRACING: snap the arid+elevated land into flat benches with steep risers (mesa/butte
     // cliff country). Gated by the SAME canyonArid mask so cliffs share canyon regions (a coherent
