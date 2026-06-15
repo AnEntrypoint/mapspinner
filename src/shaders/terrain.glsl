@@ -246,11 +246,25 @@ float canyonCarveM(vec3 dir, out float depth){
     // coarse mesh resolves into a visible valley DIP, with the steep gorge nested inside it for close-range
     // detail). basin = a broad gentle depression spanning the whole approach (ridge 0.12..0.85); gorge =
     // the steep inner wall/floor. Both descend to the floor; the basin makes the elevation read at altitude.
-    float basin = smoothstep(0.12, 0.85, ridge);               // BROAD mesh-resolvable valley (many cells wide)
-    float wall  = smoothstep(0.58, 0.90, ridge);               // steep inner cliff wall
-    float floorF= smoothstep(0.72, 0.96, ridge);               // flat gorge floor, then clamp
+    // SHARP DEEP GORGE (user 2026-06-16 'canyons not in elevation, we USED to see them in this
+    // tessellation, the field canyon is LARGER than the quads'). The 0.55*basin variant (smoothstep
+    // 0.12..0.85) spread the carve across almost the WHOLE ridge wavelength -> the entire region sank
+    // together -> NO local rim-vs-floor contrast on the coarse mesh -> read as gentle rolling, not a
+    // canyon (the FS canyon-field still drew the sharp ridge line, so 'canyon in field, flat in
+    // elevation'). Revert to the concentrated steep-walled gorge so the carve matches the sharp field
+    // line: rim stays high, the gorge drops fast = the mesh shows canyon contrast even at altitude.
+    // BROAD MESH-RESOLVABLE GORGE (user 2026-06-16, diagnostic-proven). The sharp gorge (ridge>0.58)
+    // was NARROWER than a coarse-LOD mesh cell at altitude -> the canyon fell BETWEEN vertices = flat
+    // rendered geometry, while the FS field + the collision probe (both sample the field continuously)
+    // still showed it = 'canyons in the field/probe but not in the elevation'. A diagnostic unconditional
+    // dip keyed on smoothstep(0.45,0.75,ridge) DID render as visible gorges on the same mesh, so widen the
+    // carve to that band: a defined rim->wall->floor descent over ridge 0.45..0.85 so mesh vertices land
+    // on the walls AND the floor = real canyon CONTRAST at altitude (not the over-broad 0.12 basin that
+    // sank the whole region uniformly, nor the over-narrow 0.58 gorge that fell between vertices).
+    float wall  = smoothstep(0.45, 0.72, ridge);               // broad cliff wall (rim -> wall)
+    float floorF= smoothstep(0.62, 0.85, ridge);               // flat gorge floor, then clamp
     depth = max(wall, floorF);
-    float profile = 0.55 * basin + 0.45 * max(wall, floorF);   // broad basin (visible at altitude) + inner gorge
+    float profile = max(wall, floorF);                          // wide but defined gorge (mesh-resolvable rim-vs-floor contrast)
     float dmul = canyonDepthMul > 0.0 ? canyonDepthMul : 1.0;   // 0 = uniform unset (e.g. probe prog)
     float carve = -CANYON_INCISE_DEPTH * dmul * profile;
     // FINE TRIBUTARY GULLIES (user 2026-06-02: 'at 2m our canyons are <2m'). The main canyon network
@@ -1054,7 +1068,14 @@ void main() {
         // -- JS(probe=composeHeight) != visual(mesh=vH)). The inline vH had DIVERGED from composeHeight, so the
         // rendered vertex was flat while the probe carved. Use composeHeight DIRECTLY for the rendered geometry
         // height so render == probe == JS elevation by construction (one extra eval/vertex; correctness > the cache).
-        hN0 = composeHeightC(dir0, faceLocal, defOffset.z, computeHCache(dir0));
+        // hN0 (the GEOMETRY height) is computed INSIDE the FD loop below as the i==0 (zero-offset) tap so
+        // the centre height and the 4 normal taps share ONE composeHeightC instance. FXC (ANGLE d3d11)
+        // was compiling this SEPARATE centre call-site differently from the tap loop + the probe program
+        // -- it dropped the CARVE cascade (river/canyon/valley) from the centre while keeping broadShapeM,
+        // so the rendered vertex got the smooth base shape but NO canyons, while the normal taps + the
+        // collision probe still carved = 'canyons in the field/probe/normals but the elevation is flat'
+        // (user 2026-06-16 'canyons not affecting elevation at all'). One instance => the carve is in the
+        // position exactly as it is in the taps and the probe.
         // VERTEX NORMAL = CENTRAL DIFFERENCE in PARAMETRIC MESH SPACE over the FULL composeHeight (2026-06-14
         // jagged-normal fix). Two earlier methods both jagged: (a) interior FORWARD mesh-cell cross product
         // = each vertex got its forward triangle's FACE normal (faceted) at a vertex-spacing step (noisy);
@@ -1075,19 +1096,22 @@ void main() {
         highp float duP = clamp(nStepM / max(defOffset.z, 1.0), 1.0 / ((uGrid > 0.0) ? uGrid : 16.0), 0.34);
         highp float hPU = 0.0, hMU = 0.0, hPV = 0.0, hMV = 0.0;
         highp vec3 dPU = dir0, dMU = dir0, dPV = dir0, dMV = dir0;
-        int fdIters = (uGrid >= 0.0) ? 4 : 1;   // 4 offset taps; runtime-bounded (FXC unroll-defeat, see uOctMax)
+        int fdIters = (uGrid >= 0.0) ? 5 : 1;   // i==0 CENTRE (geometry height) + 4 offset taps, ALL through ONE composeHeightC instance (FXC per-callsite fix; runtime-bounded, see uOctMax)
         // vs-param-cache: HPF-derived params are ~constant over the +/-duP (~300m) tap radius -> compute
-        // ONCE at the vertex centre and reuse for all 4 taps; each tap then evaluates only broadShapeM +
-        // carves (the per-tap-varying fields). Single composeHeightC call-site = one FXC instance (the
-        // normal-divergence fix is preserved; the taps still difference against each other consistently).
+        // ONCE at the vertex centre and reuse for the centre + all 4 taps; each then evaluates only
+        // broadShapeM + carves (the per-tap-varying fields). ONE composeHeightC call-site = one FXC
+        // instance for BOTH the geometry height (i==0, zero offset == the centre) AND the normal taps, so
+        // the carve cascade is identical in the position and the normal -- FXC can no longer drop it from
+        // the centre alone ('canyons in normals/probe, flat geometry').
         HCache nCache = computeHCache(dir0);
         for (int i = 0; i < fdIters; i++) {
-            highp vec2 off = (i == 0) ? vec2(duP, 0.0) : (i == 1) ? vec2(-duP, 0.0) : (i == 2) ? vec2(0.0, duP) : vec2(0.0, -duP);
+            highp vec2 off = (i == 0) ? vec2(0.0, 0.0) : (i == 1) ? vec2(duP, 0.0) : (i == 2) ? vec2(-duP, 0.0) : (i == 3) ? vec2(0.0, duP) : vec2(0.0, -duP);
             highp vec2 fl = faceWarp((vertex.xy + off) * defOffset.z + defOffset.xy);
             highp vec3 dd = normalize(defLocalToWorld * vec3(fl, defRadius));
             highp float hh = composeHeightC(dd, fl, defOffset.z, nCache);
-            if (i == 0) { hPU = hh; dPU = dd; } else if (i == 1) { hMU = hh; dMU = dd; }
-            else if (i == 2) { hPV = hh; dPV = dd; } else { hMV = hh; dMV = dd; }
+            if (i == 0) { hN0 = hh; }
+            else if (i == 1) { hPU = hh; dPU = dd; } else if (i == 2) { hMU = hh; dMU = dd; }
+            else if (i == 3) { hPV = hh; dPV = dd; } else { hMV = hh; dMV = dd; }
         }
         highp vec3 wPU = dPU * (defRadius + hPU), wMU = dMU * (defRadius + hMU);
         highp vec3 wPV = dPV * (defRadius + hPV), wMV = dMV * (defRadius + hMV);

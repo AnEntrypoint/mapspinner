@@ -63,9 +63,14 @@ export async function initMapspinnerRender(gl, opts = {}) {
   let _hpfTex = null, _hpfTex2 = null, _hpfRes = 0;   // _hpfTex RG16F(seaBias,elevAmp), _hpfTex2 RG8(temp,humid) -- W12 pack
 
   // ---- compile terrain.glsl ----
-  let src = await (await fetch('./src/shaders/terrain.glsl')).text();
+  // CACHE-BUST (2026-06-16): the browser disk-cached terrain.glsl across reloads (the server's no-store
+  // headers don't always defeat the disk cache on a soft reload) -> EVERY shader edit silently no-op'd on
+  // the live tab while gl-render.js refreshed = the entire 'no change' debugging saga. A per-load ?v= query
+  // forces a fresh fetch every page load (matches the ?t= the hot-reload at ~L201 already uses).
+  const _sv = '?v=' + (typeof performance !== 'undefined' ? (performance.now()|0) : Date.now());
+  let src = await (await fetch('./src/shaders/terrain.glsl' + _sv)).text();
   // Analytic Bruneton-style atmosphere helpers, shared by terrain FS + sky pass.
-  let atmoSrc = await (await fetch('./src/shaders/atmosphere.glsl')).text();
+  let atmoSrc = await (await fetch('./src/shaders/atmosphere.glsl' + _sv)).text();
 
   // NON-BLOCKING COMPILE (user 2026-06-02: 'startup takes really long'). The terrain shader's
   // first (cold-cache) compile can take tens of seconds; querying COMPILE_STATUS/LINK_STATUS
