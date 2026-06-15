@@ -1281,6 +1281,8 @@ uniform float uNrmFade0;     // normal-texture fade start metres (__nrmFade0, de
 uniform float uNrmFade1;     // normal-texture fade end metres (__nrmFade1, default 80000) -- texture normals gone past here
 uniform float uBeachWarp;    // grass<->beach line warp amplitude (x beachTop) (__beachWarp, default 1.4) -- higher = wavier shoreline
 uniform float uBandWarp;     // snow/rock biome-band warp amplitude metres (__bandWarp, default 1100) -- low-freq undulation of the snow/rock lines
+uniform float uBeachDet0;    // beach<->grass fine-detail fade start metres (__beachDet0, default 3000)
+uniform float uBeachDet1;    // beach<->grass fine-detail fade end metres (__beachDet1, default 10000) -- distant shoreline = broad shape only
 // MATERIAL-BOUNDARY DITHER REVERTED (2026-06-05): the threshold-perturbation approach (matEdgeNoise on
 // the smoothstep input) produced HARD-EDGED PATCHES + a UV-like grid on uniform grass/snow (user live
 // eye: 'hard uninteresting lines between rocky/grass', 'grass/snow UV problem') -- perturbing a near-
@@ -1854,8 +1856,14 @@ void main() {
         // but sand-grass doesnt'): the snow line follows the mountains so it reads wavy, but the beach
         // sits on flat coastal land where the old 12/5/2.3km warp shifted the line UNIFORMLY = still a
         // straight horizontal line. Add ~900m + ~360m octaves so the beach/biome edges wiggle locally.
-        float warpN = snoise3(bwDir * 3325.0) + 0.5 * snoise3(bwDir * 7750.0) + 0.4 * snoise3(bwDir * 17000.0)
-                    + 0.45 * snoise3(bwDir * 45000.0) + 0.32 * snoise3(bwDir * 110000.0);   // ~ +/-2.6
+        // GRASS<->BEACH band warp: 8x LOWER FREQUENCY (user 2026-06-15 'beach-to-sand warping needs to be 8x
+        // less frequent; it must MOVE THE BAND, not change the crossover displacement pattern'). warpN feeds
+        // ONLY beachW (the elevation THRESHOLD), so it shifts the band position and never touches the texture/
+        // displacement UV. Freqs /8: ~97km/40km waves broad + ~18km/7km/3km finer. The finer octaves still mip
+        // out at distance (prior request 'gradient detail too visible far off') over uBeachDet0->uBeachDet1.
+        float beachDetFade = 1.0 - smoothstep(uBeachDet0, uBeachDet1, length(camWorld - vWorld));
+        float warpN = snoise3(bwDir * 416.0) + 0.5 * snoise3(bwDir * 969.0)
+                    + (0.4 * snoise3(bwDir * 2125.0) + 0.45 * snoise3(bwDir * 5625.0) + 0.32 * snoise3(bwDir * 13750.0)) * beachDetFade;   // fine octaves faded by distance
         // BEACH sand gate tied to uBeachTopM (so the sand TEXTURE scales with the wide beach, not a
         // hardcoded 80m strip) + the shared warp on its LAND edge so the beach->grass line is irregular.
         // FINE BREAK on the grass->sand line (user 2026-06-14 'still a hard straight grass-sand line up
