@@ -1279,8 +1279,7 @@ uniform float uAlbFade1;     // albedo high-detail fade end metres (__albFade1, 
 uniform float uTriSharp;     // triplanar weight exponent (__triSharp, default 4.0) -- higher = harder dominant-axis pick (8+ flips at 45deg), lower = softer blend
 uniform float uNrmFade0;     // normal-texture fade start metres (__nrmFade0, default 40000)
 uniform float uNrmFade1;     // normal-texture fade end metres (__nrmFade1, default 80000) -- texture normals gone past here
-uniform float uBeachWidth;   // grass<->beach crossover gradient WIDTH (x beachTop) (__beachWidth, default 3.0) -- wide = displacement maps shape a broad fingered boundary, no drawn line
-uniform float uBandWarp;     // snow/rock biome-band warp amplitude metres (__bandWarp, default 1100) -- low-freq undulation of the snow/rock lines
+uniform float uBandWarp;     // snow/rock/BEACH biome-band warp amplitude metres (__bandWarp, default 1100) -- one low-freq field warps every elevation-keyed biome edge incl. the beach
 // MATERIAL-BOUNDARY DITHER REVERTED (2026-06-05): the threshold-perturbation approach (matEdgeNoise on
 // the smoothstep input) produced HARD-EDGED PATCHES + a UV-like grid on uniform grass/snow (user live
 // eye: 'hard uninteresting lines between rocky/grass', 'grass/snow UV problem') -- perturbing a near-
@@ -1854,13 +1853,15 @@ void main() {
         // but sand-grass doesnt'): the snow line follows the mountains so it reads wavy, but the beach
         // sits on flat coastal land where the old 12/5/2.3km warp shifted the line UNIFORMLY = still a
         // straight horizontal line. Add ~900m + ~360m octaves so the beach/biome edges wiggle locally.
-        // GRASS<->BEACH crossover is DISPLACEMENT-DRIVEN, NO warp line (user 2026-06-15 'it must push the
-        // gradient of the crossover using the crossovers displacement maps, not draw a new line'). The sand
-        // WEIGHT crosses over GRADUALLY across a wide elevation span (0 -> uBeachWidth*beachTop) so grass+sand
-        // co-occur in the top-2 over that whole span; the texture DISPLACEMENT height-blend (bSharp below) then
-        // picks the local winner per-pixel = the boundary is SHAPED by the grass/sand displacement maps
-        // (interlocking fingers), never a drawn contour. uBeachWidth dials the gradient width (window.__beachWidth).
-        float beach = (1.0 - smoothstep(0.0, uBeachTopM * uBeachWidth, vH))
+        // SHARED biome-band warp (user 2026-06-15 'get rid of the beach warp and just use the already-available
+        // snow warp on it'): ONE low-frequency world-dir field (~36km + ~15km waves at uBandWarp amplitude)
+        // warps EVERY elevation-keyed biome edge -- snow, rock band, AND the beach. Computed here so the beach
+        // gate can reuse it; the snow/rock gates below reuse the same bandWarp.
+        float bandWarpN = snoise3(bwDir * 1100.0) + 0.5 * snoise3(bwDir * 2580.0);   // ~ +/-1.5
+        float bandWarp  = bandWarpN * uBandWarp;
+        // GRASS<->BEACH: the SAME bandWarp shifts the beach elevation threshold (moves the band); the texture
+        // DISPLACEMENT height-blend (bSharp below) still fingers the per-pixel boundary within it.
+        float beach = (1.0 - smoothstep(bandWarp, uBeachTopM * 0.5 + bandWarp, vH))
                     * (1.0 - smoothstep(0.18, 0.55, slope));
         // SAND BLEED (2026-06-13): patchy sand spills above the main beach line, modulated by VS
         // warp noise so the edge reads as wind-blown pockets, not a strict elevation cut. At peak it
@@ -1881,18 +1882,7 @@ void main() {
         // a ~0.2-unit hard step but a ~0.4-unit gradual fade.
         float srLo = max(slopeRock.x, 0.05), srHi = max(slopeRock.y, srLo + 0.25);   // 0.18->0.10->0.05 lo; band +0.35->+0.25 (user 2026-06-14 repeated 'rock face angle more sensitive'): rock fully engages by a GENTLER slope. Stays above truly-flat (rockSlope~0).
         float wRockSlope = smoothstep(mix(srLo, 0.50, sandRegion), mix(srHi, 0.70, sandRegion), rockSlope);
-        // WARPED BIOME BAND EDGES (user 2026-06-14: the snow/rock lines were STRAIGHT horizontal contours
-        // viewed side-on; the vTexWarp domain warp was too low-freq (>1.8km waves = ~constant over one
-        // mountain) so it had no visible effect). Use a dedicated 2-octave WORLD-DIR noise at mountain
-        // scale (~1.3-3km waves) so EVERY elevation-keyed band wobbles +/-~700m vertically over a few km
-        // = irregular natural lines, not level contours. World-dir keyed (seam-safe). Applied to snow,
-        // the rock band, snowCold, and the beach below. highp dir (high-freq lattice needs the precision).
-        // SNOW/ROCK band warp: DEDICATED LOWER-FREQUENCY noise (user 2026-06-15 'snow warp not strong enough +
-        // frequency ~3x too high'). The shared warpN runs at 12/5km+ octaves = too rapid on the snow line; use
-        // ~36km + ~15km waves (1/3 the freq) at a STRONGER amplitude so the snow/rock lines undulate in broad,
-        // bold sweeps instead of fast ripples. uBandWarp dials amplitude (window.__bandWarp).
-        float bandWarpN = snoise3(bwDir * 1100.0) + 0.5 * snoise3(bwDir * 2580.0);   // ~ +/-1.5, 1/3 the old freq
-        float bandWarp = bandWarpN * uBandWarp;
+        // bandWarp (the snow/rock/beach band warp) is computed once above the beach gate and reused here.
         float snowHi   = smoothstep(snowEdges.x + bandWarp, snowEdges.y + bandWarp, vH);
         // ROCK BAND leading up to the snow (user 2026-06-14): a rocky belt ~0.4-2.2km below the snow
         // line so high mountains show rock between alpine grass and snow, not grass straight to snow.
