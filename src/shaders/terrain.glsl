@@ -2000,6 +2000,7 @@ void main() {
         // detail->flat-material collapse created a visible ARC at its transition distance (proven by A/B: the
         // arc vanishes when the collapse is pushed all-near or all-far -- it IS the transition zone). The GPU
         // mip chain already fades the albedo detail gradually with distance (no discrete boundary), so let it.
+        float bSharp = 1.0;   // hoisted: displacement height-blend pick (1 = pure layer A when no 2nd layer); used by texL below so the shade-match matches the texMatColor pick
         if (wB > 0.02) {   // second layer only where a real transition exists
             vec4 albB = surfTriTap(uSurfAlb, wt4, tw, lB);
             vec3 cB = albB.rgb;   // CHROMA EXPRESSED (match cA)
@@ -2046,7 +2047,7 @@ void main() {
             float hB = (dispB - 0.5) * 1.5 * crossFade + (dispB_lo - 0.5) * 2.2 * texFade - wRamp + ordB * 0.45;
             float mh = max(hA, hB) - bw;
             float waH = max(hA - mh, 0.0), wbH = max(hB - mh, 0.0);
-            float bSharp = waH / max(waH + wbH, 1e-4);
+            bSharp = waH / max(waH + wbH, 1e-4);
             texAlb = vec4(mix(cB, cA, bSharp), mix(dispB, dispA, bSharp));
             texNrm = mix(nB, nA, bSharp);
             vec3 mcB = lB < 0.5 ? bcGrass : (lB < 1.5 ? bcRock : (lB < 2.5 ? bcShore : bcSnow));
@@ -2078,7 +2079,11 @@ void main() {
         // Dividing by the layer's MEAN luminance (loader-computed uSurfMeanL) keeps every per-pixel
         // deviation visible while the patch average lands exactly on the macro shade.
         float mA = uSurfMeanL[int(lA + 0.5)];
-        float texL = wB > 0.02 ? mix(uSurfMeanL[int(lB + 0.5)], mA, bAB) : mA;
+        // HARD shade-match pick (user 2026-06-15 'a line between two grass colors around the mountain'): texL
+        // used the SMOOTH bAB so the grass BRIGHTNESS ramped as rock entered the top-2 just below the treeline
+        // = a band of off-shade grass circling the mountain. Use the SAME hard 0.48-0.52 pick as texMatColor so
+        // grass keeps its pure brightness until rock actually dominates -> no grass-shade band.
+        float texL = mix(uSurfMeanL[int(lB + 0.5)], mA, smoothstep(0.48, 0.52, bSharp));
         // SATURATE the photo chroma around its own luma (user 2026-06-15 'doesnt look like the color of
         // the textures at all'): push texC away from grey by uTexSat so the real hue reads, THEN rescale
         // to the material brightness. uTexSat=1 keeps the photo native; >1 = more vivid.
