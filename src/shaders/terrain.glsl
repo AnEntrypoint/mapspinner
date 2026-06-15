@@ -1938,7 +1938,7 @@ void main() {
         // NORMAL on top -- ALWAYS, no fade -- to break that repetition. Albedo stays high-octave only.
         highp vec3 wt4 = wt * 4.0;
         vec4 albA = surfTriTap(uSurfAlb, wt4, tw, lA);
-        vec3 cA = vec3(dot(albA.rgb, LUMA));
+        vec3 cA = albA.rgb;   // CHROMA EXPRESSED (2026-06-15 'colors faded / rock looks like sand'): carry the photo's real color, not luma-only -- detail below rescales it to the material BRIGHTNESS so rock reads grey-rocky + grass/sand/snow show their true hue
         // 3 normal octaves (user 2026-06-14 'add an even lower freq octave, displacement/normals only,
         // 4x less frequent'): wt4 high (detail) + wt low (2.4km) + wt*0.25 VERY-low (9.6km) -- the very-
         // low one breaks the far repetition even more. Normals/displacement only (no albedo).
@@ -1953,7 +1953,7 @@ void main() {
         float splatRock = (abs(lA - 1.0) < 0.5) ? 1.0 : 0.0;   // height-blend rock fraction (layer 1 = rock)
         if (wB > 0.02) {   // second layer only where a real transition exists
             vec4 albB = surfTriTap(uSurfAlb, wt4, tw, lB);
-            vec3 cB = vec3(dot(albB.rgb, LUMA));
+            vec3 cB = albB.rgb;   // CHROMA EXPRESSED (match cA)
             vec3 nB = surfTriNrm(uSurfNrm, wt4, tw, lB, n) * 2.0 + surfTriNrm(uSurfNrm, wt, tw, lB, n) * 0.9;   // high + mid octaves; lowest removed (match nA)
             float dispB = albB.a;
             // HEIGHT-BLEND POKE-THROUGH (user 'each texture's higher areas should poke through the other,
@@ -2021,7 +2021,7 @@ void main() {
         // deviation visible while the patch average lands exactly on the macro shade.
         float mA = uSurfMeanL[int(lA + 0.5)];
         float texL = wB > 0.02 ? mix(uSurfMeanL[int(lB + 0.5)], mA, bAB) : mA;
-        vec3 detail = texC * (texMatColor / max(texL, 0.02));   // MATERIAL color * structure (no biome inheritance)
+        vec3 detail = texC * (dot(texMatColor, LUMA) / max(texL, 0.02));   // texture's OWN color (cA/cB now RGB) at the MATERIAL brightness (layer-mean normalized) -> chroma expressed, shade-matched (2026-06-15)
         // ROCK SHOWS THE TRUE PHOTO (user 2026-06-10 'we still see the original rock texture --
         // replace completely'): tinting rock to the macro shade just reproduced the old grey/tan,
         // so the rock layer takes the raw photo color; grass/sand/snow stay shade-matched.
