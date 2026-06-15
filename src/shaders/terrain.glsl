@@ -1946,10 +1946,14 @@ void main() {
         highp vec3 wt4 = wt * 2.0;   // OCTAVE 4->2 (2026-06-15 'grainy, octave too high'): the x4 scale (~0.6m/texel) was too FINE -> aliased/grainy under the isotropic triplanar up close; x2 (~1.2m/texel) keeps detail without the grain.
         vec4 albA = surfTriTap(uSurfAlb, wt4, tw, lA);
         vec3 cA = albA.rgb;   // CHROMA EXPRESSED (2026-06-15 'colors faded / rock looks like sand'): carry the photo's real color, not luma-only -- detail below rescales it to the material BRIGHTNESS so rock reads grey-rocky + grass/sand/snow show their true hue
-        // TWO NORMAL OCTAVES (2026-06-15 user 'color = highest octave only, normals >= two octaves'):
-        // high (wt4) detail + mid (wt, half-freq) so the normal carries two relief scales while COLOR stays
-        // single high octave (albA at wt4). Both share TEX_LOD_BIAS so normal+color mip together (no offset).
-        vec3 nA = surfTriNrm(uSurfNrm, wt4, tw, lA, n) * 1.6 + surfTriNrm(uSurfNrm, wt, tw, lA, n) * 0.8;
+        // 3-OCTAVE NORMAL PYRAMID (2026-06-15 user 'normals dont match the texture octave, features doubled,
+        // missing the lower AND higher octave'): MID octave = wt4 (== the albedo octave, so normals MATCH the
+        // color), plus a HIGHER octave (wt4*2) and a LOWER octave (wt4*0.5). Falling amplitudes 0.5/1.0/0.5
+        // (a real fBm pyramid, mid dominant) -> no 'doubled' look (the old 1.6/0.8 two-octave read as two
+        // equal layers). Color stays single (albA at wt4). 3 octaves = the user's 'three if cheap'.
+        vec3 nA = surfTriNrm(uSurfNrm, wt4*2.0, tw, lA, n) * 0.5
+                + surfTriNrm(uSurfNrm, wt4,     tw, lA, n) * 1.0
+                + surfTriNrm(uSurfNrm, wt4*0.5, tw, lA, n) * 0.5;
         float dispA = albA.a;
         // NO BIOME COLOR INHERITANCE (user 2026-06-14 'take away all biome color inheritance, it will
         // speed it up' -- and fixes 'sand near grass tinted green'): each layer wears its OWN material
@@ -1961,7 +1965,9 @@ void main() {
         if (wB > 0.02) {   // second layer only where a real transition exists
             vec4 albB = surfTriTap(uSurfAlb, wt4, tw, lB);
             vec3 cB = albB.rgb;   // CHROMA EXPRESSED (match cA)
-            vec3 nB = surfTriNrm(uSurfNrm, wt4, tw, lB, n) * 1.6 + surfTriNrm(uSurfNrm, wt, tw, lB, n) * 0.8;   // two octaves (match nA)
+            vec3 nB = surfTriNrm(uSurfNrm, wt4*2.0, tw, lB, n) * 0.5
+                    + surfTriNrm(uSurfNrm, wt4,     tw, lB, n) * 1.0
+                    + surfTriNrm(uSurfNrm, wt4*0.5, tw, lB, n) * 0.5;   // 3-octave pyramid (match nA)
             float dispB = albB.a;
             // HEIGHT-BLEND POKE-THROUGH (user 'each texture's higher areas should poke through the other,
             // offset by the ramp'): height = displacement + a weight-ramp offset (gate positions the
