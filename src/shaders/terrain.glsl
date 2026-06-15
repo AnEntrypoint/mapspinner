@@ -190,7 +190,12 @@ const float RIVER_INCISE_DEPTH = 280.0;   // 120->280 metres at the channel thal
 float riverRidgeField(vec3 dir){ return inciseRidgeField(dir, 40.0, 2.03); }   // T-1: callers pass unit dir (dir0 / normalize(worldPos))
 float riverCarveM(vec3 dir, out float wet){
     float ridge = riverRidgeField(dir);
-    float valley  = smoothstep(0.30, 0.94, ridge);             // gentle eroded valley sides, start wider
+    // WIDER, GENTLER VALLEY (user 2026-06-15 'rocky/dark streak with no elevation -- material doesnt match
+    // elevation'): the river WAS carved (the streak shows in normals+albedo) but the valley band was too
+    // narrow/steep for the coarse LOD mesh to render as relief -> the drop fell between vertices = flat mesh
+    // with a dark water line + rock banks painted on it. Widen the valley sides (0.30->0.08) so the 280m drop
+    // spreads over a much wider horizontal band = low gradient the mesh resolves = the valley reads as ELEVATION.
+    float valley  = smoothstep(0.08, 0.94, ridge);             // WIDE eroded valley sides (mesh-resolvable gradient)
     float thalweg = smoothstep(0.75, 0.96, ridge);             // deep channel core
     wet = smoothstep(0.78, 0.94, ridge);                       // flowing-water line
     return -RIVER_INCISE_DEPTH * (0.7 * valley + 0.3 * thalweg);   // more valley, gentler banking
