@@ -1962,9 +1962,11 @@ void main() {
         // wt4*0.25 (genuinely lower freq = big rock relief). RISING weights toward low freq (lower octaves carry
         // gentler slope per unit amplitude so they need more weight to read as relief). uNrmLow scales the two
         // low octaves live (window.__nrmLow) so rock multi-scale relief is dialable.
+        // PERF (2026-06-15): normal pyramid 3->2 octaves (dropped the mid wt4*0.5) -- saves 1 octave x 3
+        // planes x 2 layers of texture fetches in the FS (FS-bound at altitude). Keeps the albedo-matching
+        // octave (wt4) + a low octave (wt4*0.25) for big rock relief.
         vec3 nA = surfTriNrm(uSurfNrm, wt4,      tw, lA, n) * 1.0
-                + surfTriNrm(uSurfNrm, wt4*0.5,  tw, lA, n) * (1.4 * uNrmLow)
-                + surfTriNrm(uSurfNrm, wt4*0.25, tw, lA, n) * (2.0 * uNrmLow);
+                + surfTriNrm(uSurfNrm, wt4*0.25, tw, lA, n) * (1.7 * uNrmLow);
         float dispA = albA.a;
         // NO BIOME COLOR INHERITANCE (user 2026-06-14 'take away all biome color inheritance, it will
         // speed it up' -- and fixes 'sand near grass tinted green'): each layer wears its OWN material
@@ -1992,8 +1994,7 @@ void main() {
             vec4 albB = surfTriTap(uSurfAlb, wt4, tw, lB);
             vec3 cB = albB.rgb;   // CHROMA EXPRESSED (match cA)
             vec3 nB = surfTriNrm(uSurfNrm, wt4,      tw, lB, n) * 1.0
-                    + surfTriNrm(uSurfNrm, wt4*0.5,  tw, lB, n) * (1.4 * uNrmLow)
-                    + surfTriNrm(uSurfNrm, wt4*0.25, tw, lB, n) * (2.0 * uNrmLow);   // downward pyramid (match nA)
+                    + surfTriNrm(uSurfNrm, wt4*0.25, tw, lB, n) * (1.7 * uNrmLow);   // 2-octave (match nA, PERF)
             float dispB = albB.a;
             // HEIGHT-BLEND POKE-THROUGH (user 'each texture's higher areas should poke through the other,
             // offset by the ramp'): height = displacement + a weight-ramp offset (gate positions the
@@ -2024,14 +2025,12 @@ void main() {
             // displacement mips FLAT at distance so the crossover collapsed to a smooth ramp = a line/band).
             // Add the LOW-octave (2.4km tile) displacement, which stays varied much farther out, so the
             // grass/sand interlocks (fingers) at ALL distances -- still the texture DISPLACEMENT, not noise.
-            float dispA_lo = surfTriTap(uSurfAlb, wt, tw, lA).a;
-            float dispB_lo = surfTriTap(uSurfAlb, wt, tw, lB).a;
-            // very-low (9.6km) displacement taps REMOVED 2026-06-14 (user 'just the lowest one to be removed'): keep high (dispA) + mid (dispA_lo) for the LOD-stable boundary fingering.
-            // HIGH-octave disp faded CLOSE (crossFade, ~3->9km) -- it is the sparkle source far out; the LOW
-            // octave (dispA_lo, 2.4km tile) stays varied much farther so the boundary keeps interlocking
-            // fingers at mid distance, faded by texFade (40km). Beyond both -> smooth weight-only ramp.
-            float hA = (dispA - 0.5) * 1.5 * crossFade + (dispA_lo - 0.5) * 2.2 * texFade + wRamp + ordA * 0.45;
-            float hB = (dispB - 0.5) * 1.5 * crossFade + (dispB_lo - 0.5) * 2.2 * texFade - wRamp + ordB * 0.45;
+            // PERF (2026-06-15): low-octave disp taps (dispA_lo/dispB_lo) REMOVED -- 2 surfTriTap/pixel saved
+            // in the FS. The high-octave dispA (faded close by crossFade) fingers the near boundary; beyond
+            // crossFade the crossover settles to the smooth weight-ramp (wRamp+ord) = no mid-distance fingering,
+            // acceptable. (dispB_lo/texFade no longer used here.)
+            float hA = (dispA - 0.5) * 1.5 * crossFade + wRamp + ordA * 0.45;
+            float hB = (dispB - 0.5) * 1.5 * crossFade - wRamp + ordB * 0.45;
             float mh = max(hA, hB) - bw;
             float waH = max(hA - mh, 0.0), wbH = max(hB - mh, 0.0);
             bSharp = waH / max(waH + wbH, 1e-4);
