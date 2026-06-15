@@ -1271,6 +1271,11 @@ uniform vec4 uSurfMeanL;     // per-layer mean linear luminance of the photo col
 uniform float uBiomeTint;    // how much macro biome/climate color is mixed OVER the texture (__biomeTint, default 0.22; was a hard 0.5 = washed the photo color out). 0 = pure texture color, 1 = pure biome.
 uniform float uTexBright;    // overall ground brightness multiplier (__texBright, default 0.92)
 uniform float uTexSat;       // texture chroma saturation around its own luma (__texSat, default 1.0; >1 = more vivid photo color)
+uniform float uNrmLow;       // low-octave normal strength (__nrmLow, default 1.0) -- scales the two lower octaves of the rock normal pyramid
+uniform float uXFade0;       // crossover-displacement fade start metres (__xFade0, default 3000)
+uniform float uXFade1;       // crossover-displacement fade end metres (__xFade1, default 9000) -- high-octave disp gone past here (anti-sparkle)
+uniform float uAlbFade0;     // albedo high-detail fade start metres (__albFade0, default 6000)
+uniform float uAlbFade1;     // albedo high-detail fade end metres (__albFade1, default 16000) -- albedo -> flat material color past here
 // MATERIAL-BOUNDARY DITHER REVERTED (2026-06-05): the threshold-perturbation approach (matEdgeNoise on
 // the smoothstep input) produced HARD-EDGED PATCHES + a UV-like grid on uniform grass/snow (user live
 // eye: 'hard uninteresting lines between rocky/grass', 'grass/snow UV problem') -- perturbing a near-
@@ -1962,14 +1967,17 @@ void main() {
         highp vec3 wt4 = wt * 2.0;   // OCTAVE 4->2 (2026-06-15 'grainy, octave too high'): the x4 scale (~0.6m/texel) was too FINE -> aliased/grainy under the isotropic triplanar up close; x2 (~1.2m/texel) keeps detail without the grain.
         vec4 albA = surfTriTap(uSurfAlb, wt4, tw, lA);
         vec3 cA = albA.rgb;   // CHROMA EXPRESSED (2026-06-15 'colors faded / rock looks like sand'): carry the photo's real color, not luma-only -- detail below rescales it to the material BRIGHTNESS so rock reads grey-rocky + grass/sand/snow show their true hue
-        // 3-OCTAVE NORMAL PYRAMID (2026-06-15 user 'normals dont match the texture octave, features doubled,
-        // missing the lower AND higher octave'): MID octave = wt4 (== the albedo octave, so normals MATCH the
-        // color), plus a HIGHER octave (wt4*2) and a LOWER octave (wt4*0.5). Falling amplitudes 0.5/1.0/0.5
-        // (a real fBm pyramid, mid dominant) -> no 'doubled' look (the old 1.6/0.8 two-octave read as two
-        // equal layers). Color stays single (albA at wt4). 3 octaves = the user's 'three if cheap'.
-        vec3 nA = surfTriNrm(uSurfNrm, wt4*2.0, tw, lA, n) * 0.5
-                + surfTriNrm(uSurfNrm, wt4,     tw, lA, n) * 1.0
-                + surfTriNrm(uSurfNrm, wt4*0.5, tw, lA, n) * 0.5;
+        // DOWNWARD NORMAL PYRAMID (2026-06-15 user 'we dont see the lower-freq octave normals on rocks, or the
+        // albedo-octave normals -- just the one one step lower than albedo'): the old pyramid built UPWARD
+        // (wt4*2, wt4, wt4*0.5) -- the wt4*2 octave is finer than the texel/mip floor at any real distance so
+        // it averaged FLAT, and the albedo octave (wt4) was masked, leaving only the coherent wt4*0.5 visible.
+        // Rebuild DOWNWARD from the albedo octave: wt4 (== color, FINEST now -> visible matching detail), wt4*0.5,
+        // wt4*0.25 (genuinely lower freq = big rock relief). RISING weights toward low freq (lower octaves carry
+        // gentler slope per unit amplitude so they need more weight to read as relief). uNrmLow scales the two
+        // low octaves live (window.__nrmLow) so rock multi-scale relief is dialable.
+        vec3 nA = surfTriNrm(uSurfNrm, wt4,      tw, lA, n) * 1.0
+                + surfTriNrm(uSurfNrm, wt4*0.5,  tw, lA, n) * (1.4 * uNrmLow)
+                + surfTriNrm(uSurfNrm, wt4*0.25, tw, lA, n) * (2.0 * uNrmLow);
         float dispA = albA.a;
         // NO BIOME COLOR INHERITANCE (user 2026-06-14 'take away all biome color inheritance, it will
         // speed it up' -- and fixes 'sand near grass tinted green'): each layer wears its OWN material
@@ -1978,12 +1986,27 @@ void main() {
         vec3 texMatColor = mcA;
         vec4 texAlb = vec4(cA, dispA); vec3 texNrm = nA;
         float splatRock = (abs(lA - 1.0) < 0.5) ? 1.0 : 0.0;   // height-blend rock fraction (layer 1 = rock)
+        // TEXTURE-DETAIL FADES (user 2026-06-15): two curves keyed on camera distance.
+        // texFade (20->40km) fades the NORMAL textures (user 'mip the normal textures closer, gone by 40km').
+        // crossFade (CLOSER, uXFade0->uXFade1 default 3->9km) fades the CROSSOVER ramp's high-octave
+        // DISPLACEMENT fingering -- user 'the crossover displacement textures should mip closer, theyre causing
+        // high-frequency noise at a distance'. The high-octave disp (~1.2m) goes sub-pixel far out and the *1.5
+        // amplification turned mip residue into sparkle; dropping it early collapses the boundary to the smooth
+        // weight ramp well before it can alias. Both window-dialable (__texNrmFadeKm not needed; __xFade0/__xFade1).
+        highp float camDist = length(camWorld - vWorld);
+        float texFade   = 1.0 - smoothstep(20000.0, 40000.0, camDist);
+        float crossFade = 1.0 - smoothstep(uXFade0, uXFade1, camDist);
+        // albFade (uAlbFade0->uAlbFade1, default 6->16km) mips the ALBEDO high-freq structure toward the flat
+        // material color closer -- user 'mip the albedo closer, its high detail remains too far away'. The
+        // single-octave albedo (wt4) tiled tightly so its fine structure survived far out; collapse it to the
+        // averaged material color earlier (= what the mip chain would eventually reach, just sooner).
+        float albFade   = 1.0 - smoothstep(uAlbFade0, uAlbFade1, camDist);
         if (wB > 0.02) {   // second layer only where a real transition exists
             vec4 albB = surfTriTap(uSurfAlb, wt4, tw, lB);
             vec3 cB = albB.rgb;   // CHROMA EXPRESSED (match cA)
-            vec3 nB = surfTriNrm(uSurfNrm, wt4*2.0, tw, lB, n) * 0.5
-                    + surfTriNrm(uSurfNrm, wt4,     tw, lB, n) * 1.0
-                    + surfTriNrm(uSurfNrm, wt4*0.5, tw, lB, n) * 0.5;   // 3-octave pyramid (match nA)
+            vec3 nB = surfTriNrm(uSurfNrm, wt4,      tw, lB, n) * 1.0
+                    + surfTriNrm(uSurfNrm, wt4*0.5,  tw, lB, n) * (1.4 * uNrmLow)
+                    + surfTriNrm(uSurfNrm, wt4*0.25, tw, lB, n) * (2.0 * uNrmLow);   // downward pyramid (match nA)
             float dispB = albB.a;
             // HEIGHT-BLEND POKE-THROUGH (user 'each texture's higher areas should poke through the other,
             // offset by the ramp'): height = displacement + a weight-ramp offset (gate positions the
@@ -2017,8 +2040,11 @@ void main() {
             float dispA_lo = surfTriTap(uSurfAlb, wt, tw, lA).a;
             float dispB_lo = surfTriTap(uSurfAlb, wt, tw, lB).a;
             // very-low (9.6km) displacement taps REMOVED 2026-06-14 (user 'just the lowest one to be removed'): keep high (dispA) + mid (dispA_lo) for the LOD-stable boundary fingering.
-            float hA = (dispA - 0.5) * 1.5 + (dispA_lo - 0.5) * 2.2 + wRamp + ordA * 0.45;
-            float hB = (dispB - 0.5) * 1.5 + (dispB_lo - 0.5) * 2.2 - wRamp + ordB * 0.45;
+            // HIGH-octave disp faded CLOSE (crossFade, ~3->9km) -- it is the sparkle source far out; the LOW
+            // octave (dispA_lo, 2.4km tile) stays varied much farther so the boundary keeps interlocking
+            // fingers at mid distance, faded by texFade (40km). Beyond both -> smooth weight-only ramp.
+            float hA = (dispA - 0.5) * 1.5 * crossFade + (dispA_lo - 0.5) * 2.2 * texFade + wRamp + ordA * 0.45;
+            float hB = (dispB - 0.5) * 1.5 * crossFade + (dispB_lo - 0.5) * 2.2 * texFade - wRamp + ordB * 0.45;
             float mh = max(hA, hB) - bw;
             float waH = max(hA - mh, 0.0), wbH = max(hB - mh, 0.0);
             float bSharp = waH / max(waH + wbH, 1e-4);
@@ -2056,6 +2082,7 @@ void main() {
         float texCL = dot(texC, LUMA);
         texC = max(mix(vec3(texCL), texC, uTexSat), 0.0);
         vec3 detail = texC * (dot(texMatColor, LUMA) / max(texL, 0.02));   // texture's OWN color (cA/cB now RGB) at the MATERIAL brightness (layer-mean normalized) -> chroma expressed, shade-matched (2026-06-15)
+        detail = mix(texMatColor, detail, albFade);   // MIP ALBEDO CLOSER (user 2026-06-15): collapse the high-freq albedo structure to the flat material color past ~16km (the texL-normalized mean) so fine detail does not persist too far
         // ROCK SHOWS THE TRUE PHOTO (user 2026-06-10 'we still see the original rock texture --
         // replace completely'): tinting rock to the macro shade just reproduced the old grey/tan,
         // so the rock layer takes the raw photo color; grass/sand/snow stay shade-matched.
@@ -2083,7 +2110,7 @@ void main() {
         // displacement-normal relief: WORLD-SPACE UDN perturbation from surfTriNrm (each projection
         // plane's tangent axes, not the radial frame). Amplitude capped low (scramble lesson d262b5e);
         // applied AFTER the uReliefShade exaggeration below so the exaggeration never amplifies it.
-        texDn = texNrm * (uTexNrmK * k) * (1.0 - smoothstep(20000.0, 40000.0, length(camWorld - vWorld)));   // NORMAL textures fade out 20->40km (user 2026-06-15 'mip the normal textures closer, gone by 40km') -- distant relief is carried by the macro lit normal, not the photo normal
+        texDn = texNrm * (uTexNrmK * k) * texFade;   // NORMAL textures fade out 20->40km (user 2026-06-15 'mip the normal textures closer, gone by 40km') via the shared texFade -- distant relief is carried by the macro lit normal, not the photo normal
     }
 #ifdef _DEBUGVIEW_
     // DIAG displayMode 7: raw river field -> blue where the river line fires, grey ridge field
