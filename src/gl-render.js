@@ -1022,6 +1022,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(U('uXFade1'),     _g('xFade1', 9000.0));  // crossover-displacement fade end (m) -- anti-sparkle (2026-06-15 'crossover disp causing high-freq noise at distance')
     gl.uniform1f(U('uAlbFade0'),   _g('albFade0', 6000.0));  // albedo high-detail fade start (m) (2026-06-15 'mip the albedo closer, high detail remains too far')
     gl.uniform1f(U('uAlbFade1'),   _g('albFade1', 16000.0)); // albedo high-detail fade end (m) -> collapses to flat material color past here
+    gl.uniform1f(U('uTriSharp'),   _g('triSharp', 4.0));     // triplanar weight exponent (2026-06-15 ^8 'normals flipping between two states' -> 4 smooth)
     gl.uniform1f(U('uTexMix'),     _g('texMix', 0.85));     // splat blend amount (0 = off)
     gl.uniform1f(U('uTexWarp'),    _g('texWarp', 0.23));    // anti-repetition warp amplitude (-30% from 0.325, grass warp too intense)
     gl.uniform1f(U('uTexPhoto'),   _g('texPhoto', 0.0));    // raw photo-color fraction (0 = patch matches the macro shade exactly)

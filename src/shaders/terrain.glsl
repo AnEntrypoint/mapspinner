@@ -1276,6 +1276,7 @@ uniform float uXFade0;       // crossover-displacement fade start metres (__xFad
 uniform float uXFade1;       // crossover-displacement fade end metres (__xFade1, default 9000) -- high-octave disp gone past here (anti-sparkle)
 uniform float uAlbFade0;     // albedo high-detail fade start metres (__albFade0, default 6000)
 uniform float uAlbFade1;     // albedo high-detail fade end metres (__albFade1, default 16000) -- albedo -> flat material color past here
+uniform float uTriSharp;     // triplanar weight exponent (__triSharp, default 4.0) -- higher = harder dominant-axis pick (8+ flips at 45deg), lower = softer blend
 // MATERIAL-BOUNDARY DITHER REVERTED (2026-06-05): the threshold-perturbation approach (matEdgeNoise on
 // the smoothstep input) produced HARD-EDGED PATCHES + a UV-like grid on uniform grass/snow (user live
 // eye: 'hard uninteresting lines between rocky/grass', 'grass/snow UV problem') -- perturbing a near-
@@ -1946,12 +1947,12 @@ void main() {
         // touches texture coordinates; every layer tap (albedo A/B, normal A/B, all four materials)
         // samples through this shared wt, so the warp cannot layer or double-apply.
         wt += vTexWarp * uTexWarp;
-        // TRIPLANAR DOMINANT-AXIS (2026-06-15 'two textures overlaid that independently jump'): on a tilted
-        // surface the blend of two axis-projections = two copies of the texture each anchored to a different
-        // world axis -> they parallax-swim independently = the ghosting. Sharpen the weights hard (^8) so the
-        // dominant axis wins almost everywhere (single projection, no overlay); only a thin ~45deg diagonal
-        // still blends. abs(n)^8, normalized.
-        vec3 tw = abs(n); tw = tw * tw; tw = tw * tw; tw = tw * tw; tw /= (tw.x + tw.y + tw.z + 1e-4);
+        // TRIPLANAR WEIGHTS (2026-06-15): power-sharpened abs(n), normalized. uTriSharp dials it.
+        // HISTORY: ^8 (very hard) made the dominant axis switch ABRUPTLY at ~45deg -> the projection (and its
+        // normal) snapped between two states as the camera moved ('normals flipping between two states'). That
+        // hard pick was compensating for UV swim that the camera-relative UV (vTexRel) now fixes at the source,
+        // so back off to ^4 (default) for a smooth axis blend with no bistable flip. window.__triSharp.
+        vec3 tw = pow(abs(n), vec3(uTriSharp)); tw /= (tw.x + tw.y + tw.z + 1e-4);
         const vec3 LUMA = vec3(0.299, 0.587, 0.114);
         float bAB = clamp(wA / max(wA + wB, 1e-4), 0.0, 1.0);
         // SINGLE HIGH-FREQUENCY OCTAVE + MIPS (user 2026-06-14 'instead of swapping out texture octaves,
@@ -2056,7 +2057,11 @@ void main() {
             // inside the sand zone so it differed from pure grass outside. Now the boundary is FINGERED by
             // the LOD-stable displacement, so a near-hard color pick keeps grass PURE bcGrass everywhere
             // (the two grasses match) and flips cleanly to sand along the fingers -- no tint, no straight line.
-            texMatColor = mix(mcB, mcA, smoothstep(0.42, 0.58, bSharp));
+            // HARD color pick (user 2026-06-15 'light grass around rock crossovers then dark grass -- one type
+            // of grass'): the 0.42-0.58 ramp made a light tan-green BAND where grass color blended halfway to
+            // rock at the boundary, reading as a second 'light grass'. Tighten to a near-step so grass holds its
+            // ONE shade right up to the rock and flips cleanly along the displacement fingers (no light band).
+            texMatColor = mix(mcB, mcA, smoothstep(0.48, 0.52, bSharp));
         }
         // MATCH COLOR TO NORMAL (user 2026-06-14 'green grassy patches with the rock normals -- should be
         // rock colored or grass normals'): texNrm follows the displacement height-blend (rock on bumps in
