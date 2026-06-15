@@ -1862,8 +1862,8 @@ void main() {
         // displacement UV. Freqs /8: ~97km/40km waves broad + ~18km/7km/3km finer. The finer octaves still mip
         // out at distance (prior request 'gradient detail too visible far off') over uBeachDet0->uBeachDet1.
         float beachDetFade = 1.0 - smoothstep(uBeachDet0, uBeachDet1, length(camWorld - vWorld));
-        float warpN = snoise3(bwDir * 416.0) + 0.5 * snoise3(bwDir * 969.0)
-                    + (0.4 * snoise3(bwDir * 2125.0) + 0.45 * snoise3(bwDir * 5625.0) + 0.32 * snoise3(bwDir * 13750.0)) * beachDetFade;   // fine octaves faded by distance
+        float warpN = snoise3(bwDir * 208.0) + 0.5 * snoise3(bwDir * 485.0)
+                    + (0.4 * snoise3(bwDir * 1063.0) + 0.45 * snoise3(bwDir * 2813.0) + 0.32 * snoise3(bwDir * 6875.0)) * beachDetFade;   // freqs HALVED again (user 2026-06-15 'halve frequency') -- broader sweeps; fine octaves still distance-faded
         // BEACH sand gate tied to uBeachTopM (so the sand TEXTURE scales with the wide beach, not a
         // hardcoded 80m strip) + the shared warp on its LAND edge so the beach->grass line is irregular.
         // FINE BREAK on the grass->sand line (user 2026-06-14 'still a hard straight grass-sand line up
