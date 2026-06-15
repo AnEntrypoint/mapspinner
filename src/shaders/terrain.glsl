@@ -1279,10 +1279,8 @@ uniform float uAlbFade1;     // albedo high-detail fade end metres (__albFade1, 
 uniform float uTriSharp;     // triplanar weight exponent (__triSharp, default 4.0) -- higher = harder dominant-axis pick (8+ flips at 45deg), lower = softer blend
 uniform float uNrmFade0;     // normal-texture fade start metres (__nrmFade0, default 40000)
 uniform float uNrmFade1;     // normal-texture fade end metres (__nrmFade1, default 80000) -- texture normals gone past here
-uniform float uBeachWarp;    // grass<->beach line warp amplitude (x beachTop) (__beachWarp, default 1.4) -- higher = wavier shoreline
+uniform float uBeachWidth;   // grass<->beach crossover gradient WIDTH (x beachTop) (__beachWidth, default 3.0) -- wide = displacement maps shape a broad fingered boundary, no drawn line
 uniform float uBandWarp;     // snow/rock biome-band warp amplitude metres (__bandWarp, default 1100) -- low-freq undulation of the snow/rock lines
-uniform float uBeachDet0;    // beach<->grass fine-detail fade start metres (__beachDet0, default 3000)
-uniform float uBeachDet1;    // beach<->grass fine-detail fade end metres (__beachDet1, default 10000) -- distant shoreline = broad shape only
 // MATERIAL-BOUNDARY DITHER REVERTED (2026-06-05): the threshold-perturbation approach (matEdgeNoise on
 // the smoothstep input) produced HARD-EDGED PATCHES + a UV-like grid on uniform grass/snow (user live
 // eye: 'hard uninteresting lines between rocky/grass', 'grass/snow UV problem') -- perturbing a near-
@@ -1856,28 +1854,13 @@ void main() {
         // but sand-grass doesnt'): the snow line follows the mountains so it reads wavy, but the beach
         // sits on flat coastal land where the old 12/5/2.3km warp shifted the line UNIFORMLY = still a
         // straight horizontal line. Add ~900m + ~360m octaves so the beach/biome edges wiggle locally.
-        // GRASS<->BEACH band warp: 8x LOWER FREQUENCY (user 2026-06-15 'beach-to-sand warping needs to be 8x
-        // less frequent; it must MOVE THE BAND, not change the crossover displacement pattern'). warpN feeds
-        // ONLY beachW (the elevation THRESHOLD), so it shifts the band position and never touches the texture/
-        // displacement UV. Freqs /8: ~97km/40km waves broad + ~18km/7km/3km finer. The finer octaves still mip
-        // out at distance (prior request 'gradient detail too visible far off') over uBeachDet0->uBeachDet1.
-        float beachDetFade = 1.0 - smoothstep(uBeachDet0, uBeachDet1, length(camWorld - vWorld));
-        float warpN = snoise3(bwDir * 104.0) + 0.5 * snoise3(bwDir * 243.0)
-                    + (0.4 * snoise3(bwDir * 531.0) + 0.45 * snoise3(bwDir * 1406.0) + 0.32 * snoise3(bwDir * 3438.0)) * beachDetFade;   // freqs HALVED again x2 (user 2026-06-15) -- very broad sweeps; fine octaves still distance-faded
-        // BEACH sand gate tied to uBeachTopM (so the sand TEXTURE scales with the wide beach, not a
-        // hardcoded 80m strip) + the shared warp on its LAND edge so the beach->grass line is irregular.
-        // FINE BREAK on the grass->sand line (user 2026-06-14 'still a hard straight grass-sand line up
-        // close ... it must gain detail'): warpN positions the band irregularly at the km scale; the
-        // FINE break of the grass->sand line is now the texture DISPLACEMENT height-blend (bSharp below),
-        // NOT a fractal (user 2026-06-14: 'looking like a fractal, use the materials displacement'). Widen
-        // the gate transition band so sand+grass overlap over a broad elevation span -> bSharp picks the
-        // local winner by texture relief -> fingered shoreline that follows the actual texture bumps.
-        // MUCH MORE GRADUAL grass<->sand margin (user 2026-06-14): the WEIGHT crosses over slowly across
-        // a wide elevation span (0 -> ~2.5x beachTop); the per-pixel transition is then made HARD by the
-        // displacement height-blend (small bw below) so sand vs grass is a sharp choice distributed by
-        // texture relief = interlocking fingers that thin out with height, never a blendy fade.
-        float beachW = warpN * uBeachTopM * uBeachWarp;   // MUCH STRONGER (user 2026-06-15 'grass-to-beach line super horizontal'): was *0.30 -> uBeachWarp (default 1.4, ~4.5x). The beach sits on near-flat coastal land, so a bigger elevation-threshold warp = a far wider HORIZONTAL wander of the sand line. window.__beachWarp.
-        float beach = (1.0 - smoothstep(beachW, uBeachTopM * 0.5 + beachW, vH))   // 2.0->0.5x: 4x narrower grass<->sand crossover band (user 2026-06-14)
+        // GRASS<->BEACH crossover is DISPLACEMENT-DRIVEN, NO warp line (user 2026-06-15 'it must push the
+        // gradient of the crossover using the crossovers displacement maps, not draw a new line'). The sand
+        // WEIGHT crosses over GRADUALLY across a wide elevation span (0 -> uBeachWidth*beachTop) so grass+sand
+        // co-occur in the top-2 over that whole span; the texture DISPLACEMENT height-blend (bSharp below) then
+        // picks the local winner per-pixel = the boundary is SHAPED by the grass/sand displacement maps
+        // (interlocking fingers), never a drawn contour. uBeachWidth dials the gradient width (window.__beachWidth).
+        float beach = (1.0 - smoothstep(0.0, uBeachTopM * uBeachWidth, vH))
                     * (1.0 - smoothstep(0.18, 0.55, slope));
         // SAND BLEED (2026-06-13): patchy sand spills above the main beach line, modulated by VS
         // warp noise so the edge reads as wind-blown pockets, not a strict elevation cut. At peak it
