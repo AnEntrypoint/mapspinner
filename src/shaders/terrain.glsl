@@ -1277,6 +1277,8 @@ uniform float uXFade1;       // crossover-displacement fade end metres (__xFade1
 uniform float uAlbFade0;     // albedo high-detail fade start metres (__albFade0, default 6000)
 uniform float uAlbFade1;     // albedo high-detail fade end metres (__albFade1, default 16000) -- albedo -> flat material color past here
 uniform float uTriSharp;     // triplanar weight exponent (__triSharp, default 4.0) -- higher = harder dominant-axis pick (8+ flips at 45deg), lower = softer blend
+uniform float uNrmFade0;     // normal-texture fade start metres (__nrmFade0, default 40000)
+uniform float uNrmFade1;     // normal-texture fade end metres (__nrmFade1, default 80000) -- texture normals gone past here
 // MATERIAL-BOUNDARY DITHER REVERTED (2026-06-05): the threshold-perturbation approach (matEdgeNoise on
 // the smoothstep input) produced HARD-EDGED PATCHES + a UV-like grid on uniform grass/snow (user live
 // eye: 'hard uninteresting lines between rocky/grass', 'grass/snow UV problem') -- perturbing a near-
@@ -1995,7 +1997,7 @@ void main() {
         // amplification turned mip residue into sparkle; dropping it early collapses the boundary to the smooth
         // weight ramp well before it can alias. Both window-dialable (__texNrmFadeKm not needed; __xFade0/__xFade1).
         highp float camDist = length(camWorld - vWorld);
-        float texFade   = 1.0 - smoothstep(20000.0, 40000.0, camDist);
+        float texFade   = 1.0 - smoothstep(uNrmFade0, uNrmFade1, camDist);   // DOUBLED 20/40 -> 40/80km (user 2026-06-15 'double the distance of the max normal textures'); dial __nrmFade0/__nrmFade1
         float crossFade = 1.0 - smoothstep(uXFade0, uXFade1, camDist);
         // albFade (uAlbFade0->uAlbFade1, default 6->16km) mips the ALBEDO high-freq structure toward the flat
         // material color closer -- user 'mip the albedo closer, its high detail remains too far away'. The
