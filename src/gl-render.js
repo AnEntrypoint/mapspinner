@@ -429,9 +429,9 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // guards uOctMax<=0 -> 12, so this set is belt-and-braces. Live dial: window.__octMax.
     gl.uniform1i(loc('uOctMax'),        (typeof window!=='undefined' && window.__octMax!=null) ? (window.__octMax|0) : 12);
     gl.uniform1i(loc('uInciseRidgeOcts'), (typeof window!=='undefined' && window.__inciseRidgeOcts!=null) ? (window.__inciseRidgeOcts|0) : 4);
-    gl.uniform1i(loc('uBroadLowOcts'),    (typeof window!=='undefined' && window.__broadLowOcts!=null) ? (window.__broadLowOcts|0) : 8);
+    gl.uniform1i(loc('uBroadLowOcts'),    (typeof window!=='undefined' && window.__broadLowOcts!=null) ? (window.__broadLowOcts|0) : 2);   // 8->2 PERF (2026-06-15): MEASURED 0 visual error (mtn+space) -- broadShapeLowM only feeds the 2400m-FD-step mesa-flatness slope gate, which is low-freq so the high octaves do nothing (its elevation-AO consumer was removed).
     gl.uniform1i(loc('uPeakOcts'),        (typeof window!=='undefined' && window.__peakOcts!=null) ? (window.__peakOcts|0) : 3);
-    gl.uniform1i(loc('uVtxBaseOcts'),     (typeof window!=='undefined' && window.__vtxBaseOcts!=null) ? (window.__vtxBaseOcts|0) : 6);
+    gl.uniform1i(loc('uVtxBaseOcts'),     (typeof window!=='undefined' && window.__vtxBaseOcts!=null) ? (window.__vtxBaseOcts|0) : 3);   // 6->3 PERF (2026-06-15): MEASURED err 1.2 close / 0 far -- vtxDisplace micro-relief, LOD-faded; half the octaves negligible.
     gl.uniform1i(loc('uVtxErodeOcts'),    (typeof window!=='undefined' && window.__vtxErodeOcts!=null) ? (window.__vtxErodeOcts|0) : 4);
     gl.uniform1i(loc('uDetailFbmOcts'),   (typeof window!=='undefined' && window.__detailFbmOcts!=null) ? (window.__detailFbmOcts|0) : 3);
     gl.uniform1i(loc('uFSDetailOcts'),    (typeof window!=='undefined' && window.__fsDetailOcts!=null) ? (window.__fsDetailOcts|0) : 3);
@@ -964,6 +964,11 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // vtxDetail DEFAULT 0: the LOD-RELATIVE per-vertex micro-displacement popped between 1500/1200km
     // (amplitude scaled with tile size + faded in by altitude). The continuous broadShape (12 octaves,
     // absolute world wavelengths) now carries fine relief LOD-invariantly. Live re-enable via __vtxDetail.
+    // PARITY + LEVER ENABLE (2026-06-15): set ALL composeHeight shape uniforms on the RENDER program through
+    // the SAME function the probe/bake use -> render/probe can never diverge AND the octave-count levers
+    // (uOctMax/uInciseRidgeOcts/uBroadLowOcts/uPeakOcts/uVtxBaseOcts) now affect the render so each fractal's
+    // visual contribution can be measured live. (Inline sets below are now redundant-but-harmless duplicates.)
+    setComposeHeightUniforms(U);
     gl.uniform1f(U('vtxDetail'), (typeof window!=='undefined' && window.__vtxDetail!=null) ? +window.__vtxDetail : 1.0);
     // CLIFF / CANYON levers (live-tunable): canyon depth multiplier, cliff terrace strength (VS shape)
     // + strata band thickness and cliff-strata material strength (FS texturing). Defaults = the tuned
@@ -1024,8 +1029,8 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(U('uTexBright'),  _g('texBright', 0.92)); // overall ground brightness
     gl.uniform1f(U('uTexSat'),     _g('texSat', 1.0));     // texture chroma saturation (>1 = more vivid photo hue)
     gl.uniform1f(U('uNrmLow'),     _g('nrmLow', 1.0));     // low-octave rock normal strength (2026-06-15 'dont see lower-freq octave normals')
-    gl.uniform1f(U('uXFade0'),     _g('xFade0', 1500.0));  // crossover-displacement fade start (m) -- PULLED IN 3000->1500 (user 2026-06-15 'crossover textures mip too far away')
-    gl.uniform1f(U('uXFade1'),     _g('xFade1', 4500.0));  // crossover-displacement fade end (m) -- 9000->4500 -- anti-sparkle, mips closer
+    gl.uniform1f(U('uXFade0'),     _g('xFade0', 3000.0));  // crossover-displacement fade start (m) -- DOUBLED 1500->3000 (user 2026-06-15 'double the mip distance for the displacement crossover')
+    gl.uniform1f(U('uXFade1'),     _g('xFade1', 9000.0));  // crossover-displacement fade end (m) -- DOUBLED 4500->9000
     gl.uniform1f(U('uTriSharp'),   _g('triSharp', 4.0));     // triplanar weight exponent (2026-06-15 ^8 'normals flipping between two states' -> 4 smooth)
     gl.uniform1f(U('uNrmFade0'),   _g('nrmFade0', 40000.0)); // normal-texture fade start (m) -- DOUBLED from 20km (2026-06-15)
     gl.uniform1f(U('uNrmFade1'),   _g('nrmFade1', 80000.0)); // normal-texture fade end (m) -- DOUBLED from 40km
