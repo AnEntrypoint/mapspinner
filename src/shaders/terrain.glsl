@@ -1923,7 +1923,7 @@ void main() {
         // touches texture coordinates; every layer tap (albedo A/B, normal A/B, all four materials)
         // samples through this shared wt, so the warp cannot layer or double-apply.
         wt += vTexWarp * uTexWarp;
-        vec3 tw = abs(n); tw = tw * tw; tw /= (tw.x + tw.y + tw.z + 1e-4);
+        vec3 tw = abs(n); tw = tw * tw; tw = tw * tw; tw /= (tw.x + tw.y + tw.z + 1e-4);   // ^4 (2026-06-15 'overlapping textures up close'): sharper triplanar weights -> the dominant axis wins, far less 2-3 projection ghosting/overlap (the 'faded/overlapped' look)
         const vec3 LUMA = vec3(0.299, 0.587, 0.114);
         float bAB = clamp(wA / max(wA + wB, 1e-4), 0.0, 1.0);
         // SINGLE HIGH-FREQUENCY OCTAVE + MIPS (user 2026-06-14 'instead of swapping out texture octaves,
@@ -1936,13 +1936,13 @@ void main() {
         // NORMALS for a less repetitive faraway look -- dont fade it, draw both'): the high octave (wt4)
         // tiles tightly so it repeats visibly far off; ADD the low octave (wt, 2.4km, less repetitive)
         // NORMAL on top -- ALWAYS, no fade -- to break that repetition. Albedo stays high-octave only.
-        highp vec3 wt4 = wt * 4.0;
+        highp vec3 wt4 = wt * 2.0;   // OCTAVE 4->2 (2026-06-15 'grainy, octave too high'): the x4 scale (~0.6m/texel) was too FINE -> aliased/grainy under the isotropic triplanar up close; x2 (~1.2m/texel) keeps detail without the grain.
         vec4 albA = surfTriTap(uSurfAlb, wt4, tw, lA);
         vec3 cA = albA.rgb;   // CHROMA EXPRESSED (2026-06-15 'colors faded / rock looks like sand'): carry the photo's real color, not luma-only -- detail below rescales it to the material BRIGHTNESS so rock reads grey-rocky + grass/sand/snow show their true hue
-        // 3 normal octaves (user 2026-06-14 'add an even lower freq octave, displacement/normals only,
-        // 4x less frequent'): wt4 high (detail) + wt low (2.4km) + wt*0.25 VERY-low (9.6km) -- the very-
-        // low one breaks the far repetition even more. Normals/displacement only (no albedo).
-        vec3 nA = surfTriNrm(uSurfNrm, wt4, tw, lA, n) * 2.0 + surfTriNrm(uSurfNrm, wt, tw, lA, n) * 0.9;   // high (wt4, detail) + mid (wt, 2.4km) octaves. Lowest (wt*0.25, 9.6km) REMOVED 2026-06-14 (user 'keep the mid one, just the lowest one to be removed' -- very low visual impact)
+        // SINGLE NORMAL OCTAVE (2026-06-15 'smeary/overlapped, multiple layers jumping independently'):
+        // the old high(wt4)+mid(wt) two-octave normal superimposed two relief patterns that swam at
+        // different rates = smeary/overlapped. One octave -> clean, coherent relief + 2 fewer taps/px (fps).
+        vec3 nA = surfTriNrm(uSurfNrm, wt4, tw, lA, n) * 2.4;
         float dispA = albA.a;
         // NO BIOME COLOR INHERITANCE (user 2026-06-14 'take away all biome color inheritance, it will
         // speed it up' -- and fixes 'sand near grass tinted green'): each layer wears its OWN material
@@ -1954,7 +1954,7 @@ void main() {
         if (wB > 0.02) {   // second layer only where a real transition exists
             vec4 albB = surfTriTap(uSurfAlb, wt4, tw, lB);
             vec3 cB = albB.rgb;   // CHROMA EXPRESSED (match cA)
-            vec3 nB = surfTriNrm(uSurfNrm, wt4, tw, lB, n) * 2.0 + surfTriNrm(uSurfNrm, wt, tw, lB, n) * 0.9;   // high + mid octaves; lowest removed (match nA)
+            vec3 nB = surfTriNrm(uSurfNrm, wt4, tw, lB, n) * 2.4;   // SINGLE OCTAVE (match nA)
             float dispB = albB.a;
             // HEIGHT-BLEND POKE-THROUGH (user 'each texture's higher areas should poke through the other,
             // offset by the ramp'): height = displacement + a weight-ramp offset (gate positions the
@@ -2013,7 +2013,7 @@ void main() {
         // as the spot its replacing'): the texture contributes STRUCTURE + relative chroma only,
         // luminance-normalized onto the macro biome/climate color, so the splat never shifts the
         // shade of the ground it covers. uTexPhoto (default 0) can blend raw photo color back in.
-        vec3 texC = clamp(mix(vec3(dot(texAlb.rgb, LUMA)), texAlb.rgb, 1.2), 0.0, 1.0);   // x1.2 CHROMA (2026-06-15: 1.8 was too much/overbright -- the >1 extrapolation clipped highlights; 1.2 = gentle saturation, no overbright)
+        vec3 texC = texAlb.rgb;   // NATURAL texture color (2026-06-15: x1.2/x1.8 boost read too bright/cartoony -- use the photo's own chroma, no boost; the biome tint below + brightness shade-match set the final intensity)
         // LAYER-MEAN shade-match (user 2026-06-11 'dont see grass/snow textures' + 'terrain gets
         // darker'): dividing by the PER-PIXEL luminance cancelled all texture structure, and the
         // raw-photo blend that replaced it shifted the shade (the photos are darker than the macro).
@@ -2041,7 +2041,7 @@ void main() {
         // base = flat MATERIAL color (far/low-k); near = structured detail. The macro biome albedo is no
         // longer the base, so NO biome color bleeds into the ground (user 'take away all biome inheritance').
         albedo = clamp(mix(texMatColor, detail, k), 0.0, 1.0);
-        albedo = mix(albedo, biomeC, 0.34);   // 0.68->0.34 (user 2026-06-15 'landscape/biome color HALVED, texture color doubled') -- let the texture chroma show instead of washing it toward the flat biome color
+        albedo = mix(albedo, biomeC, 0.5);   // 0.34->0.5 (2026-06-15 'too bright/cartoony'): restore some landscape/biome tint to ground the texture color (between the 0.68 wash and the 0.34 cartoony)
         // (AO REMOVED 2026-06-14 user 'fps dropped a lot, no visual improvement, get rid of all the ao
         // for texture and landscape': the displacement texAO + the broadShapeLowM-Laplacian elevation AO
         // are both gone; the latter's 5 wide VS taps were the FPS cost. vConcavity varying also removed.)
