@@ -1279,6 +1279,8 @@ uniform float uNrmFade0;     // normal-texture fade start metres (__nrmFade0, de
 uniform float uNrmFade1;     // normal-texture fade end metres (__nrmFade1, default 80000) -- texture normals gone past here
 uniform float uBandWarp;     // snow/rock/BEACH biome-band warp amplitude metres (__bandWarp, default 1100) -- one low-freq field warps every elevation-keyed biome edge incl. the beach
 uniform float uBeachWidth;   // grass<->beach crossover band WIDTH (x beachTop) (__beachWidth, default 5.0) -- wide = the displacement maps interlock a broad fingered shoreline (narrow = a thin line)
+uniform float uTexFar0;      // splat->biome far-fade start (pxWorld metres) (__texFar0, default 4000)
+uniform float uTexFar1;      // splat->biome far-fade end (pxWorld metres) (__texFar1, default 26000) -- splat gone to macro biome past here
 // MATERIAL-BOUNDARY DITHER REVERTED (2026-06-05): the threshold-perturbation approach (matEdgeNoise on
 // the smoothstep input) produced HARD-EDGED PATCHES + a UV-like grid on uniform grass/snow (user live
 // eye: 'hard uninteresting lines between rocky/grass', 'grass/snow UV problem') -- perturbing a near-
@@ -1833,7 +1835,7 @@ void main() {
     vec3 texDn = vec3(0.0);   // photo-texture WORLD-SPACE normal perturbation, applied after uReliefShade
     // SPLAT RUNS UNDERWATER TOO (user 2026-06-11 'continue under water as sand and rock'): the old
     // vH > -2 gate cut the photo textures at the waterline, leaving the seabed flat-colored.
-    float texFarFade = 1.0 - smoothstep(4000.0, 26000.0, pxWorld);   // WIDE gentle band (user 2026-06-15 'hard line through the middle'): the old 8000-10000 (2000-wide) splat->biome fade compressed to a sharp horizontal LINE at grazing angle; spread over 22000 px-world so the detail->flat-biome handoff is gradual, no line.
+    float texFarFade = 1.0 - smoothstep(uTexFar0, uTexFar1, pxWorld);   // splat->macro-biome handoff; LIVE LEVER (__texFar0/__texFar1) to isolate/kill the distance ring (2026-06-15)
     if (uHasSurfTex > 0.5 && uTexMix > 0.001 && texFarFade > 0.001) {
         vec3 biomeC = albedo;   // SUBTLE landscape color variation (user 2026-06-14 're-introduce ... use existing data, make it subtle'): the macro biome/climate color is ALREADY computed; save it now and mix a touch back after the material override (no new computation).
         // material weights from the existing gates (climate = vClimate: z=temp, w=humid)
