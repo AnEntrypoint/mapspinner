@@ -2013,7 +2013,7 @@ void main() {
         // as the spot its replacing'): the texture contributes STRUCTURE + relative chroma only,
         // luminance-normalized onto the macro biome/climate color, so the splat never shifts the
         // shade of the ground it covers. uTexPhoto (default 0) can blend raw photo color back in.
-        vec3 texC = clamp(mix(vec3(dot(texAlb.rgb, LUMA)), texAlb.rgb, 1.8), 0.0, 1.0);   // x1.8 CHROMA BOOST (2026-06-15 'texture color intensity doubled')
+        vec3 texC = clamp(mix(vec3(dot(texAlb.rgb, LUMA)), texAlb.rgb, 1.2), 0.0, 1.0);   // x1.2 CHROMA (2026-06-15: 1.8 was too much/overbright -- the >1 extrapolation clipped highlights; 1.2 = gentle saturation, no overbright)
         // LAYER-MEAN shade-match (user 2026-06-11 'dont see grass/snow textures' + 'terrain gets
         // darker'): dividing by the PER-PIXEL luminance cancelled all texture structure, and the
         // raw-photo blend that replaced it shifted the shade (the photos are darker than the macro).
