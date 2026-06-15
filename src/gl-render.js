@@ -1019,7 +1019,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
       cam.eye[0] - Math.floor(cam.eye[0] / _wrapM) * _wrapM,
       cam.eye[1] - Math.floor(cam.eye[1] / _wrapM) * _wrapM,
       cam.eye[2] - Math.floor(cam.eye[2] / _wrapM) * _wrapM);
-    gl.uniform1f(U('uTexNrmK'),    _g('texNrmK', 2.0));   // user-dialed 2026-06-15 (live window.__texNrmK). texture detail-normal strength
+    gl.uniform1f(U('uTexNrmK'),    _g('texNrmK', 1.0));   // user-dialed 2026-06-15 2.0->1.0 (live window.__texNrmK). texture detail-normal strength
     gl.uniform1f(U('uBiomeTint'),  _g('biomeTint', 0.22)); // macro biome color mixed over the texture (2026-06-15 'doesnt look like the texture color' -- was hard 0.5)
     gl.uniform1f(U('uTexBright'),  _g('texBright', 0.92)); // overall ground brightness
     gl.uniform1f(U('uTexSat'),     _g('texSat', 1.0));     // texture chroma saturation (>1 = more vivid photo hue)
@@ -1040,7 +1040,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // LIVE A/B ISOLATION TOGGLES (window.__rockBump / __chroma / __strata, default 1 = no change). Flip one
     // to 0 in the console to disable that detail layer and see which produces the close-up uv scramble.
     gl.uniform1f(U('uFlatNormal'),      _g('flatNormal', 0.0));   // 1 = smooth analytic normal (isolate the geometric-normal scramble)
-    gl.uniform1f(U('uReliefShade'),    _g('reliefShade', 5.0));   // user-dialed 2026-06-15 (live window.__reliefShade). landscape/macro-slope normal exaggeration
+    gl.uniform1f(U('uReliefShade'),    _g('reliefShade', 1.8));   // user-dialed 2026-06-15 5.0->1.8 (live window.__reliefShade). landscape/macro-slope normal exaggeration
     gl.uniform1f(U('uSkyFill'),        _g('skyFill', 0.45));
     gl.uniform1f(U('uTerminatorGlow'), _g('terminatorGlow', 0.30));
     gl.uniform1f(U('uNightLights'),    _g('nightLights', 1.0));   // night/shadow FILL intensity (dim ambient lift so dark areas are not black); 0 = off

@@ -486,11 +486,13 @@ function frameLoop(){
   // is 2m, max terrain ~15km, the jsBroadShape mirror is within a few hundred m) -- skip the stall and
   // take the existing CPU-mirror fallback. Below 20km (where collision is load-bearing) keep GPU-exact.
   const _altRoughKm = _camLenMv - RADIUS;
-  // moveStep speed-scaling + anti-tunnel guard use the CPU mirror (1-frame-lag-tolerant). The AUTHORITATIVE
-  // GPU collision sample is taken AFTER the move below at the POST-move direction (2026-06-15 'our 2m
-  // collision puts the camera under the ground'): the old pre-move _gpuGM clamped against the ground BEHIND
-  // the eye, so moving into rising terrain (esp. the now-2x canyon walls) clipped one frame late.
-  const _surfM = jsBroadShape(cam.pos[0],cam.pos[1],cam.pos[2]);
+  // moveStep speed-scaling + anti-tunnel guard use LAST FRAME's GPU ground sample (accurate; 1-frame lag is
+  // fine for a guard), CPU mirror only if no GPU sample yet. The AUTHORITATIVE collision sample is taken
+  // AFTER the move below at the POST-move direction (2026-06-15 'our 2m collision puts the camera under the
+  // ground'): the old code sampled PRE-move then clamped POST-move, so moving into rising terrain (esp. the
+  // now-2x canyon walls) clamped against the ground BEHIND the eye and clipped one frame late.
+  const _surfM = (window.__lastGpuM != null && isFinite(window.__lastGpuM)) ? window.__lastGpuM
+               : jsBroadShape(cam.pos[0],cam.pos[1],cam.pos[2]);
   const altSurfElev = Math.min(_surfM, 9500.0) / WEBGL2_TERRAIN_R_M;
   const altKmAbove = Math.max(1e-3, (Math.hypot(...cam.pos) - RADIUS*(1.0 + altSurfElev)));
   // CAMERA MOVE-STEP. NO ELEVATION SLOWDOWN (user 2026-06-05: 'get rid of the camera slowdown code').
@@ -526,6 +528,7 @@ function frameLoop(){
   const _rDir = r > 1e-9 ? [cam.pos[0]/r, cam.pos[1]/r, cam.pos[2]/r] : [0,0,1];
   const gpuM = (_altRoughKm < 20.0 && _orchMv && _orchMv.render && _orchMv.render.sampleGroundM)
              ? _orchMv.render.sampleGroundM(_rDir) : null;
+  window.__lastGpuM = (gpuM != null && isFinite(gpuM)) ? gpuM : null;   // cache for next frame's moveStep guard (accurate, lag-tolerant)
   // The GPU probe sampleGroundM IS the exact rendered terrain height under the camera (same
   // hpfSample+broadShapeM the mesh VS uses), so no large clearance margin is needed. The old +130m
   // "vDisp micro-relief margin" parked the eye ~132m above the ground (user: "place us 2.0m from the
