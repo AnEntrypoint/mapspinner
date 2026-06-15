@@ -1084,7 +1084,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(U('oceanAmp'), (oc.oceanAmplitude != null) ? oc.oceanAmplitude : 1.0);
     gl.uniform1f(U('oceanChoppy'), (oc.oceanChoppiness != null) ? oc.oceanChoppiness : 0.5);
     gl.uniform1f(U('oceanFoam'), (oc.oceanFoam != null) ? oc.oceanFoam : 0.5);
-    gl.uniform1f(U('uBeachTopM'), _g('beachTop', 640.0));   // beach ceiling: grass stops, sand to the waterline + under it. 30->90 (user 2026-06-14: 3x beach width)
+    gl.uniform1f(U('uBeachTopM'), _g('beachTop', 60.0));    // beach ceiling: grass stops, sand to the waterline. 640->60 (user 2026-06-15 'distance from grass to water too high, huge beach' -- 640m put grass 640m up = a massive sand band; 60m = a normal coastal beach)
 
     // SINGLE INSTANCED DRAW: the deform params that were per-quad uniforms (ox,oy,l,level + face)
     // are now PER-INSTANCE attributes. Build one interleaved instance buffer [ox,oy,l,level,face]

@@ -187,7 +187,7 @@ float inciseRidgeField(vec3 d, float baseFreq, float freqMul){
     return sum / norm;                                         // ->1 on the channel network
 }
 const float RIVER_INCISE_DEPTH = 280.0;   // 120->280 metres at the channel thalweg (user 2026-06-14 'rivers/channels super shallow+flat'): deeper incision
-float riverRidgeField(vec3 dir){ return inciseRidgeField(dir, 24.0, 2.03); }   // freq 40->24 (user 2026-06-15 'no visible canyons'): wider river valleys the coarse mesh resolves into visible relief
+float riverRidgeField(vec3 dir){ return inciseRidgeField(dir, 96.0, 2.03); }   // freq DOUBLED-x4 24->96 (user 2026-06-15 'river field frequency is about 4x too low'): denser river network
 float riverCarveM(vec3 dir, out float wet){
     float ridge = riverRidgeField(dir);
     // (2026-06-15: 'widen the valley' did not help -- reverted; depth carries visibility.)
@@ -224,7 +224,7 @@ uniform float uMtnBandWide;                // widen mtn=smoothstep(16.8,18.6,ele
 uniform float uClimateRelief;              // widen wetLowFlat(0.66,0.9,humid) + coldFlat(0.18,0.34,temp) reliefMul gates
 uniform float uIsleWide;                    // widen isleZone seaBias gates (50,350)+(900,1600) -> (30,600)+(600,2200)
 uniform float uCarveWide;                   // widen the river/canyon/lake/dune CLIMATE gates so carve depth fades in over a wide span
-float canyonRidgeField(vec3 dir){ return inciseRidgeField(dir + vec3(13.7, -4.2, 8.9), 90.0, 2.07); }  // baseFreq 190->90 (user 2026-06-15 'canyons completely flat, read as a thin line'): a 200km gorge crest is still NARROWER than the coarse-LOD mesh cell at altitude -> the mesh straddles it (flat) while the probe+normal carve = 'normals-only'. 90 ~= 420km = each gorge ~2x WIDER so the mesh resolves visible canyon WALLS + floor. Shared VS carve + FS mask -> congruent.
+float canyonRidgeField(vec3 dir){ return inciseRidgeField(dir + vec3(13.7, -4.2, 8.9), 180.0, 2.07); }  // baseFreq DOUBLED 90->180 (user 2026-06-15 'the canyon fields frequency must be doubled'): denser gorge network so the camera is always near a canyon. Now that the +5 floor keeps them DRY (visible), density is the win. Shared VS carve + FS mask -> congruent.
 // CANYON cross-section now reads as a CANYON, not a V-notch: STEEP WALLS + a FLAT FLOOR.
 //   wall = a sharp smoothstep band -> the carve drops fast over a narrow ridge interval (the cliff
 //          walls), instead of the old gentle bench+gorge blend that made shallow V-troughs.
@@ -241,11 +241,16 @@ float canyonCarveM(vec3 dir, out float depth){
     // gradient -> the coarse LOD grid samples the wall without aliasing the cliff.
     // (2026-06-15: the 'widen the approach' attempt REGRESSED -- gentler walls read as MORE flat, user 'still
     // no elevation'. Reverted to the defined gorge; visibility comes from DEPTH (the -120 floor below) instead.)
-    float bench = smoothstep(0.50, 0.74, ridge);               // wide eroded rim shoulder
-    float wall  = smoothstep(0.58, 0.90, ridge);               // gentle cliff wall (wide band)
-    float floorF= smoothstep(0.72, 0.96, ridge);               // reach the flat gorge floor, then clamp
+    // BROAD VALLEY BASIN + inner gorge (user 2026-06-15 'canyons not visible on elevation' -- ROOT is mesh LOD:
+    // a narrow gorge falls between coarse vertices so the mesh stays flat. Give each canyon a WIDE basin the
+    // coarse mesh resolves into a visible valley DIP, with the steep gorge nested inside it for close-range
+    // detail). basin = a broad gentle depression spanning the whole approach (ridge 0.12..0.85); gorge =
+    // the steep inner wall/floor. Both descend to the floor; the basin makes the elevation read at altitude.
+    float basin = smoothstep(0.12, 0.85, ridge);               // BROAD mesh-resolvable valley (many cells wide)
+    float wall  = smoothstep(0.58, 0.90, ridge);               // steep inner cliff wall
+    float floorF= smoothstep(0.72, 0.96, ridge);               // flat gorge floor, then clamp
     depth = max(wall, floorF);
-    float profile = 0.18 * bench + 0.82 * max(wall, floorF);
+    float profile = 0.55 * basin + 0.45 * max(wall, floorF);   // broad basin (visible at altitude) + inner gorge
     float dmul = canyonDepthMul > 0.0 ? canyonDepthMul : 1.0;   // 0 = uniform unset (e.g. probe prog)
     float carve = -CANYON_INCISE_DEPTH * dmul * profile;
     // FINE TRIBUTARY GULLIES (user 2026-06-02: 'at 2m our canyons are <2m'). The main canyon network
@@ -708,7 +713,7 @@ highp float composeHeightC(vec3 dir0, highp vec2 faceLocal, float tileM, HCache 
   // floor to exactly -60m -- the whole seabed was a uniform pan (root of 'depth under the water
   // doesnt seem right'; probe-witnessed minSeen -60 planet-wide). Carves still cannot punch land
   // below -60; the ocean keeps its real bathymetry.
-  inciseTot = max(inciseTot, min(-120.0 - h, 0.0));          // land floor -60->-120 (user 2026-06-15 'canyons not visible as elevation'): allow gorges to cut twice as deep -> the gorge bottom drops a clear ~120m below the rim = unmistakable elevation (gorge bottoms go below sea = a real river canyon, not a fake inland sea)
+  inciseTot = max(inciseTot, min(5.0 - h, 0.0));             // land floor +5 (user 2026-06-15 'NONE of the canyons affect elevation' ROOT: a -60 floor cut low-terrain canyons BELOW sea level -> the flat ocean water-plane pass rendered OVER them = the canyon read as flat water, not a valley. Clamp the carve floor ABOVE sea (+5m) so canyons stay DRY visible valleys; the carve self-limits by available headroom so high terrain still gets deep gorges.)
   h += inciseTot;
   // CLIFF TERRACING (mesa/butte benches) -- after carves so canyon walls + risers compose
   float cliffFaceMask; float cliffCarveV = cliffTerraceM(dir0, h, cliffFaceMask) * step(0.0, h);
@@ -948,7 +953,7 @@ void main() {
     // carves a deep basin below it). Bounded against the PRE-carve vH so deep inland canyons keep full
     // depth while coastal ones are limited by their own available headroom.
     float inciseTot = riverCarveV + canyonCarveV;               // both negative (downcut)
-    inciseTot = max(inciseTot, min(-120.0 - vH, 0.0));          // land floor -60->-120 (mirror composeHeightC; deeper visible gorges, user 2026-06-15)
+    inciseTot = max(inciseTot, min(5.0 - vH, 0.0));            // land floor +5 (mirror composeHeightC; canyons stay DRY above the water plane = visible valleys, not flooded flat water)
     vH += inciseTot;
     // CLIFF TERRACING: snap the arid+elevated land into flat benches with steep risers (mesa/butte
     // cliff country). Gated by the SAME canyonArid mask so cliffs share canyon regions (a coherent
@@ -1045,7 +1050,11 @@ void main() {
         // 2nd full eval/vertex. The 4 OFFSET taps below stay their own single composeHeight instance (the FXC
         // normal-divergence fix is about the taps agreeing with EACH OTHER; the center only feeds scalar h, not the
         // normal cross-difference 1056-1058, so reusing vH cannot reintroduce the per-callsite normal triad).
-        hN0 = vH;   // center = the geometry height h (== composeHeight, dedup)
+        // DEDUP REVERTED (user 2026-06-15 'canyon/river in the FIELD + probe but NOT in the rendered elevation'
+        // -- JS(probe=composeHeight) != visual(mesh=vH)). The inline vH had DIVERGED from composeHeight, so the
+        // rendered vertex was flat while the probe carved. Use composeHeight DIRECTLY for the rendered geometry
+        // height so render == probe == JS elevation by construction (one extra eval/vertex; correctness > the cache).
+        hN0 = composeHeightC(dir0, faceLocal, defOffset.z, computeHCache(dir0));
         // VERTEX NORMAL = CENTRAL DIFFERENCE in PARAMETRIC MESH SPACE over the FULL composeHeight (2026-06-14
         // jagged-normal fix). Two earlier methods both jagged: (a) interior FORWARD mesh-cell cross product
         // = each vertex got its forward triangle's FACE normal (faceted) at a vertex-spacing step (noisy);
