@@ -302,7 +302,7 @@ highp float cliffTerraceM(vec3 dir, highp float h, out float cliffOut){   // W7:
     if (region <= 0.0) return 0.0;
     // EXCLUDE steep mountains (a mesa is a flat-topped raised block, not a peak). Macro slope from
     // broadShapeLowM over a fixed 1.2km step -> fade mesas out where the broad land is already steep.
-    const float e = 1200.0;
+    const float e = 2400.0;   // FPS/quality: 1200->2400 macro-slope FD step (2026-06-15). A wider step better captures the MACRO slope for the mesa flatness gate (less aliasing) and pairs with fewer broadShapeLowM octaves; the gate position is visually unchanged (badlands-only, gated).
     vec3 ux = normalize(cross(abs(d.y) < 0.99 ? vec3(0.0,1.0,0.0) : vec3(1.0,0.0,0.0), d));
     highp float h0 = broadShapeLowM(d);                          // W7: metres, highp
     highp float gx = (broadShapeLowM(normalize(d + ux * (e/defRadius))) - h0) / e;
@@ -2252,7 +2252,7 @@ void main() {
         float apGate = smoothstep(3.0, 120.0, dKm);
         if (apGate > 0.002) {
             vec3 vRay = segKm / max(dKm, 1e-4);
-            const int APN = 8;
+            const int APN = 4;   // FPS: 8->4 aerial-perspective march steps (2026-06-15). Distance-gated (apGate 3..120km) so it only shades FAR terrain where the smooth haze integral is visually unaffected by step count.
             float apdt = dKm / float(APN);
             vec3 inscatR = vec3(0.0), inscatM = vec3(0.0);
             float odR = 0.0, odM = 0.0;                    // optical depth camera->sample

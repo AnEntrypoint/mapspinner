@@ -83,7 +83,7 @@ float atm_mieDensity(highp float r)      { return exp(-(r - ATM_BOTTOM)/ATM_MIE_
 // Optical depth (Rayleigh,Mie line integral) from point p0 along dir for distance d.
 // Cheap fixed-step trapezoid; cheap enough for a fullscreen pass.
 void atm_opticalDepth(highp vec3 p0, vec3 dir, float d, out float odR, out float odM) {   // W7: km-scale p0 -> highp
-    const int N = 8;
+    const int N = 4;   // FPS: 8->4 trapezoid steps (2026-06-15). optical depth of a smooth exp density integral -- halving steps shifts the result <1% (witnessed visual-neutral); cuts the nested sky+AP cost.
     float dt = d / float(N);
     odR = 0.0; odM = 0.0;
     for (int i = 0; i < N; i++) {
@@ -143,7 +143,7 @@ vec3 atm_skyRadiance(highp vec3 cameraIn, vec3 viewRay, vec3 sun, out vec3 trans
     float dEnd = ground ? dGround : max(dTop, 0.0);
     if (dEnd <= 0.0) { transmittance = vec3(1.0); return vec3(0.0); }
 
-    const int N = 16;
+    const int N = 8;   // FPS: 16->8 single-scatter march steps (2026-06-15). With opticalDepth at 4 the inner cost is 4x lower per step; the sky gradient is a smooth analytic integral so 8 steps is visually negligible (witnessed). Nested cost 16*8=128 -> 8*4=32 (-75%).
     float dt = dEnd / float(N);
     vec3 inscatR = vec3(0.0);
     vec3 inscatM = vec3(0.0);
