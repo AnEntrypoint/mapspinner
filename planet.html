@@ -379,7 +379,7 @@ function frameLoop(){
       // deck; splitDist floors at 1.1 so this is near the coarse limit.
       if (window.__splitFactor == null) window.__splitFactor = 0.28;
       import('./src/planet-orchestrator.js')
-        .then(m => m.initMapspinnerPlanet(glw, { radius: WEBGL2_TERRAIN_R_M, frustumCull: false,
+        .then(m => m.initMapspinnerPlanet(glw, { radius: WEBGL2_TERRAIN_R_M, frustumCull: true,  // DEFAULT-ON 2026-06-15: NDC-AABB frustum cull (quadOutsideFrustum, over-cull-fixed) -- deck quads 750->179, ~1.58x, coverage stays 1.0 (witnessed). window.__frustumCull=false disables live.
           // FPS lever (2026-06-14): mesh GRID is overridable via ?grid=N for live triangle-count
           // A/B (the bottleneck is triangle/vertex throughput, not the broadShapeM ALU -- octMax
           // 12->3 left frame time flat). Absent param falls through to gl-render's 16 default.

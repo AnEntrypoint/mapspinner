@@ -642,7 +642,13 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
     // interior is actually on-screen, so we don't run it: the GPU clips genuinely off-screen patches
     // for free, and the behind-limb cull below removes the ~80% backside quads cheaply. It is purely
     // a perf optimization; re-enable for diagnostics via window.__frustumCull (or opts.frustumCull).
-    const cullOn = (typeof window !== 'undefined' && window.__frustumCull != null) ? !!window.__frustumCull : (opts.frustumCull === true);
+    // FRUSTUM CULL DEFAULT-ON (2026-06-15): the historical over-cull (bulged oblique-low-alt quads
+    // popping out) was fixed in quadOutsideFrustum (near-straddle KEEP + 3x3 sample grid + CULL_MAX_ELEV
+    // 12km margin + 0.06 NDC slack). Live-measured SAFE+HUGE: at the deck quads 750->179 (-76%), full
+    // 25.7->16.3ms (~1.58x), screen coverage stays 1.0 through yaw + at oblique 2km (no holes). The GPU
+    // clips off-screen patches but still pays their VS + per-vertex fragment-gen, so culling them on the
+    // CPU is a real win. Default ON; window.__frustumCull=false or opts.frustumCull===false disables.
+    const cullOn = (typeof window !== 'undefined' && window.__frustumCull != null) ? !!window.__frustumCull : (opts.frustumCull !== false);
     const cullActive = cullOn && render.cullMatrix;
     // cull-debug: count frustum-culled-but-on-screen quads (false-cull signature) when enabled.
     const _cullDbgOn = (typeof window !== 'undefined' && !!window.__cullDebug);
