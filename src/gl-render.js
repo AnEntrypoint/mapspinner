@@ -1033,8 +1033,8 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(U('uNrmFade1'),   _g('nrmFade1', 80000.0)); // normal-texture fade end (m) -- DOUBLED from 40km
     gl.uniform1f(U('uBeachWarp'),  _g('beachWarp', 1.4));    // grass<->beach line warp x beachTop (2026-06-15 'grass-to-beach super horizontal') -- was 0.30
     gl.uniform1f(U('uBandWarp'),   _g('bandWarp', 1100.0));  // snow/rock band warp amplitude (m), low-freq (2026-06-15 'snow warp stronger + 3x lower freq')
-    gl.uniform1f(U('uBeachDet0'),  _g('beachDet0', 3000.0)); // beach<->grass fine-detail fade start (m) (2026-06-15 'mip out the beach-grass gradient detail at distance')
-    gl.uniform1f(U('uBeachDet1'),  _g('beachDet1', 10000.0));// beach<->grass fine-detail fade end (m)
+    gl.uniform1f(U('uBeachDet0'),  _g('beachDet0', 30000.0)); // beach<->grass fine-detail fade start (m) -- 10x further (user 2026-06-15 'mipping right at the camera')
+    gl.uniform1f(U('uBeachDet1'),  _g('beachDet1', 100000.0));// beach<->grass fine-detail fade end (m) -- 10x further
     gl.uniform1f(U('uTexMix'),     _g('texMix', 0.85));     // splat blend amount (0 = off)
     gl.uniform1f(U('uTexWarp'),    _g('texWarp', 0.23));    // anti-repetition warp amplitude (-30% from 0.325, grass warp too intense)
     gl.uniform1f(U('uTexPhoto'),   _g('texPhoto', 0.0));    // raw photo-color fraction (0 = patch matches the macro shade exactly)
