@@ -1032,6 +1032,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(U('uNrmFade0'),   _g('nrmFade0', 40000.0)); // normal-texture fade start (m) -- DOUBLED from 20km (2026-06-15)
     gl.uniform1f(U('uNrmFade1'),   _g('nrmFade1', 80000.0)); // normal-texture fade end (m) -- DOUBLED from 40km
     gl.uniform1f(U('uBandWarp'),   _g('bandWarp', 1100.0));  // snow/rock/BEACH band warp amplitude (m), low-freq (2026-06-15 'use the snow warp on the beach too')
+    gl.uniform1f(U('uBeachWidth'), _g('beachWidth', 5.0));   // grass<->beach crossover band width x beachTop (2026-06-15 'band super narrow, displacement does little') -- wide = displacement-fingered shoreline
     gl.uniform1f(U('uTexMix'),     _g('texMix', 0.85));     // splat blend amount (0 = off)
     gl.uniform1f(U('uTexWarp'),    _g('texWarp', 0.23));    // anti-repetition warp amplitude (-30% from 0.325, grass warp too intense)
     gl.uniform1f(U('uTexPhoto'),   _g('texPhoto', 0.0));    // raw photo-color fraction (0 = patch matches the macro shade exactly)

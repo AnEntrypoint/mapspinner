@@ -1280,6 +1280,7 @@ uniform float uTriSharp;     // triplanar weight exponent (__triSharp, default 4
 uniform float uNrmFade0;     // normal-texture fade start metres (__nrmFade0, default 40000)
 uniform float uNrmFade1;     // normal-texture fade end metres (__nrmFade1, default 80000) -- texture normals gone past here
 uniform float uBandWarp;     // snow/rock/BEACH biome-band warp amplitude metres (__bandWarp, default 1100) -- one low-freq field warps every elevation-keyed biome edge incl. the beach
+uniform float uBeachWidth;   // grass<->beach crossover band WIDTH (x beachTop) (__beachWidth, default 5.0) -- wide = the displacement maps interlock a broad fingered shoreline (narrow = a thin line)
 // MATERIAL-BOUNDARY DITHER REVERTED (2026-06-05): the threshold-perturbation approach (matEdgeNoise on
 // the smoothstep input) produced HARD-EDGED PATCHES + a UV-like grid on uniform grass/snow (user live
 // eye: 'hard uninteresting lines between rocky/grass', 'grass/snow UV problem') -- perturbing a near-
@@ -1859,9 +1860,11 @@ void main() {
         // gate can reuse it; the snow/rock gates below reuse the same bandWarp.
         float bandWarpN = snoise3(bwDir * 1100.0) + 0.5 * snoise3(bwDir * 2580.0);   // ~ +/-1.5
         float bandWarp  = bandWarpN * uBandWarp;
-        // GRASS<->BEACH: the SAME bandWarp shifts the beach elevation threshold (moves the band); the texture
-        // DISPLACEMENT height-blend (bSharp below) still fingers the per-pixel boundary within it.
-        float beach = (1.0 - smoothstep(bandWarp, uBeachTopM * 0.5 + bandWarp, vH))
+        // GRASS<->BEACH: bandWarp shifts the threshold (moves the band); the WIDE crossover span lets the
+        // texture DISPLACEMENT height-blend (bSharp below) interlock grass+sand across it (user 2026-06-15
+        // 'the beach-to-sand band is super narrow not letting the displacement replacement do much' -- the old
+        // 0.5x beachTop band was a ~15m strip = a thin horizontal LINE). uBeachWidth (default 5x) widens it.
+        float beach = (1.0 - smoothstep(bandWarp, uBeachTopM * uBeachWidth + bandWarp, vH))
                     * (1.0 - smoothstep(0.18, 0.55, slope));
         // SAND BLEED (2026-06-13): patchy sand spills above the main beach line, modulated by VS
         // warp noise so the edge reads as wind-blown pockets, not a strict elevation cut. At peak it
