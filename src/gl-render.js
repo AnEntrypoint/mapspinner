@@ -1003,7 +1003,16 @@ export async function initMapspinnerRender(gl, opts = {}) {
       gl.activeTexture(gl.TEXTURE7); gl.bindTexture(gl.TEXTURE_2D_ARRAY, _surfNrm); gl.uniform1i(U('uSurfNrm'), 7);
     }
     gl.uniform1f(U('uHasSurfTex'), hasSurf ? 1.0 : 0.0);
-    gl.uniform1f(U('uTexTileM'),   _g('texTile', 2400.0));  // metres per repeat (user: 24m read as noise/rock -- 100x bigger)
+    const _texTileM = _g('texTile', 2400.0);
+    gl.uniform1f(U('uTexTileM'),   _texTileM);  // metres per repeat (user: 24m read as noise/rock -- 100x bigger)
+    // CAMERA-RELATIVE TEXTURE UV (2026-06-15 'UV jumps wildly up close'): reduce the camera world pos mod the
+    // tile period in fp64 here on the CPU, pass the small remainder. The shader builds the UV from
+    // (vTexRel + uTexCamFrac) so no 6.4e6m fp32 quantization reaches the texture coord. Dropping whole tiles is
+    // REPEAT-wrap-invariant -> world-anchored, seam-free.
+    gl.uniform3f(U('uTexCamFrac'),
+      cam.eye[0] - Math.floor(cam.eye[0] / _texTileM) * _texTileM,
+      cam.eye[1] - Math.floor(cam.eye[1] / _texTileM) * _texTileM,
+      cam.eye[2] - Math.floor(cam.eye[2] / _texTileM) * _texTileM);
     gl.uniform1f(U('uTexNrmK'),    _g('texNrmK', 2.0));   // user-dialed 2026-06-15 (live window.__texNrmK). texture detail-normal strength
     gl.uniform1f(U('uTexMix'),     _g('texMix', 0.85));     // splat blend amount (0 = off)
     gl.uniform1f(U('uTexWarp'),    _g('texWarp', 0.23));    // anti-repetition warp amplitude (-30% from 0.325, grass warp too intense)

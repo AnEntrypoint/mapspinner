@@ -773,6 +773,10 @@ out float vWaterDepth;  // metres the flat inland-water plane sits ABOVE the loc
 out float vCanyonDep;   // canyon gorge depth [0,1]
 out float vCliffFace;   // cliff/escarpment riser face [0,1] (1 = steep terrace face)
 out float vDuneCrest;   // dune crest [0,1]
+out highp vec3 vTexRel; // W7: CAMERA-RELATIVE world position (= vWorld - camWorld) for the texture UV. Built from the
+                        // same precise (dir0-defCamDir)*R camera-relative form as gl_Position, so it carries NO
+                        // 6.4e6m fp32 cancellation -> the texture UV is as stable as the geometry (kills 'UV jumps
+                        // wildly up close'). Absolute vWorld would re-quantize ~0.4m/frame as the camera moves.
 out float vLevel;       // quad LOD level (per-instance iOffset.w) for the patches debug view
 out vec2  vGrid;        // per-quad parametric mesh coord [0,1] (for the wireframe overlay)
 out vec4 vClimate;      // (seaBias, elevAmp, temp, humid) sampled ONCE per vertex from the HPF
@@ -1127,6 +1131,7 @@ void main() {
     // defViewProjNoEye (no folded translate(-eye)). Result magnitude ~horizon scale, fp32-precise.
     highp vec3 vRel = (dir0 - defCamDir) * R + dir0 * (hR - skirt) - defCamDir * defCamAlt;   // W7 highp ISLAND: camera-relative projection (render height; planet-scale fp32 cancellation fix kept intact)
     gl_Position = defViewProjNoEye * vec4(vRel, 1.0);
+    vTexRel = vRel;   // camera-relative pos for the precise texture UV (same fp32-cancellation-free coord as the geometry)
     // UNIFIED carve masks -> FS (interpolated; the FS no longer re-evaluates the sharp carve fields
     // per-pixel). riverWetMask/canyonDepMask/duneCrest are the out-params captured above; lakeWetV
     // from the lake-carve block. Gated by the SAME climate masks the geometry used.
@@ -1160,6 +1165,8 @@ in float vCliffFace;
 in float vDuneCrest;
 in float vLevel;          // quad LOD level (patches view)
 in vec2  vGrid;            // per-quad parametric mesh coord (wireframe overlay)
+in highp vec3 vTexRel;     // W7: camera-relative world pos for the precise (jitter-free) texture UV
+uniform highp vec3 uTexCamFrac; // camWorld reduced mod uTexTileM per-axis on the CPU (fp64) -> small + precise; world UV = (vTexRel + uTexCamFrac)/uTexTileM (the dropped integer tiles are REPEAT-wrap-invariant)
 uniform float uWireframe;  // 1 = overlay the mesh grid lines (window/cam wireframe toggle)
 uniform float uFsCheap;    // GPU-TIMER VS/FS attribution: 1 = short-circuit the FS to a trivial
                            // constant color immediately after the per-vertex normal is read, so a
@@ -1912,14 +1919,15 @@ void main() {
         // fp32 precision = visible UV stairs. Snap step = 1024 tiles exactly, so wt jumps by an
         // integer tile count across a snap boundary = identical wrapped sample (REPEAT), no phase
         // reset, camera-independent.
-        // PRECISION FIX (2026-06-15 'UV jumps wildly up close + diamond/cross-hatch grid'): snapM was
-        // uTexTileM*1024 -> wt ranged 0..1024 (wt4 ~2048), and fp32 at that magnitude can't resolve
-        // sub-texel -> the bilinear weights quantized = diamond grid + jumping as the camera moves.
-        // 1024->32: wt stays 0..32 (full sub-texel fp32 precision) and the wrap seam moves to ~77km
-        // (uTexTileM*32), far beyond the splat's ~10km pxWorld fade so it is never visible. Tile phase
-        // preserved (snapM is still an integer multiple of uTexTileM -> seamless REPEAT wrap).
-        highp float snapM = uTexTileM * 32.0;
-        highp vec3 wt = (vWorld - floor(vWorld / snapM) * snapM) / uTexTileM;
+        // PRECISION FIX (2026-06-15 'UV jumps wildly up close'): the ROOT was the absolute vWorld (~6.4e6m)
+        // -> fp32 quantizes it to ~0.4m, so the per-pixel world position (and thus the texture UV) re-rounds
+        // every frame as the camera moves = the jumping. The GEOMETRY does NOT jump because gl_Position is
+        // built from the camera-RELATIVE vRel (the (dir0-defCamDir)*R form, no 6.4e6 intermediate). FIX: build
+        // the UV from that SAME precise camera-relative coord. vTexRel = vWorld - camWorld (small near the
+        // camera, fp32-precise); uTexCamFrac = camWorld mod uTexTileM from the CPU (fp64). world UV =
+        // (vTexRel + uTexCamFrac)/uTexTileM -- the integer tiles dropped from camWorld are exact multiples of
+        // uTexTileM so the REPEAT-wrapped sample is identical (world-anchored, seam-free, camera-independent).
+        highp vec3 wt = (vTexRel + uTexCamFrac) / uTexTileM;
         // DOMAIN WARP anti-repetition (user 2026-06-10 'distort the textures so they dont look
         // repeated' + 'distort more, waves a bit large'): 2-octave world-dir warp -- ~11km waves at
         // +/-0.6 tile plus ~2.8km waves at +/-0.3 tile -- so repeats both shift AND shear locally;
