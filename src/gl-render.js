@@ -969,7 +969,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // + strata band thickness and cliff-strata material strength (FS texturing). Defaults = the tuned
     // literals so the look is unchanged until the user dials a window global.
     const _g = (n,d)=> (typeof window!=='undefined' && window['__'+n]!=null) ? +window['__'+n] : d;
-    gl.uniform1f(U('canyonDepthMul'), _g('canyonDepth', 1.0));
+    gl.uniform1f(U('canyonDepthMul'), _g('canyonDepth', 2.0));   // DOUBLED 1.0->2.0 (user 2026-06-15 'double the canyon intensity, not really visible')
     gl.uniform1f(U('uVsCheap'),       (typeof window!=='undefined' && window.__vsCheap) ? 1.0 : 0.0);   // VS carve-cost profiling A/B
     gl.uniform1f(U('uBeachShelfM'),   _g('beachShelf', 0.0));   // land coastal shelf (geometry): h<S eased h*h/S = wide beach
     gl.uniform1f(U('uLandBias'),      _g('landBias', 0.0));        // +650m hypsometry bias = ~+30% land:sea (window.__landBias); MUST match the probe (setComposeHeightUniforms) for collision parity
@@ -1024,8 +1024,8 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(U('uTexBright'),  _g('texBright', 0.92)); // overall ground brightness
     gl.uniform1f(U('uTexSat'),     _g('texSat', 1.0));     // texture chroma saturation (>1 = more vivid photo hue)
     gl.uniform1f(U('uNrmLow'),     _g('nrmLow', 1.0));     // low-octave rock normal strength (2026-06-15 'dont see lower-freq octave normals')
-    gl.uniform1f(U('uXFade0'),     _g('xFade0', 3000.0));  // crossover-displacement fade start (m)
-    gl.uniform1f(U('uXFade1'),     _g('xFade1', 9000.0));  // crossover-displacement fade end (m) -- anti-sparkle (2026-06-15 'crossover disp causing high-freq noise at distance')
+    gl.uniform1f(U('uXFade0'),     _g('xFade0', 1500.0));  // crossover-displacement fade start (m) -- PULLED IN 3000->1500 (user 2026-06-15 'crossover textures mip too far away')
+    gl.uniform1f(U('uXFade1'),     _g('xFade1', 4500.0));  // crossover-displacement fade end (m) -- 9000->4500 -- anti-sparkle, mips closer
     gl.uniform1f(U('uAlbFade0'),   _g('albFade0', 12000.0)); // albedo high-detail fade start (m) -- DOUBLED 6->12km (user 2026-06-15 'push the albedo fade in to double the distance')
     gl.uniform1f(U('uAlbFade1'),   _g('albFade1', 32000.0)); // albedo high-detail fade end (m) -- DOUBLED 16->32km -> collapses to flat material color past here
     gl.uniform1f(U('uTriSharp'),   _g('triSharp', 4.0));     // triplanar weight exponent (2026-06-15 ^8 'normals flipping between two states' -> 4 smooth)
