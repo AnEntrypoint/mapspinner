@@ -1778,8 +1778,6 @@ void main() {
 
     float slope = 1.0 - max(0.0, dot(n, uz));   // 0 = flat, ->1 = steep
     // Rock classification keys on TRUE slope = 1-dot(n,uz) from the sole band-limited geometric normal.
-    // gslope is the same quantity (kept as a name for the AO/detail-normal terms below).
-    float gslope    = slope;
     // ROCK-FACE BREAKUP NOISE DELETED (user 2026-06-11, 3-way isolation witness: the braided
     // km-scale rock/grass interfingering at this noise's exact 2.5km wavelength WAS the 'rocky
     // patches' -- fake texture ridges the real terrain (normals-view smooth) does not have, hence
@@ -1802,7 +1800,6 @@ void main() {
     // microSlope/microCurv keep their macro defaults for the material/AO consumers below.
     vec3 nLit = n;
     float microSlope = rockSlope;
-    float microCurv  = 0.0;
     // base biome albedo from the coherent height/slope ramp, biased by anchor CLIMATE
     // (latitude-driven temp + humidity) so lowland color sorts by biome (lush/arid/cold).
     vec4 climate = vClimate;   // (seaBias, elevAmp, temp=.z, humid=.w) -- INTERPOLATED from the VS,
@@ -1810,18 +1807,8 @@ void main() {
                                // grid as UV lines/moire up close). Smooth biome transitions now.
     // (pxWorld is computed up near the slope block now -- moved so nearFade can fade the rock detail.)
     vec3 albedo = terrainAlbedoClimate(vH, slope, microSlope, climate.z, climate.w, vWorld, pxWorld);
-    // CURVATURE MICRO-AO (close-up realism, workflow w5gywvug1): the concave creases between rock crags
-    // (microCurv < 0) darken -- the contrast that reads as 3D rugged relief instead of flat lit clay.
-    // Gated by microSlope (flat ground untouched); band-limited by the crag bump it derives from; scaled by the
-    // live uAoAmt lever so it stays terraform-tunable. negCurv = how concave the crease is (0 on convex).
-    float negCurv = max(0.0, -microCurv);
-    float aoLever = (uAoAmt > 0.0 ? uAoAmt : 1.0);
-    // LOW-CONTRAST crease AO (user 2026-06-06 flecked-rock fix): the crease darkening was up to 60% (the
-    // dark half of the fleck speckle). Soften to <=30% so creases read as gentle shading, not hard specks.
-    // microCurv already comes from the band-limited (rockBumpGate) crag bump, so this is present at all
-    // distances and fades out naturally as the bump does -- no separate nearFade gate.
-    float microAO = 1.0 - clamp(negCurv * 3.0, 0.0, 0.30) * smoothstep(0.04, 0.2, microSlope) * aoLever;
-    albedo *= microAO;
+    // CURVATURE MICRO-AO REMOVED 2026-06-15 (user 'get rid of the AO code, its costing computation') -- it was
+    // already a no-op (microCurv hardcoded 0 -> microAO 1.0); deleted the dead clamp/smoothstep/multiply.
     // CLOSE-UP CHROMA VARIATION DELETED (max-speed sweep 2026-06-10): the photo textures carry
     // near-field color variation now (-2 snoise3/pixel).
     // ---- SURFACE PHOTO-TEXTURE SPLAT (user 2026-06-10): triplanar grass/rock/sand/snow color +
@@ -2271,10 +2258,9 @@ void main() {
     // face sees only a hemisphere's edge of sky -> ~half occlusion at slope->1). Both darken AMBIENT
     // only (never the direct sun, avoiding double-shade). uAoAmt lever. Pure fn of varyings+normal ->
     // no extra sampling, seam-safe, zero FPS cost vs the old single-term version.
-    float aoAmt    = (uAoAmt > 0.0 ? uAoAmt : 1.0);
-    float gorgeAO  = 0.0;   // canyon AO decoupled (user 2026-06-10: canyons impose ELEVATION only, no material/AO keying)
-    float slopeAO  = smoothstep(0.05, 0.55, slope) * 0.35;              // gentle-slope AO reveals midday relief (0.20->0.90 from 0.45->0.95, peak 0.35)
-    float cliffAO  = 1.0 - min(gorgeAO + slopeAO, 0.75) * aoAmt;        // cap so faces never go black
+    // SLOPE/CURVATURE AO REMOVED 2026-06-15 (user 'get rid of the AO code, its costing computation'): the
+    // slope-keyed sky-occlusion (slopeAO/cliffAO) + the Sobel-slope fsShadeAO are gone; skyAO is a constant 1.0
+    // so the sky ambient is uniform. Direct-sun N.L shading still drives all relief contrast.
     // STRONGER NORMAL-DRIVEN SHADING (user 2026-06-03: 'normals arent affecting the lit view properly').
     // The lit relief was too subtle (witnessed litON SD 6.4 vs flat 5.9 = only ~8% contrast) because
     // sunIrr (the N.sun direct term) was diluted by the flat sky ambient + the 0.06 albedo floor. Cut
@@ -2296,14 +2282,12 @@ void main() {
     // W5: vShadeAO (per-vertex, from the deleted VS gradient) RECOMPUTED here from the Sobel slope (user
     // 2026-06-07 'recompute AO from Sobel'). creaseAO = slope*0.45 (steep landform -> valley/crease
     // occlusion); microAO from the fine per-pixel gslope. uVertexAO lever + the 0.45 floor preserved.
-    float fsShadeAO = clamp(1.0 - (slope * 0.55 + gslope * 0.40) * uVertexAO, 0.50, 1.0);
+    float skyAO = 1.0;   // AO REMOVED (2026-06-15): sky ambient uniform; direct sun drives relief
     // FADE-IN FIX (user 'a layer fades in at close distance'): vAO was mix(1.0, fsShadeAO, nearFade) where
     // nearFade rises 0->1 as pxWorld shrinks 180->8m on approach -> the Sobel crease-AO darkening animated
     // IN as the camera neared = the visible 'layer fading in'. fsShadeAO is a per-pixel SOBEL-slope quantity
     // (not sub-pixel noise) so it does NOT alias and needs no distance gate -- present at all distances, no
     // pop. This is the nearFade gate the P5 unification missed on the shading-AO path. nearFade now unused.
-    float vAO = fsShadeAO;   // crease-AO present at all distances (P9, no fade-in pop)
-    float skyAO = cliffAO * vAO;
     // SHADOW-FACE FILL (user 2026-06-09: 'shadows are still full black'). On a day-side face pointing AWAY
     // from the sun, sunIrr->0 so ONLY this floor lights it. The old floor (albedo*0.05*cliffAO*vAO) was
     // crushed to ~0 on dark-albedo rock AND on steep/concave faces (cliffAO*vAO -> 0 exactly where shadows
