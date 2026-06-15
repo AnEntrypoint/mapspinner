@@ -1549,10 +1549,11 @@ vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, flo
 // SURFACE PHOTO-TEXTURE triplanar tap: 3 axis-projected samples of one array layer, blended by
 // the pow-softened |n| weights (same continuous-projection rationale as the rock bump biplanar --
 // no hard dominant-axis flip). wt = world pos in tile units (fragment-anchored, fp32-precise).
+const float TEX_LOD_BIAS = 1.0;   // MIP CLOSER (2026-06-15 user 'we can mip textures closer / coords jumping up close'): +1 LOD bias -> coarser mips sooner = hides the up-close grain + the fp32 large-world texture-coordinate jumping/aliasing. 0 = sharpest, higher = blurrier/cheaper.
 vec4 surfTriTap(sampler2DArray sm, highp vec3 wt, vec3 bw, float layer) {
-    return texture(sm, vec3(wt.y, wt.z, layer)) * bw.x
-         + texture(sm, vec3(wt.x, wt.z, layer)) * bw.y
-         + texture(sm, vec3(wt.x, wt.y, layer)) * bw.z;
+    return texture(sm, vec3(wt.y, wt.z, layer), TEX_LOD_BIAS) * bw.x
+         + texture(sm, vec3(wt.x, wt.z, layer), TEX_LOD_BIAS) * bw.y
+         + texture(sm, vec3(wt.x, wt.y, layer), TEX_LOD_BIAS) * bw.z;
 }
 // WORLD-SPACE triplanar normal perturbation (UDN) -- THE 'math issue causing both' (user 2026-06-11):
 // the old path triplanar-BLENDED the per-plane RG tangent normals, then applied the blend in the
@@ -1563,9 +1564,9 @@ vec4 surfTriTap(sampler2DArray sm, highp vec3 wt, vec3 bw, float layer) {
 // plane's RG perturbs along that plane's own world axes, sign-flipped to push outward, blended by
 // the same weights -- a world-space delta added to the lit normal. Same 3 taps.
 vec3 surfTriNrm(sampler2DArray sm, highp vec3 wt, vec3 bw, float layer, vec3 sn) {
-    vec2 px = texture(sm, vec3(wt.y, wt.z, layer)).rg * 2.0 - 1.0;   // X plane: in-plane axes (Y,Z)
-    vec2 py = texture(sm, vec3(wt.x, wt.z, layer)).rg * 2.0 - 1.0;   // Y plane: in-plane axes (X,Z)
-    vec2 pz = texture(sm, vec3(wt.x, wt.y, layer)).rg * 2.0 - 1.0;   // Z plane: in-plane axes (X,Y)
+    vec2 px = texture(sm, vec3(wt.y, wt.z, layer), TEX_LOD_BIAS).rg * 2.0 - 1.0;   // X plane: in-plane axes (Y,Z)
+    vec2 py = texture(sm, vec3(wt.x, wt.z, layer), TEX_LOD_BIAS).rg * 2.0 - 1.0;   // Y plane: in-plane axes (X,Z)
+    vec2 pz = texture(sm, vec3(wt.x, wt.y, layer), TEX_LOD_BIAS).rg * 2.0 - 1.0;   // Z plane: in-plane axes (X,Y) -- same LOD bias as albedo so normal+color mip together (else normal detail at a different scale = 'normals next to where they should')
     return vec3(0.0, px.x, px.y) * (bw.x * sign(sn.x))
          + vec3(py.x, 0.0, py.y) * (bw.y * sign(sn.y))
          + vec3(pz.x, pz.y, 0.0) * (bw.z * sign(sn.z));
@@ -1939,10 +1940,10 @@ void main() {
         highp vec3 wt4 = wt * 2.0;   // OCTAVE 4->2 (2026-06-15 'grainy, octave too high'): the x4 scale (~0.6m/texel) was too FINE -> aliased/grainy under the isotropic triplanar up close; x2 (~1.2m/texel) keeps detail without the grain.
         vec4 albA = surfTriTap(uSurfAlb, wt4, tw, lA);
         vec3 cA = albA.rgb;   // CHROMA EXPRESSED (2026-06-15 'colors faded / rock looks like sand'): carry the photo's real color, not luma-only -- detail below rescales it to the material BRIGHTNESS so rock reads grey-rocky + grass/sand/snow show their true hue
-        // SINGLE NORMAL OCTAVE (2026-06-15 'smeary/overlapped, multiple layers jumping independently'):
-        // the old high(wt4)+mid(wt) two-octave normal superimposed two relief patterns that swam at
-        // different rates = smeary/overlapped. One octave -> clean, coherent relief + 2 fewer taps/px (fps).
-        vec3 nA = surfTriNrm(uSurfNrm, wt4, tw, lA, n) * 2.4;
+        // TWO NORMAL OCTAVES (2026-06-15 user 'color = highest octave only, normals >= two octaves'):
+        // high (wt4) detail + mid (wt, half-freq) so the normal carries two relief scales while COLOR stays
+        // single high octave (albA at wt4). Both share TEX_LOD_BIAS so normal+color mip together (no offset).
+        vec3 nA = surfTriNrm(uSurfNrm, wt4, tw, lA, n) * 1.6 + surfTriNrm(uSurfNrm, wt, tw, lA, n) * 0.8;
         float dispA = albA.a;
         // NO BIOME COLOR INHERITANCE (user 2026-06-14 'take away all biome color inheritance, it will
         // speed it up' -- and fixes 'sand near grass tinted green'): each layer wears its OWN material
@@ -1954,7 +1955,7 @@ void main() {
         if (wB > 0.02) {   // second layer only where a real transition exists
             vec4 albB = surfTriTap(uSurfAlb, wt4, tw, lB);
             vec3 cB = albB.rgb;   // CHROMA EXPRESSED (match cA)
-            vec3 nB = surfTriNrm(uSurfNrm, wt4, tw, lB, n) * 2.4;   // SINGLE OCTAVE (match nA)
+            vec3 nB = surfTriNrm(uSurfNrm, wt4, tw, lB, n) * 1.6 + surfTriNrm(uSurfNrm, wt, tw, lB, n) * 0.8;   // two octaves (match nA)
             float dispB = albB.a;
             // HEIGHT-BLEND POKE-THROUGH (user 'each texture's higher areas should poke through the other,
             // offset by the ramp'): height = displacement + a weight-ramp offset (gate positions the
@@ -2042,6 +2043,7 @@ void main() {
         // longer the base, so NO biome color bleeds into the ground (user 'take away all biome inheritance').
         albedo = clamp(mix(texMatColor, detail, k), 0.0, 1.0);
         albedo = mix(albedo, biomeC, 0.5);   // 0.34->0.5 (2026-06-15 'too bright/cartoony'): restore some landscape/biome tint to ground the texture color (between the 0.68 wash and the 0.34 cartoony)
+        albedo *= 0.85;   // 2026-06-15 'still a bit overbright': pull overall ground brightness down ~15%
         // (AO REMOVED 2026-06-14 user 'fps dropped a lot, no visual improvement, get rid of all the ao
         // for texture and landscape': the displacement texAO + the broadShapeLowM-Laplacian elevation AO
         // are both gone; the latter's 5 wide VS taps were the FPS cost. vConcavity varying also removed.)
