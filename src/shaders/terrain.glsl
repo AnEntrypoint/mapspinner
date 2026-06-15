@@ -2013,7 +2013,7 @@ void main() {
         // as the spot its replacing'): the texture contributes STRUCTURE + relative chroma only,
         // luminance-normalized onto the macro biome/climate color, so the splat never shifts the
         // shade of the ground it covers. uTexPhoto (default 0) can blend raw photo color back in.
-        vec3 texC = texAlb.rgb;
+        vec3 texC = clamp(mix(vec3(dot(texAlb.rgb, LUMA)), texAlb.rgb, 1.8), 0.0, 1.0);   // x1.8 CHROMA BOOST (2026-06-15 'texture color intensity doubled')
         // LAYER-MEAN shade-match (user 2026-06-11 'dont see grass/snow textures' + 'terrain gets
         // darker'): dividing by the PER-PIXEL luminance cancelled all texture structure, and the
         // raw-photo blend that replaced it shifted the shade (the photos are darker than the macro).
@@ -2041,7 +2041,7 @@ void main() {
         // base = flat MATERIAL color (far/low-k); near = structured detail. The macro biome albedo is no
         // longer the base, so NO biome color bleeds into the ground (user 'take away all biome inheritance').
         albedo = clamp(mix(texMatColor, detail, k), 0.0, 1.0);
-        albedo = mix(albedo, biomeC, 0.68);   // climate/biome tint back on top of the material color (deserts tanner, forests greener) -- UP 0.16->0.68 (user 2026-06-14 x2 'tinting-according-to-landscape can be intensified, not really visible yet')
+        albedo = mix(albedo, biomeC, 0.34);   // 0.68->0.34 (user 2026-06-15 'landscape/biome color HALVED, texture color doubled') -- let the texture chroma show instead of washing it toward the flat biome color
         // (AO REMOVED 2026-06-14 user 'fps dropped a lot, no visual improvement, get rid of all the ao
         // for texture and landscape': the displacement texAO + the broadShapeLowM-Laplacian elevation AO
         // are both gone; the latter's 5 wide VS taps were the FPS cost. vConcavity varying also removed.)
