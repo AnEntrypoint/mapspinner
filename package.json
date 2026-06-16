@@ -1,6 +1,6 @@
 {
   "name": "mapspinner",
-  "version": "0.1.145",
+  "version": "0.1.146",
   "description": "WebGL2 Earth-scale terrain rendering SDK for interactive globe applications",
   "main": "src/index.js",
   "exports": {
