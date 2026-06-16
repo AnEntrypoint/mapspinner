@@ -250,31 +250,57 @@ export async function initMapspinnerRender(gl, opts = {}) {
     })();
   }
   const probeVao = gl.createVertexArray();
-  // sampleGroundM(dir): rendered terrain height (metres) at world direction dir. Returns null if
-  // the probe is unavailable (caller falls back). One 4-byte readPixels.
+  // ASYNC READBACK STATE (2026-06-16, measured +10fps at the deck: a synchronous gl.readPixels was a
+  // FULL pipeline stall = 3.68ms/frame, latency-bound so it cost the SAME on AMD APU and NVIDIA GPU
+  // -> the cross-GPU FPS-parity tell the user caught). The probe now reads into a PIXEL_PACK_BUFFER
+  // (readPixels returns immediately, GPU fills it later) + a fenceSync; the NEXT call reads the PBO
+  // only once the fence is signaled (non-blocking clientWaitSync(0)). Collision consumes the height
+  // ~1 frame late -- negligible at deck movement speed (the move-step already caches __lastGpuM).
+  let _probePbo = null, _probeSync = null, _probeLastM = null;
+  const _probeOut = new Float32Array(4);
+  // sampleGroundM(dir): rendered terrain height (metres) at world direction dir, ~1 frame stale.
+  // Returns null until the first async read completes (caller falls back to the CPU mirror).
   function sampleGroundM(dir) {
     if (!probeProg) { ensureProbe(); return null; }   // lazy: kick off the build on first need, fall back to null until ready
-    const pl = Math.hypot(dir[0],dir[1],dir[2])||1;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, probeFbo);
-    gl.viewport(0,0,1,1);
-    gl.useProgram(probeProg);
-    gl.bindVertexArray(probeVao);
-    if (_hpfTex) { gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D_ARRAY, _hpfTex); gl.uniform1i(PU('hpfPool'),3); }
-    if (_hpfTex2) { gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D_ARRAY, _hpfTex2); gl.uniform1i(PU('hpfPool2'),5); }
-    gl.uniform1i(PU('hasHpf'), _hpfTex?1:0);
-    // SAME shape-control + HPF-sampler congruence as render() (setComposeHeightUniforms): the probe runs
-    // composeHeight for sampleGroundM (collision/camera height) so collision matches the rendered surface.
-    // If uHiFreqCut/vtxDetail were unset (0.0) here the probe's height would omit all fine relief and
-    // diverge from the rendered geometry = the camera stops short of the visible surface. Match render().
-    setComposeHeightUniforms(PU);
-    gl.uniform3f(PU('probeDir'), dir[0]/pl, dir[1]/pl, dir[2]/pl);
-    gl.disable(gl.DEPTH_TEST);
-    gl.drawArrays(gl.POINTS, 0, 1);
-    const out = new Float32Array(4);
-    gl.readPixels(0,0,1,1, gl.RGBA, gl.FLOAT, out);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.bindVertexArray(null);
-    return out[0];
+    // 1) HARVEST a completed prior read (non-blocking) so we never wait on the GPU.
+    if (_probeSync) {
+      const st = gl.clientWaitSync(_probeSync, 0, 0);
+      if (st === gl.ALREADY_SIGNALED || st === gl.CONDITION_SATISFIED) {
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, _probePbo);
+        gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, _probeOut);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+        _probeLastM = _probeOut[0];
+        gl.deleteSync(_probeSync); _probeSync = null;
+      }
+    }
+    // 2) Only issue a fresh read when none is in flight (else just return the last harvested value).
+    if (!_probeSync) {
+      if (!_probePbo) { _probePbo = gl.createBuffer(); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, _probePbo); gl.bufferData(gl.PIXEL_PACK_BUFFER, 16, gl.STREAM_READ); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); }
+      const pl = Math.hypot(dir[0],dir[1],dir[2])||1;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, probeFbo);
+      gl.viewport(0,0,1,1);
+      gl.useProgram(probeProg);
+      gl.bindVertexArray(probeVao);
+      if (_hpfTex) { gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D_ARRAY, _hpfTex); gl.uniform1i(PU('hpfPool'),3); }
+      if (_hpfTex2) { gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D_ARRAY, _hpfTex2); gl.uniform1i(PU('hpfPool2'),5); }
+      gl.uniform1i(PU('hasHpf'), _hpfTex?1:0);
+      // SAME shape-control + HPF-sampler congruence as render() (setComposeHeightUniforms): the probe runs
+      // composeHeight for sampleGroundM (collision/camera height) so collision matches the rendered surface.
+      // If uHiFreqCut/vtxDetail were unset (0.0) here the probe's height would omit all fine relief and
+      // diverge from the rendered geometry = the camera stops short of the visible surface. Match render().
+      setComposeHeightUniforms(PU);
+      gl.uniform3f(PU('probeDir'), dir[0]/pl, dir[1]/pl, dir[2]/pl);
+      gl.disable(gl.DEPTH_TEST);
+      gl.drawArrays(gl.POINTS, 0, 1);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, _probePbo);
+      gl.readPixels(0,0,1,1, gl.RGBA, gl.FLOAT, 0);   // ASYNC: into the PBO at offset 0, returns immediately (no CPU<-GPU stall)
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+      _probeSync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+      gl.flush();   // push the commands + fence so the GPU starts now and the fence can signal by next call
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindVertexArray(null);
+    }
+    return _probeLastM;
   }
 
   // ===== THC HEIGHT-CACHE BAKE (2026-06-14, NON-DESTRUCTIVE) =====
