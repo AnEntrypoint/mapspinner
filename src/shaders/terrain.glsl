@@ -734,7 +734,7 @@ highp float composeHeightC(vec3 dir0, highp vec2 faceLocal, float tileM, HCache 
   // plain end-of-function dip -> 'canyon in field/probe, flat in elevation'. A plain BRANCH is not reorderable
   // the same way: carve only real land (h>5) and floor the result at +5m (dry visible valley); leave the
   // near-shore band (h<=5) untouched so there is no +5 coastal step.
-  if (h > 5.0) { h = max(h + inciseTot, max(5.0, h - 150.0 * (canyonDepthMul > 0.0 ? canyonDepthMul : 1.0))); }   // RELATIVE FLOOR (user 2026-06-16 'narrower not shallower'): the absolute +5 floor cut every canyon clear to sea level on all but the highest terrain, so reducing the depth only narrowed the flat floor. Cap the incision to ~150m*canyonDepthMul BELOW the local rim (300m at the default 2.0), still floored at +5m -> a gentle CONSISTENT depth, no sea-level gorge. Live depth via window.__canyonDepth.
+  if (h > 5.0) { h = max(h + inciseTot, max(-60.0, h - 100.0 * (canyonDepthMul > 0.0 ? canyonDepthMul : 1.0))); }   // RELATIVE-DEPTH FLOOR (user 2026-06-16 'canyonDepth makes it narrower not shallower', x3): canyon bottoms ~100m*canyonDepthMul BELOW the local rim (200m at the default 2.0) so canyonDepth is a true DEPTH lever -- halving it halves the depth at the SAME width. Lower bound -60m (a shallow water inlet on low terrain) NOT +5m: a +5 floor made the cap snap to sea level on low/moderate terrain where reducing depth only narrowed the +5 band (= the bug). LIVE depth via window.__canyonDepth.
   // CLIFF TERRACING (mesa/butte benches) -- after carves so canyon walls + risers compose
   float cliffFaceMask; float cliffCarveV = cliffTerraceM(dir0, h, cliffFaceMask) * step(0.0, h);
   h += cliffCarveV;
@@ -974,7 +974,7 @@ void main() {
     // carves a deep basin below it). Bounded against the PRE-carve vH so deep inland canyons keep full
     // depth while coastal ones are limited by their own available headroom.
     highp float inciseTot = riverCarveV + canyonCarveV;         // both negative (downcut)
-    if (vH > 5.0) { vH = max(vH + inciseTot, max(5.0, vH - 150.0 * (canyonDepthMul > 0.0 ? canyonDepthMul : 1.0))); }   // RELATIVE FLOOR (mirror composeHeightC): incision capped ~150m*canyonDepthMul below the rim, floored +5 -> gentle consistent depth, not a sea-level gorge
+    if (vH > 5.0) { vH = max(vH + inciseTot, max(-60.0, vH - 100.0 * (canyonDepthMul > 0.0 ? canyonDepthMul : 1.0))); }   // RELATIVE-DEPTH FLOOR (mirror composeHeightC): bottom ~100m*canyonDepthMul below the rim, lower bound -60m so canyonDepth scales DEPTH (not width) on low/moderate terrain too
     // CLIFF TERRACING: snap the arid+elevated land into flat benches with steep risers (mesa/butte
     // cliff country). Gated by the SAME canyonArid mask so cliffs share canyon regions (a coherent
     // arid badlands look). The snap delta is added to vH; cliffFaceMask (->1 on a riser face) goes to
