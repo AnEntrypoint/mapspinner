@@ -26,7 +26,7 @@ const DEFAULTS = {
     fsNormal: 0,           // window.__fsNormal (cross-dFdx FS normal, diagnostic, default off)
   },
   lod: {
-    splitFactor: 0.28,    // window.__splitFactor (null = orchestrator altitude ramp). 0.4->0.28 (user 2026-06-14: ~600 quads at the deck)
+    splitFactor: 0.36,    // window.__splitFactor (null = orchestrator altitude ramp). 0.28->0.36 (user 2026-06-16 baked live-tuned value: more LOD density)
   },
   geometry: {
     elevEdgeInset: 0.5,    // window.__elevEdgeInset (mesh-edge elevation sample inset; gl-render)
@@ -43,9 +43,9 @@ const DEFAULTS = {
   // globals; gl-render reads them via _g()). Beer-Lambert ocean, biome sat, mottle, sky-fill relief,
   // terminator glow, night floor + earthshine, exposure + post-ACES Look.
   look: {
-    exposure: 1.0, skyFill: 0.45, biomeSat: 0.72, variationAmt: 0.04, colorVar: 0.5, vertexAO: 1.0,     reliefShade: 2.5,   // variationAmt 0.08->0.04 (user 2026-06-10 'blotchy': the ~50km value mottle painted light/dark patches across the massifs)
-    nightFloor: 0.16, termWidth: 0.25, terminatorGlow: 0.30, lookSat: 1.15, lookContrast: 1.08,   // nightFloor 0.05->0.16: no black night terrain (2026-06-09)
-    detailOverlay: 6.0, hazeMul: 0.65,   // 2026-06-10 'pale hazy + featureless': perlin-everywhere albedo+elevation fbm (user-tuned 6) + aerial-perspective strength cut
+    exposure: 0.75, skyFill: 0.45, biomeSat: 1.05, variationAmt: 0.04, colorVar: 0.5, vertexAO: 1.0,     reliefShade: 1.8,   // BAKED 2026-06-16 (user live-tuned): exposure 1.0->0.75, biomeSat 0.72->1.05 (more saturated biomes), reliefShade 2.5->1.8. variationAmt 0.08->0.04 (user 2026-06-10 'blotchy')
+    nightFloor: 0.4, termWidth: 0.05, terminatorGlow: 1.0, lookSat: 1.15, lookContrast: 1.12,   // BAKED 2026-06-16: nightFloor 0.16->0.4, termWidth 0.25->0.05, terminatorGlow 0.30->1.0, lookContrast 1.08->1.12
+    detailOverlay: 50.0, hazeMul: 0.65,   // BAKED 2026-06-16: detailOverlay 6->50 (user wants strong relief overlay -- fills the flat-grass plains). hazeMul unchanged.
     ocean: { deep: [0.008,0.025,0.06], shallow: [0.07,0.22,0.26], k: [0.009,0.004,0.0018] },   // k lowered again (user 2026-06-14 'water properly transparent so we see the surface under it'): clearer, the seabed shows through shallow/medium water; deep basins still opaque. OVERRIDES gl-render via window.__uOceanK.
   },
   // HPF band scales (multipliers on the anchor-field band base values; anchor-field.setBandScales).
