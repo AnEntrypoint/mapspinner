@@ -22,7 +22,7 @@ const GROUPS = [
   ]],
   ['Terrain shape', [
     ['detailOverlay', 'Detail overlay relief', 0,   60,   0.5,  50.0],
-    ['vtxDetail',     'Vertex micro-detail',   0,   3,    0.05, 3.0],
+    ['vtxDetail',     'Vertex micro-detail',   0,   3,    0.05, 0.0],
     ['hiFreqCut',     'Hi-freq octave cut',    0,   1,    0.05, 0.95],
     ['landBias',      'Land bias (m)',        -1000, 1500, 50,  -800.0],
     ['mtnBandWide',   'Mountain belt width',   0,   1,    0.05, 0.1],
