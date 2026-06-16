@@ -1043,8 +1043,8 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(U('uNrmFade1'),   _g('nrmFade1', 80000.0)); // normal-texture fade end (m) -- DOUBLED from 40km
     gl.uniform1f(U('uBandWarp'),   _g('bandWarp', 1100.0));  // snow/rock/BEACH band warp amplitude (m), low-freq (2026-06-15 'use the snow warp on the beach too')
     gl.uniform1f(U('uBeachWidth'), _g('beachWidth', 5.0));   // grass<->beach crossover band width x beachTop (2026-06-15 'band super narrow, displacement does little') -- wide = displacement-fingered shoreline
-    gl.uniform1f(U('uTexFar0'),    _g('texFar0', 8000.0));   // splat->biome far-fade start (pxWorld m). 4000->8000: ALIGNED to the crossover-displacement fade (uXFade0/1 = 8000/20000) so the splat->macro color fade and the displacement fade happen in ONE distance band -- removes the DOUBLE band (user 2026-06-16 'sand fades out and then fades out again', 'double band rock->sand and sand->grass on the fade stage').
-    gl.uniform1f(U('uTexFar1'),    _g('texFar1', 20000.0));  // splat->biome far-fade end (pxWorld m). 26000->20000: matches uXFade1 so the two fades END together = a single merged transition, not two bands.
+    gl.uniform1f(U('uTexFar0'),    _g('texFar0', 0.0));      // splat->biome far-fade start (pxWorld m). User baked 0 = the splat fades from the deck out.
+    gl.uniform1f(U('uTexFar1'),    _g('texFar1', 12000.0));  // splat->biome far-fade end (pxWorld m). WIDENED to 12000 (user 2026-06-16 'widen the fade band'): the baked 2000 squeezed the splat->macro detail-normal+albedo handoff into a narrow band = a visible LIT RING; spreading the END to 12000 makes the handoff gradual so the ring disappears.
     gl.uniform1f(U('uTexMix'),     _g('texMix', 0.85));     // splat blend amount (0 = off)
     gl.uniform1f(U('uTexWarp'),    _g('texWarp', 0.23));    // anti-repetition warp amplitude (-30% from 0.325, grass warp too intense)
     gl.uniform1f(U('uTexPhoto'),   _g('texPhoto', 0.0));    // raw photo-color fraction (0 = patch matches the macro shade exactly)

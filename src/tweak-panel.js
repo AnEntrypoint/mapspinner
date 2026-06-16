@@ -52,7 +52,7 @@ const GROUPS = [
     ['xFade0',        'Crossover fade start m',0,   40000,1000, 15000],
     ['xFade1',        'Crossover fade end m',  0,   80000,2000, 40000],
     ['texFar0',       'Splat fade start m',    0,   40000,1000, 0.0],
-    ['texFar1',       'Splat fade end m',      0,   80000,2000, 2000],
+    ['texFar1',       'Splat fade end m',      0,   80000,2000, 12000],
     ['nrmFade0',      'Normal fade start m',   0,   120000,5000,45000],
     ['nrmFade1',      'Normal fade end m',     0,   200000,10000,100000],
   ]],
