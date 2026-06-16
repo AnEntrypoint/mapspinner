@@ -1023,6 +1023,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // extinction, biome saturation pull, intra-biome mottle, sky-fill relief, terminator sunset glow,
     // night floor + earthshine, exposure + post-ACES Look (sat/contrast). Defaults = the tuned look.
     gl.uniform1f(U('uBiomeSat'),       _g('biomeSat', 0.72));
+    gl.uniform1f(U('uBiomeClimate'),   _g('biomeClimate', 0.0));   // anchor-point (climate temp/humid) biome system, default 0 = OFF (user 2026-06-16 'get rid of the anchor-point biomes, elevation creates snow already'). 1 = re-enable the climate biomeColor + climate snow. window.__biomeClimate.
     gl.uniform1f(U('uVariationAmt'),   _g('variationAmt', 0.04));   // 0.08->0.04 (2026-06-10 'blotchy': mottle patches across the 4x massifs)
     gl.uniform1f(U('uDetailOverlay'),  _g('detailOverlay', 6.0));   // perlin-everywhere albedo+elevation fbm (2026-06-10; user-tuned 6)
     gl.uniform1f(U('uHazeMul'),        _g('hazeMul', 0.65));        // aerial-perspective strength (2026-06-10 'pale hazy': 1.0 milked the midground)

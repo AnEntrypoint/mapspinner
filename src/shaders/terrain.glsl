@@ -1286,6 +1286,7 @@ uniform vec3  uOceanDeep;    // deep open-ocean color (near-black navy)         
 uniform vec3  uOceanShallow; // shallow-water turquoise (first metres)             [0.07,0.22,0.26]
 uniform vec3  uOceanK;       // per-channel Beer-Lambert extinction (kR>>kG>>kB)   [0.030,0.012,0.0045]
 uniform float uBiomeSat;     // biome-palette saturation pull toward luminance (1=full, <1 desaturate) 0.72
+uniform float uBiomeClimate; // anchor-point (climate temp/humid) biome system on/off (window.__biomeClimate, default 0 = OFF). User 2026-06-16 'get rid of the anchor-point biomes, elevation creates snow already': 0 = elevation-only material (height-band grass/rock/snow + splat), skips the biomeColor compute + the climate-snow = FS cut.
 uniform float uVariationAmt; // intra-biome value mottle amplitude (+/-)           0.08
 uniform float uHazeMul;      // aerial-perspective strength multiplier (1 = full haze, 0 = none)
 // LIVE A/B ISOLATION TOGGLES (window.__rockBump / __chroma / __strata, default 1). Multiply each material
@@ -1519,6 +1520,7 @@ vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, flo
     // around mountains'): veg dropped at a clean elevation+slope threshold -> a dark->light grass ring
     // circling every peak. Warp BOTH thresholds with ONE cheap noise (~2-3km) so the dark/light grass
     // boundary fingers irregularly instead of a contour ring. (Reuses the hoisted nwp; one snoise3.)
+    if (uBiomeClimate > 0.5) {   // ANCHOR-POINT BIOME GATE (default OFF, user 2026-06-16): the entire climate temp/humid biome compute (veg gate + domain warp + biomeColor palette + the value-preserving tint) is gated here so it is SKIPPED when off = FS cut + elevation-only material (height-band grass/rock/snow + the splat carry the look).
     float vegN = snoise3(nwp * 2400.0);
     float veg = (1.0 - smoothstep(bandEdgesHi.x + vegN * 850.0, bandEdgesHi.y + vegN * 850.0, h))
               * (1.0 - smoothstep(slopeRock.x, slopeRock.y + vegN * 0.13, rockSlope));
@@ -1555,6 +1557,7 @@ vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, flo
     float bLv = dot(biome, vec3(0.299, 0.587, 0.114));
     vec3  biomeV = biome * (cLv / max(bLv, 1e-3));   // biome hue at c's brightness
     c = mix(c, biomeV, veg * 0.82);
+    }   // end ANCHOR-POINT BIOME GATE
     // INTRA-BIOME VALUE MOTTLE (Real-World Look): real terrain is never one flat color per biome --
     // soil/moisture/vegetation patchiness mottles albedo. Reuse the snoise3 already evaluated for
     // cliffRock (same normalize(worldPos)*~1k pattern, no new octave) as a VALUE-only multiplier (NO
@@ -1562,7 +1565,7 @@ vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, flo
     float mot = snoise3(nwp * 120.0);   // detail-tex-rockface-canyon-10x: *1200->*120 (~10x larger mottle features, user 2026-06-06)
     c *= (1.0 + uVariationAmt * mot);
     // earlier snow/ice on high ground in cold regions.
-    float coldSnow = (1.0 - smoothstep(0.30, 0.75, temp)) * smoothstep(snowEdges.x * 0.5, snowEdges.x, h);
+    float coldSnow = (1.0 - smoothstep(0.30, 0.75, temp)) * smoothstep(snowEdges.x * 0.5, snowEdges.x, h) * uBiomeClimate;   // CLIMATE snow gated OFF with the anchor biomes (user 'elevation creates snow already'); elevation snow stays via snowEdges height bands + the splat snowHi
     c = mix(c, bcSnow, coldSnow * 0.7);
     // BEACH BAND (user 2026-06-11 'all land at the level of the ocean should be beach -- the grass
     // must stop and become sand, which continues under the water'): below uBeachTopM the biome/
