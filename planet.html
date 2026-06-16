@@ -32,6 +32,8 @@ Controls: <b>WASD</b>/drag orbit . <b>Q/E</b>/wheel zoom . <b>R</b> reset<br>
 <button id="genToggle" style="position:fixed;left:8px;top:8px;z-index:30;font:11px monospace;padding:3px 7px">Generation</button>
 <div id="genPanel" style="position:fixed;left:8px;top:34px;z-index:30;display:none;max-height:88vh;overflow:auto;background:rgba(12,16,20,0.92);color:#cfe;font:10px/1.5 monospace;padding:6px 8px;border:1px solid #2a3a44;width:250px"></div>
 <div id="err"></div>
+<!-- LIVE tweak menus for every window.__ shader lever (cache-busted so it reaches a warm tab on reload). -->
+<script type="module">import('./src/tweak-panel.js?v='+(window.performance?performance.now()|0:Date.now())).catch(e=>console.error('tweak-panel',e));</script>
 <script type="module">
 // The mapspinner terrain + atmosphere + ocean run entirely
 // on the WebGL2 path, loaded lazily in frameLoop. The
