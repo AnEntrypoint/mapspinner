@@ -262,7 +262,7 @@ canvas.addEventListener('wheel', e=>{
   cam.speed = Math.max(0.001, Math.min(200, cam.speed*factor));
 }, {passive:false});
 
-let lastT=performance.now(); let frame=0; let emaMspf=0;
+let lastT=performance.now(); let frame=0; let emaMspf=0; let _drsCool=0;
 // Ocean wave clock: advances by dt*oceanTimeScale so the Wave-speed slider can
 // slow/freeze the waves (0=frozen) independently of wall-clock time. Fed to both
 // the FFT step and the fragment foam/shore phase.
@@ -629,6 +629,28 @@ function frameLoop(){
     const fps = 1000 / emaMspf;
     document.title = `TerrainView8 - fps: ${fps.toFixed(6)}, mspf: ${emaMspf.toFixed(6)}`;
     frame++;
+    // ---- DYNAMIC RESOLUTION (2026-06-16, "144fps PROPERLY space->deck, no transfer spikes"): hold the
+    // target framerate by gently dialing RENDER-SCALE (buffer pixels) only -- NEVER by dropping geometry
+    // or material detail (those stay full-res at every altitude). STEADY-STATE = ZERO RESIZES: a WIDE
+    // dead-band (~125-169fps at the 144 target) plus a 45-frame cooldown mean the framerate-is-fine case
+    // touches nothing, so there is no per-frame canvas realloc = no transfer spike. Resolution only steps
+    // during altitude transitions -- a few small 0.06 steps, motion-masked -- and ALWAYS climbs back to
+    // native when there's headroom (e.g. in space). Reuses emaMspf (the alpha-0.1 frame EMA above), whose
+    // ~10-frame settle is well inside the cooldown so each step measures the new buffer before the next.
+    // window.__drs=false -> manual render-scale (Tweaks panel); window.__drsTargetFps overrides the 144.
+    if (window.__drs !== false && window.__setRenderScale && frameMs > 0 && frameMs < 100) {
+      _drsCool++;
+      const tMs = 1000 / (window.__drsTargetFps || 144);
+      const drsCeil = Math.min(window.devicePixelRatio || 1, 2), drsFloor = 0.5;
+      const rs = window.__renderScale || drsCeil;
+      if (_drsCool >= 45) {
+        if (emaMspf > tMs * 1.15 && rs > drsFloor + 1e-3) {        // too slow -> shed pixels (all detail kept)
+          window.__setRenderScale(Math.max(drsFloor, rs - 0.06)); _drsCool = 0;
+        } else if (emaMspf < tMs * 0.85 && rs < drsCeil - 1e-3) {  // headroom -> restore resolution toward native
+          window.__setRenderScale(Math.min(drsCeil, rs + 0.06)); _drsCool = 0;
+        }
+      }
+    }
     const camDistR = Math.hypot(...cam.pos)/RADIUS;
     const quadN = (fr && fr.quadCount) || 0;
     if (frame % diagInterval === 0) {
