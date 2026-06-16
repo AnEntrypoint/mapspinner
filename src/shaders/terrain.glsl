@@ -728,7 +728,7 @@ highp float composeHeightC(vec3 dir0, highp vec2 faceLocal, float tileM, HCache 
   // RIVER + CANYON incision (clamped so coastal gorges never punch fake inland seas)
   float riverWet   = smoothstep(mix(0.30, 0.20, uCarveWide), mix(0.55, 0.65, uCarveWide), hpf0.a) * smoothstep(mix(0.20, 0.12, uCarveWide), mix(0.34, 0.46, uCarveWide), hpf0.b);
   float riverWetMask; float riverCarveV = riverCarveM(dir0, riverWetMask) * riverWet * step(0.0, h);
-  float canyonDepMask; float canyonCarveV = canyonCarveM(dir0, canyonDepMask) * step(0.0, h);
+  float canyonDepMask; float canyonCarveV = canyonCarveM(dir0, canyonDepMask) * smoothstep(0.0, 250.0, h);   // COASTAL FADE (user 2026-06-16 'at the edge of the land it drops off sharply into the ocean'): fade the canyon carve in over the first 250m of land elevation instead of a hard step(0,h), so low coastal land is NOT cut to the -60m floor at the shore = no sharp sea cliff; canyons stay an INLAND feature.
   highp float inciseTot = riverCarveV + canyonCarveV;        // <=0 downcut (kept for the FS strata masks below)
   // FXC-ROBUST FLOORED CARVE (user 2026-06-16 'no canyon' -- witnessed on a FRESH cache-disabled load +
   // WIREFRAME on the user's own ANGLE AMD/d3d11 stack: the rendered mesh is FLAT at a +5 gorge the collision
@@ -970,7 +970,7 @@ void main() {
     // by the small depths + land gate; coastline hypso re-witnessed in incision-hypso-landfrac-gate).
     float riverWet   = smoothstep(0.30, 0.55, hpf0.a) * smoothstep(0.20, 0.34, hpf0.b);   // moist, not frozen
     float riverWetMask; float riverCarveV = riverCarveM(dir0, riverWetMask) * riverWet * step(0.0, vH);
-    float canyonDepMask; float canyonCarveV = canyonCarveM(dir0, canyonDepMask) * step(0.0, vH);
+    float canyonDepMask; float canyonCarveV = canyonCarveM(dir0, canyonDepMask) * smoothstep(0.0, 250.0, vH);   // COASTAL FADE (mirror composeHeightC): canyon carve fades in over the first 250m of land so the coast doesn't drop sharply to the -60m floor
     // NO-SUB-SEA-COAST GUARD (user 2026-06-02 deepen+widen): with the deepened canyon (-1400m + gullies)
     // a gorge on 200m coastal land would punch vH to ~-1200m = fake inland seas. Clamp the TOTAL incision
     // so post-carve land bottoms out at a small floor (-60m: a gorge may reach near sea level but never
