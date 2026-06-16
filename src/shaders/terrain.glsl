@@ -656,7 +656,7 @@ HCache computeHCache(vec3 dir0){
   }
   return HCache(hpf0, rugged, reliefMul, ridgeMul);
 }
-highp float composeHeightC(vec3 dir0, highp vec2 faceLocal, float tileM, HCache C){   // W7: faceLocal metres + returned h -> highp islands
+highp float composeHeightC(vec3 dir0, highp vec2 faceLocal, float tileM, HCache C, bool skipCarves){   // W7: faceLocal metres + returned h -> highp islands. skipCarves: FD NORMAL taps pass true (lit normal = broad+detail shape only) -- ONE call-site/runtime param = one FXC instance (taps agree); the i==0 centre + probe pass false so POSITION+collision keep the carves.
   highp vec4 hpf0 = C.hpf0;              // (seaBias=r, elevAmp=g, temp=b, humid=a)
   highp float cbias = hpf0.r;           // W7: seaBias metres
   float rugged = C.rugged;
@@ -719,6 +719,7 @@ highp float composeHeightC(vec3 dir0, highp vec2 faceLocal, float tileM, HCache 
   // canyon/cliff/dune) so gpuTimer can A/B the per-vertex CARVE cost (the doctrine's suspected
   // dominant term). Transient profiling toggle (window.__vsCheap); 0 = full path (default).
   if (uVsCheap > 0.5) return h;
+  if (skipCarves) return h;   // NORMAL-TAP carve skip (2026-06-16, ~2ms APU): taps pass true -> lit normal = broad+detail-overlay shape only (carve gradient sub-resolved at the ~300m nrmStep); centre/probe pass false so the canyon DEPTH stays in the mesh + collision.
   // FLAT-AREA VALLEY NETWORKS + LAKES (user 2026-06-13): incised valley systems in low-relief
   // plains. Replaces the old noise bumps with a ridge-field valley network for connected
   // linear depressions and lakes that fill the valley bottoms. Fades to zero by reliefMul ~0.5.
@@ -766,7 +767,7 @@ highp float composeHeightC(vec3 dir0, highp vec2 faceLocal, float tileM, HCache 
 }
 // Self-deriving wrapper: probe/bake + any single-call site compute the cache inline (one hpfSample, no waste).
 highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){
-  return composeHeightC(dir0, faceLocal, tileM, computeHCache(dir0));
+  return composeHeightC(dir0, faceLocal, tileM, computeHCache(dir0), false);   // probe/bake/position: FULL carves
 }
 #endif   // broadShapeM/broadShape/vtxDisplace/composeHeight + computeHCache/composeHeightC: VS/PROBE (excluded from render FS, FS-1)
 
@@ -1126,7 +1127,7 @@ void main() {
             highp vec2 off = (i == 0) ? vec2(0.0, 0.0) : (i == 1) ? vec2(duP, 0.0) : (i == 2) ? vec2(-duP, 0.0) : (i == 3) ? vec2(0.0, duP) : vec2(0.0, -duP);
             highp vec2 fl = faceWarp((vertex.xy + off) * defOffset.z + defOffset.xy);
             highp vec3 dd = normalize(defLocalToWorld * vec3(fl, defRadius));
-            highp float hh = composeHeightC(dd, fl, defOffset.z, nCache);
+            highp float hh = composeHeightC(dd, fl, defOffset.z, nCache, i != 0);   // i==0 centre = POSITION (full carves); i!=0 taps = NORMAL (skip carves, ~2ms)
             if (i == 0) { hN0 = hh; }
             else if (i == 1) { hPU = hh; dPU = dd; } else if (i == 2) { hMU = hh; dMU = dd; }
             else if (i == 3) { hPV = hh; dPV = dd; } else { hMV = hh; dMV = dd; }
