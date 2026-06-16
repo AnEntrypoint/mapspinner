@@ -1538,8 +1538,11 @@ vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, flo
     // humid) so biome boundaries FINGER/break up like the elevation bandWarp does for the rock/snow edges =
     // varied biome patches, not big blobs. uBiomeWarp scales it live (window.__biomeWarp; default 1).
     float bwAmt = uBiomeWarp;
-    float bWarpT = snoise3(nwp * 230.0 + vec3(3.7, 9.1, 1.3)) * 0.6 + snoise3(nwp * 640.0 + vec3(8.1)) * 0.3;   // ~28km + ~10km
-    float bWarpH = snoise3(nwp * 230.0 + vec3(21.3, 4.7, 17.9)) * 0.6 + snoise3(nwp * 640.0 + vec3(27.7)) * 0.3; // decorrelated
+    // SINGLE-OCTAVE biome warp (2026-06-16, 144fps FS budget): was 2 snoise3/channel (~28km + ~10km) = 4
+    // snoise3/pixel on the FS-bound deck path; dropped the fine ~10km octave (sub-biome-scale, barely visible)
+    // and kept the dominant ~28km fingering at preserved RMS (0.65 ~= sqrt(0.6^2+0.3^2)). Saves 2 snoise3/pixel.
+    float bWarpT = snoise3(nwp * 230.0 + vec3(3.7, 9.1, 1.3)) * 0.65;    // ~28km fingering
+    float bWarpH = snoise3(nwp * 230.0 + vec3(21.3, 4.7, 17.9)) * 0.65;  // decorrelated
     float tempEff  = clamp(temp - elevCool - latCool * uBiomeBandBias + bWarpT * 0.13 * bwAmt, 0.0, 1.0);
     float humidEff = clamp(humid + clamp(h / 9000.0, 0.0, 0.12) * uBiomeBandBias + bWarpH * 0.16 * bwAmt, 0.0, 1.0);
     vec3 biome = biomeColor(tempEff, humidEff);
@@ -2212,8 +2215,8 @@ void main() {
     if (displayMode == 9) {
         // same biome DOMAIN WARP as the lit path (user 2026-06-16 'apply the elevation warp to the biome map too')
         highp vec3 bwN = normalize(vWorld);
-        float bwT = snoise3(bwN * 230.0 + vec3(3.7, 9.1, 1.3)) * 0.6 + snoise3(bwN * 640.0 + vec3(8.1)) * 0.3;
-        float bwH = snoise3(bwN * 230.0 + vec3(21.3, 4.7, 17.9)) * 0.6 + snoise3(bwN * 640.0 + vec3(27.7)) * 0.3;
+        float bwT = snoise3(bwN * 230.0 + vec3(3.7, 9.1, 1.3)) * 0.65;   // single-octave (matches the lit path's trimmed warp)
+        float bwH = snoise3(bwN * 230.0 + vec3(21.3, 4.7, 17.9)) * 0.65;
         fragColor = vec4(biomeClassColor(clamp(climate.z + bwT * 0.13 * uBiomeWarp, 0.0, 1.0), clamp(climate.w + bwH * 0.16 * uBiomeWarp, 0.0, 1.0), vH), 1.0); return;
     }
     // DIAG displayMode 10: CANYON field -> red where the gorge network fires (arid elevated only),
