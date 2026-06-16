@@ -1954,7 +1954,7 @@ void main() {
         // line so high mountains show rock between alpine grass and snow, not grass straight to snow.
         float rockBand = smoothstep(snowEdges.x - 2200.0 + bandWarp, snowEdges.x - 400.0 + bandWarp, vH) * (1.0 - snowHi);
         float wRock = max(wRockSlope, rockBand);
-        float snowCold = (1.0 - smoothstep(0.30, 0.75, climate.z)) * smoothstep(snowEdges.x * 0.5 + bandWarp, snowEdges.x + bandWarp, vH);
+        float snowCold = (1.0 - smoothstep(0.30, 0.75, climate.z)) * smoothstep(snowEdges.x * 0.5 + bandWarp, snowEdges.x + bandWarp, vH) * uBiomeClimate;   // SPLAT climate snow gated OFF with the anchor biomes (user 2026-06-16 'the unexpected snowy area was anchorpoints'); elevation snow stays via snowHi
         // POLAR/ICE-BIOME SNOW (user 2026-06-10 'put the snow texture on the snow'): the ICE biome
         // whitens cold lowland (biomeColor gate 1-smoothstep(0.10,0.18,tempEff)) at ANY elevation, but
         // wSnow was elevation-gated only -- polar snowfields were splatting the GRASS layer. Match the
@@ -1962,7 +1962,7 @@ void main() {
         float lat2 = asin(clamp(nWorld.y, -1.0, 1.0));   // T-4: nWorld is already normalize(vWorld)
         float tempEff2 = clamp(climate.z - clamp(vH / 4500.0, 0.0, 0.55) * uBiomeBandBias
                                         - 0.18 * (abs(lat2) / 1.5708) * uBiomeBandBias, 0.0, 1.0);
-        float iceClimate = (1.0 - smoothstep(0.10, 0.20, tempEff2)) * step(0.0, vH);   // no snow layer on the seabed
+        float iceClimate = (1.0 - smoothstep(0.10, 0.20, tempEff2)) * step(0.0, vH) * uBiomeClimate;   // SPLAT polar/ice climate snow gated OFF with the anchor biomes (this was the 'unexpected snowy area' = cold-lowland whitening at low elevation that read as snow-then-rock); elevation snow stays via snowHi
         float wSnow = clamp(snowHi + 0.7 * snowCold + iceClimate, 0.0, 1.0) * (1.0 - 0.6 * wRock);
         float wSand = sandRegion * (1.0 - wRock) * (1.0 - wSnow) * (1.0 - smoothstep(0.30, 0.70, slope));
         float wGrass = max(1.0 - wRock - wSnow - wSand, 0.0);
