@@ -224,7 +224,7 @@ uniform float uMtnBandWide;                // widen mtn=smoothstep(16.8,18.6,ele
 uniform float uClimateRelief;              // widen wetLowFlat(0.66,0.9,humid) + coldFlat(0.18,0.34,temp) reliefMul gates
 uniform float uIsleWide;                    // widen isleZone seaBias gates (50,350)+(900,1600) -> (30,600)+(600,2200)
 uniform float uCarveWide;                   // widen the river/canyon/lake/dune CLIMATE gates so carve depth fades in over a wide span
-float canyonRidgeField(vec3 dir){ return inciseRidgeField(dir + vec3(13.7, -4.2, 8.9), 180.0, 2.07); }  // baseFreq DOUBLED 90->180 (user 2026-06-15 'the canyon fields frequency must be doubled'): denser gorge network so the camera is always near a canyon. Now that the +5 floor keeps them DRY (visible), density is the win. Shared VS carve + FS mask -> congruent.
+float canyonRidgeField(vec3 dir){ return inciseRidgeField(dir + vec3(13.7, -4.2, 8.9), 90.0, 2.07); }  // baseFreq HALVED 180->90 (user 2026-06-16 'twice as much canyons at half the frequency'): lower freq = WIDER, bigger, smoother canyons (each ~2x wider = the coarse mesh resolves the walls gently); the 'twice as much' coverage comes from the widened carve profile (canyonCarveM wall onset lowered). Shared VS carve + FS mask -> congruent.
 // CANYON cross-section now reads as a CANYON, not a V-notch: STEEP WALLS + a FLAT FLOOR.
 //   wall = a sharp smoothstep band -> the carve drops fast over a narrow ridge interval (the cliff
 //          walls), instead of the old gentle bench+gorge blend that made shallow V-troughs.
@@ -265,10 +265,13 @@ float canyonCarveM(vec3 dir, out float depth){
     // floor smoothstep bands so the rim->floor descent is spread over a WIDER ridge range = a softer
     // world-space slope, while the canyon still reaches full depth at the centre (ridge near 1) and stays
     // mesh-resolvable. (Not back to the 0.12 basin that sank whole regions = no contrast/invisible.)
-    float wall  = smoothstep(0.28, 0.82, ridge);               // gentle cliff wall (rim -> wall over a wide band)
-    float floorF= smoothstep(0.55, 0.93, ridge);               // gentle approach to the flat gorge floor
+    // WIDER COVERAGE + SMOOTHER (user 2026-06-16 'twice as much canyons at half the frequency' + 'slopes must
+    // be smoother'): lower the wall onset so the carve covers ~2x the area (more canyon) and the rim->floor
+    // descent spreads over a wider ridge range = a gentler slope. Pairs with the halved canyonRidgeField freq.
+    float wall  = smoothstep(0.15, 0.75, ridge);               // wide gentle cliff wall (more coverage, soft slope)
+    float floorF= smoothstep(0.45, 0.90, ridge);               // gentle approach to the gorge floor
     depth = max(wall, floorF);
-    float profile = max(wall, floorF);                          // wide, soft-walled gorge (mesh-resolvable, gentle slopes)
+    float profile = max(wall, floorF);                          // wide, soft-walled, broad-coverage gorge
     float dmul = canyonDepthMul > 0.0 ? canyonDepthMul : 1.0;   // 0 = uniform unset (e.g. probe prog)
     float carve = -CANYON_INCISE_DEPTH * dmul * profile;
     // FINE TRIBUTARY GULLIES (user 2026-06-02: 'at 2m our canyons are <2m'). The main canyon network
@@ -300,7 +303,7 @@ float canyonCarveM(vec3 dir){ float dd; return canyonCarveM(dir, dd); }
 //   RIM, a CONNECTED line around the whole mesa (not speckle). Stacking two octaves gives mesas +
 //   buttes (smaller mesas on top). Pure world-dir, LOD-invariant, seam-safe. Returns metres to ADD;
 //   cliffOut ->1 on the rim band (drives FS strata + steep material) so cliffs are lit + textured.
-const float MESA_HEIGHT = 1000.0; // metres a mesa top stands above the floor (user 2026-06-02 deepen+widen; was 380m = invisible vs multi-km relief)
+const float MESA_HEIGHT = 650.0; // metres a mesa top stands above the floor. 1000->650 (user 2026-06-16 'carving the land in a hard way, smoother'): less towering + paired with the ~3.4x wider rim band = a gentle escarpment, not a hard wall.
 uniform float cliffAmt;           // LIVE cliff-strength lever (window.__cliffAmt; 1.0 default)
 highp float broadShapeLowM(vec3 dir);   // W7: forward decl (metres -> highp); atlas-backed slope helper for the region slope gate
 // COHERENT BADLANDS REGION MASK: a LOW-FREQUENCY world-dir noise (freq 11 ~ continental patches)
@@ -338,7 +341,7 @@ highp float cliffTerraceM(vec3 dir, highp float h, out float cliffOut){   // W7:
     // cliff RIM (a connected contour around the mesa), the inside is the raised flat-ish top. Two
     // levels (top + a higher butte tier) so cliffs stack like real mesa country.
     float m = mesaField(d);
-    const float THR = 0.56, TH = 0.07;             // rim centre + half-width (widened for the taller 1000m escarpment -> readable slope, still a sharp rim)
+    const float THR = 0.56, TH = 0.24;             // rim centre + half-width. 0.07->0.24 (user 2026-06-16 'something else is carving the land in a hard way, slopes must be smoother'): the mesa rise was spread over a NARROW mesaField band = a near-vertical escarpment; widen the band ~3.4x so the same rise climbs over a much wider span = a SMOOTH slope, not a hard step.
     float top  = smoothstep(THR - TH, THR + TH, m);              // 0 floor -> 1 mesa top
     float butte= smoothstep(0.74 - TH, 0.74 + TH, m);            // higher butte tier
     float rise = (0.7 * top + 0.3 * butte) * MESA_HEIGHT;        // metres raised
