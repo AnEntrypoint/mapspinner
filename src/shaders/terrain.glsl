@@ -2074,8 +2074,14 @@ void main() {
             // in the FS. The high-octave dispA (faded close by crossFade) fingers the near boundary; beyond
             // crossFade the crossover settles to the smooth weight-ramp (wRamp+ord) = no mid-distance fingering,
             // acceptable. (dispB_lo/texFade no longer used here.)
-            float hA = (dispA - 0.5) * 1.5 * crossFade + wRamp + ordA * 0.45;
-            float hB = (dispB - 0.5) * 1.5 * crossFade - wRamp + ordB * 0.45;
+            // ord FADED BY crossFade (user 2026-06-16 'resolves right when close, but as a GRADIENT at distance
+            // it fades to the WRONG shade/texture'): the overlay-priority offset ordA*0.45 is a CONSTANT, so once
+            // the displacement mips away at distance it DOMINATES wRamp and flips a gate-correct material to the
+            // higher-priority one (e.g. a rock area next to grass -> grass far off, since ord grass 0.6 > rock 0.3).
+            // Multiply ord by crossFade so far away the climate/slope/height GATE (wRamp) decides cleanly = the
+            // SAME material the close-up resolves to; close-up keeps the overlay order (grass over sand, snow over all).
+            float hA = (dispA - 0.5) * 1.5 * crossFade + wRamp + ordA * 0.45 * crossFade;
+            float hB = (dispB - 0.5) * 1.5 * crossFade - wRamp + ordB * 0.45 * crossFade;
             float mh = max(hA, hB) - bw;
             float waH = max(hA - mh, 0.0), wbH = max(hB - mh, 0.0);
             bSharp = waH / max(waH + wbH, 1e-4);
