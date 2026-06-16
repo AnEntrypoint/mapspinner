@@ -197,7 +197,7 @@ float riverCarveM(vec3 dir, out float wet){
     return -RIVER_INCISE_DEPTH * (0.7 * valley + 0.3 * thalweg);   // more valley, gentler banking
 }
 float riverCarveM(vec3 dir){ float w; return riverCarveM(dir, w); }
-const float CANYON_INCISE_DEPTH = 350.0;  // metres at the gorge floor. 1400->350 (user 2026-06-16 'intensity way too much, walls too hard'): at canyonDepthMul=2 the 1400 base cut ~2800m clear to the +5 floor (sea level on high terrain) = a near-vertical wall; 350 => ~700m max incision so the gorge no longer bottoms out at sea level = far gentler walls + less intense, while still clearly a canyon. Put the intensity HERE (terrain.glsl is cache-busted = reliably reaches a warm tab; the gl-render canyonDepthMul default is module-cached and does NOT on a soft reload). LIVE fine-tune via window.__canyonDepth.
+const float CANYON_INCISE_DEPTH = 700.0;  // metres of carve magnitude. The DEPTH is now capped by a RELATIVE floor (composeHeightC ~L737: incision <= ~150m*canyonDepthMul below the local rim) rather than this constant, so this value sets the canyon WIDTH/wall-fill (how wide the gorge reaches its capped floor), NOT the depth: 350 over-narrowed the floor (user 2026-06-16 'narrower not shallower'), 700 restores a wider gorge that still bottoms out at the gentle ~300m relative floor. LIVE depth via window.__canyonDepth (scales the relative floor).
 uniform float canyonDepthMul;              // LIVE canyon-depth lever (window.__canyonDepth; 1.0 default)
 uniform float uVsCheap;                     // VS profiling: >0.5 skips all carves in composeHeight (window.__vsCheap; gpuTimer carve-cost A/B)
 // W5: uNrmGain deleted (only fed the removed VS slopeGain).
@@ -285,9 +285,9 @@ float canyonCarveM(vec3 dir, out float depth){
     // high frequency fractals'). DEEPENED + sharpened 2026-06-14 (user: mountains need visible canyons):
     // the main 100km gorge network keeps full CANYON_INCISE_DEPTH; the tributary octaves incise deeper
     // with narrower walls so ravines read at the deck. g3 subdivides the bigger gullies at maxLevel.
-    carve += -110.0 * dmul * smoothstep(0.50, 0.92, g1);   // ~10km tributaries (depth cut ~4x with the main gorge, user 2026-06-16 'intensity way too much')
-    carve +=  -50.0 * dmul * smoothstep(0.55, 0.93, g2);   // ~2.5km gullies (gentler + shallower)
-    carve +=  -22.0 * dmul * smoothstep(0.58, 0.94, g3);   // ~1.2km branching ravines (gentler + shallower)
+    carve += -250.0 * dmul * smoothstep(0.50, 0.92, g1);   // ~10km tributaries (the relative floor caps total depth, so this just adds fractal wall detail)
+    carve += -130.0 * dmul * smoothstep(0.55, 0.93, g2);   // ~2.5km gullies
+    carve +=  -60.0 * dmul * smoothstep(0.58, 0.94, g3);   // ~1.2km branching ravines
     return carve;
 }
 float canyonCarveM(vec3 dir){ float dd; return canyonCarveM(dir, dd); }
@@ -734,7 +734,7 @@ highp float composeHeightC(vec3 dir0, highp vec2 faceLocal, float tileM, HCache 
   // plain end-of-function dip -> 'canyon in field/probe, flat in elevation'. A plain BRANCH is not reorderable
   // the same way: carve only real land (h>5) and floor the result at +5m (dry visible valley); leave the
   // near-shore band (h<=5) untouched so there is no +5 coastal step.
-  if (h > 5.0) { h = max(h + inciseTot, 5.0); }
+  if (h > 5.0) { h = max(h + inciseTot, max(5.0, h - 150.0 * (canyonDepthMul > 0.0 ? canyonDepthMul : 1.0))); }   // RELATIVE FLOOR (user 2026-06-16 'narrower not shallower'): the absolute +5 floor cut every canyon clear to sea level on all but the highest terrain, so reducing the depth only narrowed the flat floor. Cap the incision to ~150m*canyonDepthMul BELOW the local rim (300m at the default 2.0), still floored at +5m -> a gentle CONSISTENT depth, no sea-level gorge. Live depth via window.__canyonDepth.
   // CLIFF TERRACING (mesa/butte benches) -- after carves so canyon walls + risers compose
   float cliffFaceMask; float cliffCarveV = cliffTerraceM(dir0, h, cliffFaceMask) * step(0.0, h);
   h += cliffCarveV;
@@ -974,7 +974,7 @@ void main() {
     // carves a deep basin below it). Bounded against the PRE-carve vH so deep inland canyons keep full
     // depth while coastal ones are limited by their own available headroom.
     highp float inciseTot = riverCarveV + canyonCarveV;         // both negative (downcut)
-    if (vH > 5.0) { vH = max(vH + inciseTot, 5.0); }            // FXC-robust floored carve (mirror composeHeightC; the nested max(min()) was dropped by FXC in the VS = flat canyons)
+    if (vH > 5.0) { vH = max(vH + inciseTot, max(5.0, vH - 150.0 * (canyonDepthMul > 0.0 ? canyonDepthMul : 1.0))); }   // RELATIVE FLOOR (mirror composeHeightC): incision capped ~150m*canyonDepthMul below the rim, floored +5 -> gentle consistent depth, not a sea-level gorge
     // CLIFF TERRACING: snap the arid+elevated land into flat benches with steep risers (mesa/butte
     // cliff country). Gated by the SAME canyonArid mask so cliffs share canyon regions (a coherent
     // arid badlands look). The snap delta is added to vH; cliffFaceMask (->1 on a riser face) goes to
