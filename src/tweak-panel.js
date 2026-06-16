@@ -76,12 +76,21 @@ const GROUPS = [
     ['termWidth',     'Terminator width',      0.05,1,    0.05, 0.05],
     ['flatNormal',    'Flat normal (diag)',    0,   1,    1,    0.0],
   ]],
+  ['Performance', [
+    // Render scale: drawing-buffer pixels per CSS pixel. Lower = faster (the deck is partly fill-bound:
+    // half-res measured -2ms/frame on the APU), softer (browser upscales). The biggest detail-PRESERVING
+    // FPS lever -- all geometry+material stays, just resolution drops. Live via window.__setRenderScale.
+    ['renderScale',   'Render scale (fps<->sharp)', 0.4, 1.5, 0.05, 1.0],
+  ]],
 ];
 
 // The baked values applied as live globals on load. FORCE-set (not null-guarded) so they win over
 // gen-controls' applyShaderGlobals for the shared look levers; runs after a double-rAF (post-init).
 function applyBaked(){
-  for (const [, levers] of GROUPS) for (const [key,,,,,def] of levers) window['__' + key] = def;
+  for (const [, levers] of GROUPS) for (const [key,,,,,def] of levers) {
+    if (key === 'renderScale') continue;   // canvas init owns the load default (DPR); the slider drives it live, don't force a load-time resize
+    window['__' + key] = def;
+  }
   const o = window.__planetOrch; if (o && o.clearCache) o.clearCache();
 }
 
@@ -128,6 +137,7 @@ function build(){
       num.style.cssText = 'flex:0 0 60px;background:#0a0e12;color:#cfe;border:1px solid #2a3a44;font:10px monospace';
 
       const apply = (v) => { v = +v; if (!isFinite(v)) return; window[g] = v; rng.value = v; num.value = v;
+        if (key === 'renderScale' && window.__setRenderScale) { window.__setRenderScale(v); return; }   // live buffer resize, not a shader uniform
         const o = window.__planetOrch; if (o && o.clearCache) o.clearCache(); };
       rng.oninput = () => apply(rng.value);
       num.oninput = () => apply(num.value);

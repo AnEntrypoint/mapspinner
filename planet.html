@@ -337,8 +337,22 @@ function frameLoop(){
       // innerWidth` -- but canvas IS #cwebgl, whose default drawing-buffer width is 300
       // (truthy) -> the buffer stayed locked at 300x150 (the "resolution dropped"). Size
       // it explicitly from the viewport.
-      const _dpr = Math.min(window.devicePixelRatio||1, 2);
-      gw.width = Math.round(innerWidth*_dpr); gw.height = Math.round(innerHeight*_dpr);
+      // RENDER SCALE (2026-06-16, 144fps): the deck frame is FILL/SHADING-bound (cost scales with
+      // drawing-buffer PIXELS -- GRID/vertex-count A/B did NOT move vsRaster; FS is per-pixel), so the
+      // single biggest lever on a fill-bound APU is rendering SUB-NATIVE and letting the browser upscale
+      // the canvas to the window (keeps ALL geometry+material detail, just softer). renderScale = the
+      // buffer-to-CSS-pixel ratio: 1.0 = native CSS res, the DPR default = crisp/supersampled, <1 = faster.
+      // Live override: window.__renderScale (reload to apply) or ?rscale=0.7. Default keeps the prior DPR look.
+      const _rsP = parseFloat(new URLSearchParams(location.search).get('rscale'));
+      const _rs = (isFinite(_rsP) && _rsP > 0) ? _rsP
+                : (typeof window.__renderScale === 'number' && window.__renderScale > 0) ? window.__renderScale
+                : Math.min(window.devicePixelRatio || 1, 2);
+      window.__renderScale = _rs;
+      gw.width = Math.round(innerWidth*_rs); gw.height = Math.round(innerHeight*_rs);
+      // LIVE render-scale dial: resize the drawing buffer on the fly (the render reads drawingBufferWidth
+      // each frame for the viewport + cull, so the next frame adapts; no reload). The Tweaks panel calls this.
+      window.__setRenderScale = function(s){ s = +s; if (!(s > 0.2 && s <= 2.0)) return; window.__renderScale = s;
+        const cv = document.getElementById('cwebgl'); if (cv){ cv.width = Math.round(innerWidth*s); cv.height = Math.round(innerHeight*s); } };
       // preserveDrawingBuffer:true so headless screenshots / readPixels capture the actual
       // rendered frame (without it the WebGL2 backbuffer reads all-zero in the witness
       // harness). Minor perf cost; worth it for reliable witnessing.
