@@ -1315,6 +1315,7 @@ uniform vec4 uSurfMeanL;     // per-layer mean linear luminance of the photo col
 uniform float uBiomeTint;    // how much macro biome/climate color is mixed OVER the texture (__biomeTint, default 0.22; was a hard 0.5 = washed the photo color out). 0 = pure texture color, 1 = pure biome.
 uniform float uTexBright;    // overall ground brightness multiplier (__texBright, default 0.92)
 uniform float uTexSat;       // texture chroma saturation around its own luma (__texSat, default 1.0; >1 = more vivid photo color)
+uniform float uXSoft;        // FAR crossover blend WIDTH (__xSoft, default 0.14): the splat A/B height-blend width at distance (near is always ~0.06 = hard displacement fingers). Bigger = softer gradient but a WIDER partial-mix ring; smaller = crisper, the crossover resolves fully sooner (user 2026-06-16 'ring of wrong color, crossover doesnt fully complete').
 uniform float uNrmLow;       // low-octave normal strength (__nrmLow, default 1.0) -- scales the two lower octaves of the rock normal pyramid
 uniform float uXFade0;       // crossover-displacement fade start metres (__xFade0, default 3000)
 uniform float uXFade1;       // crossover-displacement fade end metres (__xFade1, default 9000) -- high-octave disp gone past here (anti-sparkle)
@@ -2044,7 +2045,7 @@ void main() {
             // offset by the ramp'): height = displacement + a weight-ramp offset (gate positions the
             // boundary); higher wins over a soft width so the loser's high bumps poke through = fingers,
             // no hard line. ONE blend for ALL pairs. Mips smooth dispA/dispB at distance -> soft far edge.
-            float bw = mix(0.40, 0.06, crossFade);   // crossover blend WIDTH, distance-ramped (user 2026-06-16 'can the crossover mip out to a gradient instead of a hard line?'): crossFade is 1 up close (displacement-driven fingers, bw=0.06 = near-hard) and 0 far (displacement mips flat), so bw widens to 0.40 = a SOFT GRADIENT at distance instead of a hard color line. The near look (hard, the displacement makes the distribution interesting, user 2026-06-14) is preserved.
+            float bw = mix(uXSoft, 0.06, crossFade);   // crossover blend WIDTH, distance-ramped: crossFade 1 near (bw=0.06 = hard displacement fingers) -> 0 far (bw=uXSoft = a soft GRADIENT, not a hard line). uXSoft 0.40->0.14 default (user 2026-06-16 'ring of wrong color, crossover doesnt fully complete'): 0.40 was a WIDE partial-mix band = the wrong-color ring; 0.14 = a gentle gradient that still resolves to one material. LIVE-tunable via window.__xSoft (Tweaks panel).
             // weight-ramp coefficient 1.1 -> 0.5 (user 2026-06-14 'we want that crossover on ALL
             // crossovers'): a weaker weight ramp lets the DISPLACEMENT decide the winner over a WIDER
             // weight range, so the near-hard displacement-driven distribution spans a broad margin for

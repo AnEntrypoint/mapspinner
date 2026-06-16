@@ -1033,6 +1033,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(U('uBiomeTint'),  _g('biomeTint', 0.22)); // macro biome color mixed over the texture (2026-06-15 'doesnt look like the texture color' -- was hard 0.5)
     gl.uniform1f(U('uTexBright'),  _g('texBright', 0.92)); // overall ground brightness
     gl.uniform1f(U('uTexSat'),     _g('texSat', 1.0));     // texture chroma saturation (>1 = more vivid photo hue)
+    gl.uniform1f(U('uXSoft'),      _g('xSoft', 0.14));     // FAR crossover blend width (window.__xSoft): smaller = crisper crossover (no wide wrong-color ring), bigger = softer gradient
     gl.uniform1f(U('uNrmLow'),     _g('nrmLow', 1.0));     // low-octave rock normal strength (2026-06-15 'dont see lower-freq octave normals')
     gl.uniform1f(U('uXFade0'),     _g('xFade0', 8000.0));   // crossover-displacement fade start (m) (user 2026-06-15: gone by 10km, want it to hold further)
     gl.uniform1f(U('uXFade1'),     _g('xFade1', 20000.0));  // crossover-displacement fade end (m) -- 'fully faded by ~20km would be more appropriate'

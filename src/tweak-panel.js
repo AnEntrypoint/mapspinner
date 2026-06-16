@@ -43,6 +43,7 @@ const GROUPS = [
     ['texBright',     'Texture brightness',    0.5, 1.5,  0.02, 0.92],
     ['biomeTint',     'Biome tint / texture',  0,   1,    0.02, 0.22],
     ['texWarp',       'Anti-repeat warp',      0,   0.6,  0.02, 0.23],
+    ['xSoft',         'Crossover softness far',0,   0.5,  0.02, 0.14],
     ['texPhoto',      'Photo color (far)',     0,   1,    0.05, 0.0],
     ['texPhotoNear',  'Photo color (near)',    0,   1,    0.05, 0.45],
     ['xFade0',        'Crossover fade start m',0,   40000,1000, 8000],
