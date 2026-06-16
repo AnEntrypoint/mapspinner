@@ -285,9 +285,9 @@ float canyonCarveM(vec3 dir, out float depth){
     // high frequency fractals'). DEEPENED + sharpened 2026-06-14 (user: mountains need visible canyons):
     // the main 100km gorge network keeps full CANYON_INCISE_DEPTH; the tributary octaves incise deeper
     // with narrower walls so ravines read at the deck. g3 subdivides the bigger gullies at maxLevel.
-    carve += -250.0 * dmul * smoothstep(0.50, 0.92, g1);   // ~10km tributaries (the relative floor caps total depth, so this just adds fractal wall detail)
-    carve += -130.0 * dmul * smoothstep(0.55, 0.93, g2);   // ~2.5km gullies
-    carve +=  -60.0 * dmul * smoothstep(0.58, 0.94, g3);   // ~1.2km branching ravines
+    carve +=  -70.0 * dmul * smoothstep(0.50, 0.92, g1);   // ~10km tributaries -- SHALLOWED (user 2026-06-16 'canyons still too sharp and intense'): the gullies were DEEPER than the relative-floor cap so the sharp high-freq ravines dominated the floor; keep them as light fractal texture only
+    carve +=  -35.0 * dmul * smoothstep(0.55, 0.93, g2);   // ~2.5km gullies (light)
+    carve +=  -18.0 * dmul * smoothstep(0.58, 0.94, g3);   // ~1.2km branching ravines (light)
     return carve;
 }
 float canyonCarveM(vec3 dir){ float dd; return canyonCarveM(dir, dd); }
@@ -734,7 +734,7 @@ highp float composeHeightC(vec3 dir0, highp vec2 faceLocal, float tileM, HCache 
   // plain end-of-function dip -> 'canyon in field/probe, flat in elevation'. A plain BRANCH is not reorderable
   // the same way: carve only real land (h>5) and floor the result at +5m (dry visible valley); leave the
   // near-shore band (h<=5) untouched so there is no +5 coastal step.
-  if (h > 5.0) { h = max(h + inciseTot, max(-60.0, h - 100.0 * (canyonDepthMul > 0.0 ? canyonDepthMul : 1.0))); }   // RELATIVE-DEPTH FLOOR (user 2026-06-16 'canyonDepth makes it narrower not shallower', x3): canyon bottoms ~100m*canyonDepthMul BELOW the local rim (200m at the default 2.0) so canyonDepth is a true DEPTH lever -- halving it halves the depth at the SAME width. Lower bound -60m (a shallow water inlet on low terrain) NOT +5m: a +5 floor made the cap snap to sea level on low/moderate terrain where reducing depth only narrowed the +5 band (= the bug). LIVE depth via window.__canyonDepth.
+  if (h > 5.0) { h = max(h + inciseTot, max(-60.0, h - 60.0 * (canyonDepthMul > 0.0 ? canyonDepthMul : 1.0))); }   // RELATIVE-DEPTH FLOOR: canyon bottoms ~60m*canyonDepthMul BELOW the local rim (120m at the default 2.0) -- SHALLOWED from 100 (user 2026-06-16 'still too sharp and intense'). canyonDepth is a true DEPTH lever (halving halves depth, same width). Lower bound -60m (shallow water inlet) not +5m so it scales depth on low/moderate terrain too. LIVE depth via window.__canyonDepth.
   // CLIFF TERRACING (mesa/butte benches) -- after carves so canyon walls + risers compose
   float cliffFaceMask; float cliffCarveV = cliffTerraceM(dir0, h, cliffFaceMask) * step(0.0, h);
   h += cliffCarveV;
@@ -974,7 +974,7 @@ void main() {
     // carves a deep basin below it). Bounded against the PRE-carve vH so deep inland canyons keep full
     // depth while coastal ones are limited by their own available headroom.
     highp float inciseTot = riverCarveV + canyonCarveV;         // both negative (downcut)
-    if (vH > 5.0) { vH = max(vH + inciseTot, max(-60.0, vH - 100.0 * (canyonDepthMul > 0.0 ? canyonDepthMul : 1.0))); }   // RELATIVE-DEPTH FLOOR (mirror composeHeightC): bottom ~100m*canyonDepthMul below the rim, lower bound -60m so canyonDepth scales DEPTH (not width) on low/moderate terrain too
+    if (vH > 5.0) { vH = max(vH + inciseTot, max(-60.0, vH - 60.0 * (canyonDepthMul > 0.0 ? canyonDepthMul : 1.0))); }   // RELATIVE-DEPTH FLOOR (mirror composeHeightC): bottom ~60m*canyonDepthMul below the rim (120m default), lower bound -60m so canyonDepth scales DEPTH not width
     // CLIFF TERRACING: snap the arid+elevated land into flat benches with steep risers (mesa/butte
     // cliff country). Gated by the SAME canyonArid mask so cliffs share canyon regions (a coherent
     // arid badlands look). The snap delta is added to vH; cliffFaceMask (->1 on a riser face) goes to
@@ -1893,7 +1893,7 @@ void main() {
         // warps EVERY elevation-keyed biome edge -- snow, rock band, AND the beach. Computed here so the beach
         // gate can reuse it; the snow/rock gates below reuse the same bandWarp.
         float bandWarpN = snoise3(bwDir * 1100.0) + 0.5 * snoise3(bwDir * 2580.0);   // ~ +/-1.5
-        float bandWarp  = bandWarpN * uBandWarp;
+        float bandWarp  = bandWarpN * uBandWarp * 0.25;   // 4x NARROWER biome-crossover scatter band (user 2026-06-16 'the band where we apply noise to scatter biome crossovers should be ~4x narrower'): the elevation-keyed biome edges (snow/rock/beach) wander +/-uBandWarp; quartering it = crisper, less-scattered crossovers. (Scaled here in the cache-busted shader so it reliably reaches a warm tab; window.__bandWarp still scales it.)
         // GRASS<->BEACH: bandWarp shifts the threshold (moves the band); the WIDE crossover span lets the
         // texture DISPLACEMENT height-blend (bSharp below) interlock grass+sand across it (user 2026-06-15
         // 'the beach-to-sand band is super narrow not letting the displacement replacement do much' -- the old
@@ -2041,7 +2041,7 @@ void main() {
             // offset by the ramp'): height = displacement + a weight-ramp offset (gate positions the
             // boundary); higher wins over a soft width so the loser's high bumps poke through = fingers,
             // no hard line. ONE blend for ALL pairs. Mips smooth dispA/dispB at distance -> soft far edge.
-            float bw = 0.06;   // NEAR-HARD crossover (user 2026-06-14 'make the transition hard, let the displacement make the distribution interesting -> far less blendy'): the displacement picks a sharp per-pixel winner; the gate weight only shifts the proportion across the ramp
+            float bw = mix(0.40, 0.06, crossFade);   // crossover blend WIDTH, distance-ramped (user 2026-06-16 'can the crossover mip out to a gradient instead of a hard line?'): crossFade is 1 up close (displacement-driven fingers, bw=0.06 = near-hard) and 0 far (displacement mips flat), so bw widens to 0.40 = a SOFT GRADIENT at distance instead of a hard color line. The near look (hard, the displacement makes the distribution interesting, user 2026-06-14) is preserved.
             // weight-ramp coefficient 1.1 -> 0.5 (user 2026-06-14 'we want that crossover on ALL
             // crossovers'): a weaker weight ramp lets the DISPLACEMENT decide the winner over a WIDER
             // weight range, so the near-hard displacement-driven distribution spans a broad margin for
@@ -2183,12 +2183,13 @@ void main() {
     // grey ridge field elsewhere. Lets a witness SEE the canyon network density independent of
     // landing the nadir exactly on a thin gorge line.
     if (displayMode == 10) {
-        // ONE FRACTAL: canyonMask now samples the SAME canyonRidgeField as the VS carve (unified), so
-        // the per-pixel network coincides with the geometry -- show the single full-res field (no more
-        // overlaying canyonMask + vCanyonDep at two sample rates, which read as 'two resolutions').
-        float cd; float cv = canyonMask(vWorld, vH, climate.z, climate.w, pxWorld, cd);
-        // grey background -> orange canyon line by mask, deepening toward the gorge floor (cd).
-        vec3 col = mix(vec3(0.15), mix(vec3(0.75,0.40,0.15), vec3(0.9,0.15,0.05), cd), cv);
+        // SHOW THE ACTUAL CARVE (user 2026-06-16 'the canyon field debug view must show the canyons we're
+        // ACTUALLY carving'): use vCanyonDep -- the VS-integrated carve-depth varying (canyonDepMask, the
+        // exact profile the geometry incised), NOT a per-pixel re-eval of canyonMask which used different
+        // thresholds/gating than the VS carve and so drew canyons the geometry never cut. Same approach as
+        // displayMode 8 (river) which shows the integrated varying 'so it matches what actually renders'.
+        float cd = clamp(vCanyonDep, 0.0, 1.0);
+        vec3 col = mix(vec3(0.15), mix(vec3(0.75,0.40,0.15), vec3(0.9,0.15,0.05), cd), smoothstep(0.02, 0.25, cd));
         fragColor = vec4(col, 1.0); return;
     }
     // DIAG displayMode 11: CLIFF validation view -> RED = cliff/escarpment riser faces (vCliffFace),
