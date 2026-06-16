@@ -361,7 +361,6 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
   // static-camera re-render PERF path. frameStart kept (the render loop still references it).
   let _frameCache = null;
   let _pipelineQuads = null;   // pre-computed quads from last frame for draw-before-compute pipelining
-  let _glCheckTick = 0;        // throttle the gl.getError() hard-sync to 1-in-30 frames (pipeline stall)
   let frameStart = 0;
 
   // ---- per-frame quadtree drive --------------------------------------------------
@@ -794,12 +793,13 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
     if (!_pipelineQuads) {
       render.render(quads, cam, sun, time);
     }
-    // THROTTLED glError: gl.getError() is a hard client/server SYNC that drains the GL pipeline
-    // (the exact stall the draw-before-compute pattern exists to avoid). Probe once every 30
-    // frames (or when window.__glCheck forces it); assume 0 between probes. 2026-06-14.
-    _glCheckTick = (_glCheckTick + 1) % 30;
-    const _forceGlCheck = (typeof window !== 'undefined' && window.__glCheck);
-    const glError = (_glCheckTick === 0 || _forceGlCheck) ? render.checkGlError() : 0;
+    // glError = a hard client/server SYNC that drains the GL pipeline (the exact stall the draw-before-
+    // compute pattern exists to avoid). The 1-in-30 periodic probe is REMOVED (2026-06-16, 144fps
+    // smoothness / user 'no transfer spikes'): on a slow GPU that periodic sync was a ~one-frame hitch
+    // every ~0.5-1.3s = visible jitter in steady state. Now gated FULLY behind window.__glCheck (dev
+    // only); production assumes 0 and relies on the separate webglcontextlost listener for the
+    // catastrophic case. Re-arm error probing live with window.__glCheck=1.
+    const glError = (typeof window !== 'undefined' && window.__glCheck) ? render.checkGlError() : 0;
     _pipelineQuads = quads;
     // CULL DEBUG stats for the live HUD: kept/culled counts + the false-cull signature
     // (culledOnScreen = frustum-culled quads that actually project inside the screen) + whether
