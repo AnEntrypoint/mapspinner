@@ -678,7 +678,7 @@ highp float composeHeightC(vec3 dir0, highp vec2 faceLocal, float tileM, HCache 
       // (former: narrow shelf 500->150m raw, steeper shelf 0.24->0.6, steeper continental slope 1.19->1.5 so the
       // seabed plunges to deep water just offshore (less flat shallow shelf) and the deep bathymetry
       // carries 1.5x the bShape relief = more dramatic underwater terrain to explore.
-      h = -(min(d, 25.0) * 0.4 + max(d - 25.0, 0.0) * 1.9);
+      h = -(min(d, 70.0) * 0.45 + max(d - 70.0, 0.0) * 0.85);   // GENTLE CONTINENTAL SLOPE (user 2026-06-16 'fix the cliff-like dropoff all around the land'): the old *1.9 plunge dropped the seabed steeply just offshore = an underwater cliff visible through the clear water all around every coast. Widen the gentle near-shore shelf 25->70m and halve the plunge 1.9->0.85 so the bed eases down (no cliff); deep water still descends, just not vertically.
       h = max(h, -11000.0);   // cap depth at Mariana Trench (~11km)
   } else {
       // LAND COASTAL SHELF (user 2026-06-14: 'beaches not wide enough'): the underwater shelf above
@@ -927,7 +927,7 @@ void main() {
         const highp float SEABED_EASE = 25.0;   // mirror composeHeight: tiny waterline lip, steep plunge (no 'second beach')
         highp float dSea0 = -vH;
         highp float dSea = (dSea0 < SEABED_EASE) ? (dSea0 * dSea0 / SEABED_EASE) * (2.0 - dSea0 / SEABED_EASE) : dSea0;
-        vH = -(min(dSea, 25.0) * 0.4 + max(dSea - 25.0, 0.0) * 1.9);   // steep drop-off (mirror composeHeight)
+        vH = -(min(dSea, 70.0) * 0.45 + max(dSea - 70.0, 0.0) * 0.85);   // gentle continental slope (mirror composeHeight): no cliff-like dropoff at the coast
         vH = max(vH, -11000.0);   // cap depth at Mariana Trench (~11km)
     } else {
         highp float bShelf = uBeachShelfM > 1.0 ? uBeachShelfM : 600.0;   // LAND COASTAL SHELF -- mirror composeHeight exactly (wide beach, user 2026-06-14); guard stale/unset uniform
