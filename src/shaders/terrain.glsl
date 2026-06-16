@@ -752,7 +752,6 @@ highp float composeHeightC(vec3 dir0, highp vec2 faceLocal, float tileM, HCache 
   float duneSand = smoothstep(mix(0.62, 0.50, uCarveWide), mix(0.85, 0.95, uCarveWide), 1.0 - hpf0.a) * smoothstep(mix(0.40, 0.30, uCarveWide), mix(0.58, 0.68, uCarveWide), hpf0.b) * (1.0 - smoothstep(40.0, 160.0, h));
   float duneCrest; float duneV = duneFieldM(dir0, duneCrest) * duneSand * step(0.0, h);
   h += duneV;
-  h += 4000.0 * canyonRidgeField(dir0) * step(0.0, h);   // TEMP TEST 2 (2026-06-16): canyonRidgeField directly. displayMode 6 sinuous NETWORK lines => canyonRidgeField works in the VS (carve-loss is canyonCarveM's profile); UNIFORM green wash => canyonRidgeField/inciseRidgeField returns ~flat in the VS program. REVERT.
   return h;
 }
 // Self-deriving wrapper: probe/bake + any single-call site compute the cache inline (one hpfSample, no waste).
