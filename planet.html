@@ -629,16 +629,19 @@ function frameLoop(){
     const fps = 1000 / emaMspf;
     document.title = `TerrainView8 - fps: ${fps.toFixed(6)}, mspf: ${emaMspf.toFixed(6)}`;
     frame++;
-    // ---- DYNAMIC RESOLUTION (2026-06-16, "144fps PROPERLY space->deck, no transfer spikes"): hold the
-    // target framerate by gently dialing RENDER-SCALE (buffer pixels) only -- NEVER by dropping geometry
-    // or material detail (those stay full-res at every altitude). STEADY-STATE = ZERO RESIZES: a WIDE
-    // dead-band (~125-169fps at the 144 target) plus a 45-frame cooldown mean the framerate-is-fine case
-    // touches nothing, so there is no per-frame canvas realloc = no transfer spike. Resolution only steps
-    // during altitude transitions -- a few small 0.06 steps, motion-masked -- and ALWAYS climbs back to
-    // native when there's headroom (e.g. in space). Reuses emaMspf (the alpha-0.1 frame EMA above), whose
-    // ~10-frame settle is well inside the cooldown so each step measures the new buffer before the next.
-    // window.__drs=false -> manual render-scale (Tweaks panel); window.__drsTargetFps overrides the 144.
-    if (window.__drs !== false && window.__setRenderScale && frameMs > 0 && frameMs < 100) {
+    // ---- DYNAMIC RESOLUTION (2026-06-16, "144fps space->deck"): hold the target framerate by gently
+    // dialing RENDER-SCALE (buffer pixels) only -- NEVER by dropping geometry/material detail (those stay
+    // full-res at every altitude). STEADY-STATE = ZERO RESIZES: a WIDE dead-band (~125-169fps at the 144
+    // target) + a 45-frame cooldown mean the framerate-is-fine case touches nothing; resolution steps only
+    // on sustained altitude transitions (a few 0.06 steps) and climbs back to native in space.
+    // OPT-IN (window.__drs===true), NOT DEFAULT: each step calls window.__setRenderScale, which reallocates
+    // the canvas backing store = a one-frame hitch. Measured A/B on the real AMD spool over a hard
+    // space->deck descent: DRS off = 3 spikes>2x / p95 11.7 / max 23ms; DRS on = 5 spikes / p95 16 / max
+    // 54ms -- it adds ~2 resize blips per descent, which violates the user's "smooth persistent graphics the
+    // way we have now". Kept off by default to preserve that smoothness; the no-hitch path is VIEWPORT/FBO
+    // DRS (flex gl.viewport into a fixed-size target + upscale-blit, no realloc) -- TODO next.
+    // Reuses emaMspf (alpha-0.1 frame EMA); window.__drsTargetFps overrides the 144 target.
+    if (window.__drs === true && window.__setRenderScale && frameMs > 0 && frameMs < 100) {
       _drsCool++;
       const tMs = 1000 / (window.__drsTargetFps || 144);
       const drsCeil = Math.min(window.devicePixelRatio || 1, 2), drsFloor = 0.5;
