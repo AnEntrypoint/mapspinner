@@ -1033,7 +1033,8 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(U('uBiomeTint'),  _g('biomeTint', 0.22)); // macro biome color mixed over the texture (2026-06-15 'doesnt look like the texture color' -- was hard 0.5)
     gl.uniform1f(U('uTexBright'),  _g('texBright', 0.92)); // overall ground brightness
     gl.uniform1f(U('uTexSat'),     _g('texSat', 1.0));     // texture chroma saturation (>1 = more vivid photo hue)
-    gl.uniform1f(U('uXSoft'),      _g('xSoft', 0.14));     // FAR crossover blend width (window.__xSoft): smaller = crisper crossover (no wide wrong-color ring), bigger = softer gradient
+    gl.uniform1f(U('uXSoft'),      _g('xSoft', 0.30));     // FAR crossover blend width (window.__xSoft): 0.14->0.30 (user 2026-06-16 'fade stage band too narrow, widen it; close-up is right') -- close stays ~0.06, only the faded stage widens
+    gl.uniform1f(U('uBiomeWarp'),  _g('biomeWarp', 1.6));  // biome-distribution domain-warp amount (window.__biomeWarp). 1.0->1.6 (user 2026-06-16 'narrow the biome band, the elevation band is ok'): a stronger warp wiggles the biome boundaries enough to break the WIDE blobs into smaller fingered patches = narrower effective bands. 0 = raw anchor blobs; tune live in the Tweaks panel.
     gl.uniform1f(U('uNrmLow'),     _g('nrmLow', 1.0));     // low-octave rock normal strength (2026-06-15 'dont see lower-freq octave normals')
     gl.uniform1f(U('uXFade0'),     _g('xFade0', 8000.0));   // crossover-displacement fade start (m) (user 2026-06-15: gone by 10km, want it to hold further)
     gl.uniform1f(U('uXFade1'),     _g('xFade1', 20000.0));  // crossover-displacement fade end (m) -- 'fully faded by ~20km would be more appropriate'
@@ -1042,8 +1043,8 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(U('uNrmFade1'),   _g('nrmFade1', 80000.0)); // normal-texture fade end (m) -- DOUBLED from 40km
     gl.uniform1f(U('uBandWarp'),   _g('bandWarp', 1100.0));  // snow/rock/BEACH band warp amplitude (m), low-freq (2026-06-15 'use the snow warp on the beach too')
     gl.uniform1f(U('uBeachWidth'), _g('beachWidth', 5.0));   // grass<->beach crossover band width x beachTop (2026-06-15 'band super narrow, displacement does little') -- wide = displacement-fingered shoreline
-    gl.uniform1f(U('uTexFar0'),    _g('texFar0', 4000.0));   // splat->biome far-fade start (pxWorld m)
-    gl.uniform1f(U('uTexFar1'),    _g('texFar1', 26000.0));  // splat->biome far-fade end (pxWorld m) -- ring-isolation lever (2026-06-15)
+    gl.uniform1f(U('uTexFar0'),    _g('texFar0', 8000.0));   // splat->biome far-fade start (pxWorld m). 4000->8000: ALIGNED to the crossover-displacement fade (uXFade0/1 = 8000/20000) so the splat->macro color fade and the displacement fade happen in ONE distance band -- removes the DOUBLE band (user 2026-06-16 'sand fades out and then fades out again', 'double band rock->sand and sand->grass on the fade stage').
+    gl.uniform1f(U('uTexFar1'),    _g('texFar1', 20000.0));  // splat->biome far-fade end (pxWorld m). 26000->20000: matches uXFade1 so the two fades END together = a single merged transition, not two bands.
     gl.uniform1f(U('uTexMix'),     _g('texMix', 0.85));     // splat blend amount (0 = off)
     gl.uniform1f(U('uTexWarp'),    _g('texWarp', 0.23));    // anti-repetition warp amplitude (-30% from 0.325, grass warp too intense)
     gl.uniform1f(U('uTexPhoto'),   _g('texPhoto', 0.0));    // raw photo-color fraction (0 = patch matches the macro shade exactly)

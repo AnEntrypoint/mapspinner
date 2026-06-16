@@ -191,9 +191,13 @@ float riverRidgeField(vec3 dir){ return inciseRidgeField(dir, 96.0, 2.03); }   /
 float riverCarveM(vec3 dir, out float wet){
     float ridge = riverRidgeField(dir);
     // (2026-06-15: 'widen the valley' did not help -- reverted; depth carries visibility.)
-    float valley  = smoothstep(0.30, 0.94, ridge);             // gentle eroded valley sides
-    float thalweg = smoothstep(0.75, 0.96, ridge);             // deep channel core
-    wet = smoothstep(0.78, 0.94, ridge);                       // flowing-water line
+    // DEFINED NETWORK, not everywhere (user 2026-06-16 'the river field is also not affecting elevation'):
+    // valley onset 0.30 fired over ~the whole map (riverRidgeField mean ~0.55) so the river VALLEY sank the
+    // land uniformly = no contrast = flat. Raise the onset so only the ridge network incises, leaving the
+    // off-network land as a high bank = a real river VALLEY the coarse mesh reads.
+    float valley  = smoothstep(0.55, 0.92, ridge);             // eroded valley sides (network only -> banks stay high)
+    float thalweg = smoothstep(0.74, 0.96, ridge);             // deep channel core
+    wet = smoothstep(0.80, 0.95, ridge);                       // flowing-water line
     return -RIVER_INCISE_DEPTH * (0.7 * valley + 0.3 * thalweg);   // more valley, gentler banking
 }
 float riverCarveM(vec3 dir){ float w; return riverCarveM(dir, w); }
@@ -268,8 +272,14 @@ float canyonCarveM(vec3 dir, out float depth){
     // WIDER COVERAGE + SMOOTHER (user 2026-06-16 'twice as much canyons at half the frequency' + 'slopes must
     // be smoother'): lower the wall onset so the carve covers ~2x the area (more canyon) and the rim->floor
     // descent spreads over a wider ridge range = a gentler slope. Pairs with the halved canyonRidgeField freq.
-    float wall  = smoothstep(0.15, 0.75, ridge);               // wide gentle cliff wall (more coverage, soft slope)
-    float floorF= smoothstep(0.45, 0.90, ridge);               // gentle approach to the gorge floor
+    // DEFINED NETWORK, not everywhere (user 2026-06-16 'the canyon field is mostly red, better distribution
+    // of canyons, and they dont seem to affect elevation'): onset 0.15 made the profile fire over ~the whole
+    // map (canyonRidgeField mean ~0.55) so the field read solid red AND there was NO rim-vs-floor CONTRAST
+    // (everything sank together = flat). Raise the onset so only the higher-ridge network carves, leaving the
+    // off-network land as a HIGH RIM = real canyon contrast. Paired with the halved freq (90) the network is
+    // still wide enough for the coarse mesh to resolve.
+    float wall  = smoothstep(0.52, 0.84, ridge);               // canyon wall: only the ridge network carves (rims stay high = contrast)
+    float floorF= smoothstep(0.66, 0.93, ridge);               // gentle approach to the gorge floor
     depth = max(wall, floorF);
     float profile = max(wall, floorF);                          // wide, soft-walled, broad-coverage gorge
     float dmul = canyonDepthMul > 0.0 ? canyonDepthMul : 1.0;   // 0 = uniform unset (e.g. probe prog)
@@ -1315,6 +1325,7 @@ uniform float uBiomeTint;    // how much macro biome/climate color is mixed OVER
 uniform float uTexBright;    // overall ground brightness multiplier (__texBright, default 0.92)
 uniform float uTexSat;       // texture chroma saturation around its own luma (__texSat, default 1.0; >1 = more vivid photo color)
 uniform float uXSoft;        // FAR crossover blend WIDTH (__xSoft, default 0.14): the splat A/B height-blend width at distance (near is always ~0.06 = hard displacement fingers). Bigger = softer gradient but a WIDER partial-mix ring; smaller = crisper, the crossover resolves fully sooner (user 2026-06-16 'ring of wrong color, crossover doesnt fully complete').
+uniform float uBiomeWarp;    // biome-distribution domain-warp amount (__biomeWarp, default 1.0): warps the climate temp/humid that selects the biome so biome regions FINGER/break up instead of wide blobs (user 2026-06-16). 0 = off (raw anchor blobs), >1 = more broken up.
 uniform float uNrmLow;       // low-octave normal strength (__nrmLow, default 1.0) -- scales the two lower octaves of the rock normal pyramid
 uniform float uXFade0;       // crossover-displacement fade start metres (__xFade0, default 3000)
 uniform float uXFade1;       // crossover-displacement fade end metres (__xFade1, default 9000) -- high-octave disp gone past here (anti-sparkle)
@@ -1521,8 +1532,16 @@ vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, flo
     float lat = asin(clamp(nwp.y, -1.0, 1.0));   // T-4: nwp is already normalize(worldPos)
     float latCool = 0.18 * (abs(lat) / 1.5708);                  // poles cooler
     float elevCool = clamp(h / 4500.0, 0.0, 0.55) * uBiomeBandBias;  // lapse rate -> alpine bands
-    float tempEff  = clamp(temp - elevCool - latCool * uBiomeBandBias, 0.0, 1.0);
-    float humidEff = clamp(humid + clamp(h / 9000.0, 0.0, 0.12) * uBiomeBandBias, 0.0, 1.0);
+    // BIOME DOMAIN WARP (user 2026-06-16 'the biome map has wide uninteresting blobs ... apply the elevation
+    // warp to that too' + 'biome distribution band far too wide'): the anchor climate temp/humid is a slow
+    // ~100-200km field = wide biome blobs. Warp it with a higher-freq world-dir noise (decorrelated temp vs
+    // humid) so biome boundaries FINGER/break up like the elevation bandWarp does for the rock/snow edges =
+    // varied biome patches, not big blobs. uBiomeWarp scales it live (window.__biomeWarp; default 1).
+    float bwAmt = uBiomeWarp;
+    float bWarpT = snoise3(nwp * 230.0 + vec3(3.7, 9.1, 1.3)) * 0.6 + snoise3(nwp * 640.0 + vec3(8.1)) * 0.3;   // ~28km + ~10km
+    float bWarpH = snoise3(nwp * 230.0 + vec3(21.3, 4.7, 17.9)) * 0.6 + snoise3(nwp * 640.0 + vec3(27.7)) * 0.3; // decorrelated
+    float tempEff  = clamp(temp - elevCool - latCool * uBiomeBandBias + bWarpT * 0.13 * bwAmt, 0.0, 1.0);
+    float humidEff = clamp(humid + clamp(h / 9000.0, 0.0, 0.12) * uBiomeBandBias + bWarpH * 0.16 * bwAmt, 0.0, 1.0);
     vec3 biome = biomeColor(tempEff, humidEff);
     // VALUE-PRESERVING biome tint (user 2026-06-15 'a light-grass ring encircles every mountain where the
     // grass is dark'): the old `mix(c, biome, veg*0.82)` shifted BRIGHTNESS as veg fell off toward rock --
@@ -2079,8 +2098,13 @@ void main() {
             // higher-priority one (e.g. a rock area next to grass -> grass far off, since ord grass 0.6 > rock 0.3).
             // Multiply ord by crossFade so far away the climate/slope/height GATE (wRamp) decides cleanly = the
             // SAME material the close-up resolves to; close-up keeps the overlay order (grass over sand, snow over all).
-            float hA = (dispA - 0.5) * 1.5 * crossFade + wRamp + ordA * 0.45 * crossFade;
-            float hB = (dispB - 0.5) * 1.5 * crossFade - wRamp + ordB * 0.45 * crossFade;
+            // ord KEPT at all distances (user 2026-06-16 'on the fade the layer that goes on top pushes out'):
+            // the overlay-priority offset makes the higher-priority layer (snow>grass>rock>sand) expand over the
+            // lower at the boundary. Earlier it was faded out at distance (fade-to-wrong-material), but that root
+            // was the +4000m height bug (now removed) -- so restore the constant ord so the top layer pushes out
+            // at the fade stage too. Only the DISPLACEMENT fingering fades with crossFade (close detail), not the order.
+            float hA = (dispA - 0.5) * 1.5 * crossFade + wRamp + ordA * 0.45;
+            float hB = (dispB - 0.5) * 1.5 * crossFade - wRamp + ordB * 0.45;
             float mh = max(hA, hB) - bw;
             float waH = max(hA - mh, 0.0), wbH = max(hB - mh, 0.0);
             bSharp = waH / max(waH + wbH, 1e-4);
@@ -2186,7 +2210,11 @@ void main() {
     // COUNT contiguous biome regions + confirm logical placement (deserts in subtropics, ice at
     // poles, rainforest at equator), instead of eyeballing the blended lit palette.
     if (displayMode == 9) {
-        fragColor = vec4(biomeClassColor(climate.z, climate.w, vH), 1.0); return;
+        // same biome DOMAIN WARP as the lit path (user 2026-06-16 'apply the elevation warp to the biome map too')
+        highp vec3 bwN = normalize(vWorld);
+        float bwT = snoise3(bwN * 230.0 + vec3(3.7, 9.1, 1.3)) * 0.6 + snoise3(bwN * 640.0 + vec3(8.1)) * 0.3;
+        float bwH = snoise3(bwN * 230.0 + vec3(21.3, 4.7, 17.9)) * 0.6 + snoise3(bwN * 640.0 + vec3(27.7)) * 0.3;
+        fragColor = vec4(biomeClassColor(clamp(climate.z + bwT * 0.13 * uBiomeWarp, 0.0, 1.0), clamp(climate.w + bwH * 0.16 * uBiomeWarp, 0.0, 1.0), vH), 1.0); return;
     }
     // DIAG displayMode 10: CANYON field -> red where the gorge network fires (arid elevated only),
     // grey ridge field elsewhere. Lets a witness SEE the canyon network density independent of

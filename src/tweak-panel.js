@@ -57,6 +57,7 @@ const GROUPS = [
     ['exposure',      'Exposure',              0.2, 4,    0.05, 1.0],
     ['reliefShade',   'Relief shading',        0,   6,    0.1,  1.8],
     ['biomeSat',      'Biome saturation',      0,   2,    0.05, 0.72],
+    ['biomeWarp',     'Biome distribution warp',0,  3,    0.1,  1.0],
     ['variationAmt',  'Color variation',       0,   0.3,  0.01, 0.04],
     ['hazeMul',       'Aerial haze',           0,   2,    0.05, 0.65],
     ['diffWrap',      'Diffuse wrap',          0,   1,    0.05, 0.5],
