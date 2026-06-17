@@ -641,18 +641,24 @@ function frameLoop(){
     // MSAA) -- a multisample FBO is the look-preserving follow-up before this can default on.
     // window.__drsTargetFps overrides 144; reuses emaMspf (alpha-0.1 frame EMA).
     if (window.__drs === true && frameMs > 0 && frameMs < 100) {
-      window.__vdrs = true; _drsOwnsVdrs = true;   // route through the hitch-free FBO path
+      _drsOwnsVdrs = true;
       _drsCool++;
       const tMs = 1000 / (window.__drsTargetFps || 144);
       const vFloor = 0.45;
       let vs = (typeof window.__vdrsScale === 'number') ? window.__vdrsScale : 1.0;
       if (_drsCool >= 20) {                                         // 20 frames is safe -- a vdrs step never hitches
         if (emaMspf > tMs * 1.10 && vs > vFloor + 1e-3) {           // too slow -> shed pixels (all detail kept)
-          window.__vdrsScale = Math.max(vFloor, vs - 0.05); _drsCool = 0;
+          vs = Math.max(vFloor, vs - 0.05); _drsCool = 0;
         } else if (emaMspf < tMs * 0.90 && vs < 1.0 - 1e-3) {       // headroom -> restore resolution toward native
-          window.__vdrsScale = Math.min(1.0, vs + 0.05); _drsCool = 0;
+          vs = Math.min(1.0, vs + 0.05); _drsCool = 0;
         }
       }
+      window.__vdrsScale = vs;
+      // Engage the FBO path ONLY when a downscale is actually needed; at native scale (e.g. space with
+      // headroom) use the DEFAULT canvas path so the orbit limb/silhouette keeps the context MSAA (sharp) --
+      // the single-sample FBO would alias that hard edge. Toggling __vdrs never resizes the canvas, so this
+      // stays hitch-free; it softens ONLY the fps-constrained deck (no hard edges there). vs<0.985 = FBO on.
+      window.__vdrs = (vs < 0.985);
     } else if (_drsOwnsVdrs) {                                      // __drs turned off -> release vdrs back to native
       window.__vdrs = false; window.__vdrsScale = 1.0; _drsOwnsVdrs = false;
     }
