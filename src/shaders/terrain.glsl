@@ -298,9 +298,13 @@ float canyonCarveM(vec3 dir, out float depth){
     // high frequency fractals'). DEEPENED + sharpened 2026-06-14 (user: mountains need visible canyons):
     // the main 100km gorge network keeps full CANYON_INCISE_DEPTH; the tributary octaves incise deeper
     // with narrower walls so ravines read at the deck. g3 subdivides the bigger gullies at maxLevel.
-    carve +=  -70.0 * dmul * smoothstep(0.50, 0.92, g1);   // ~10km tributaries -- SHALLOWED (user 2026-06-16 'canyons still too sharp and intense'): the gullies were DEEPER than the relative-floor cap so the sharp high-freq ravines dominated the floor; keep them as light fractal texture only
-    carve +=  -35.0 * dmul * smoothstep(0.55, 0.93, g2);   // ~2.5km gullies (light)
-    carve +=  -18.0 * dmul * smoothstep(0.58, 0.94, g3);   // ~1.2km branching ravines (light)
+    // TRIBUTARIES DECOUPLED from dmul (user 2026-06-17 'canyon depth raises the entire landscape instead of
+    // differentiating canyons'): the gullies fire BROADLY, so scaling them by the depth lever roughened the
+    // WHOLE landscape when deepening canyons. Fixed light depth = canyon-depth now deepens the MAIN distinct
+    // gorges (the floor below) only; the tributaries stay as light close-up fractal texture.
+    carve +=  -55.0 * smoothstep(0.50, 0.92, g1);   // ~10km tributaries (light, fixed)
+    carve +=  -28.0 * smoothstep(0.55, 0.93, g2);   // ~2.5km gullies (light, fixed)
+    carve +=  -14.0 * smoothstep(0.58, 0.94, g3);   // ~1.2km branching ravines (light, fixed)
     return carve;
 }
 float canyonCarveM(vec3 dir){ float dd; return canyonCarveM(dir, dd); }
@@ -748,7 +752,15 @@ highp float composeHeightC(vec3 dir0, highp vec2 faceLocal, float tileM, HCache 
   // plain end-of-function dip -> 'canyon in field/probe, flat in elevation'. A plain BRANCH is not reorderable
   // the same way: carve only real land (h>5) and floor the result at +5m (dry visible valley); leave the
   // near-shore band (h<=5) untouched so there is no +5 coastal step.
-  if (h > 5.0) { h = max(h + inciseTot, max(-60.0, h - 60.0 * (canyonDepthMul > 0.0 ? canyonDepthMul : 1.0))); }   // RELATIVE-DEPTH FLOOR: canyon bottoms ~60m*canyonDepthMul BELOW the local rim (120m at the default 2.0) -- SHALLOWED from 100 (user 2026-06-16 'still too sharp and intense'). canyonDepth is a true DEPTH lever (halving halves depth, same width). Lower bound -60m (shallow water inlet) not +5m so it scales depth on low/moderate terrain too. LIVE depth via window.__canyonDepth.
+  // CANYON FLOOR REDESIGN (user 2026-06-17 'canyons arent showing on elevation at all, many debug runs'):
+  // the OLD floor max(-60, h-60*dmul) clamped EVERY deep carve to a uniform ~120m dip -- so the deep
+  // CANYON_INCISE_DEPTH(700)*dmul carve AND the shallow tributaries BOTH flattened to the same shallow floor
+  // = the canyon network sank the whole region uniformly with NO walls/shape = 'field shows canyons, elevation
+  // is flat'. FIX: floor MUCH deeper (450m*dmul, ~900m at the default 2.0) and DRY (>=5m, never an inland sea),
+  // so the carve keeps its PROFILE: canyon centres reach the deep floor with shaped rim->wall descent, and the
+  // shallower tributaries keep their own depth = real, visible, differentiated canyons. window.__canyonDepth
+  // scales the floor depth.
+  if (h > 5.0) { h = max(h + inciseTot, max(5.0, h - 450.0 * (canyonDepthMul > 0.0 ? canyonDepthMul : 1.0))); }
   // CLIFF TERRACING (mesa/butte benches) -- after carves so canyon walls + risers compose
   float cliffFaceMask; float cliffCarveV = cliffTerraceM(dir0, h, cliffFaceMask) * step(0.0, h);
   h += cliffCarveV;
