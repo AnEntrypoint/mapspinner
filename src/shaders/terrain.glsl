@@ -436,6 +436,7 @@ highp vec2 faceWarp(highp vec2 p){ return defRadius * tan((p / defRadius) * 0.78
 uniform float uDetailOverlay;   // amplitude lever (user-tuned 6; 0 = off; __detailOverlay)
 uniform float uGrid;             // interior cells per tile edge (GRID=16); for mesh-based vertex normals
 uniform float uNrmStepM;        // lit-normal FD step in metres (150); uniform-fed to defeat FXC constant folding
+uniform float uReliefScale;     // SCALE-INVARIANT planet (2026-06-17): relief height scale = R/6360000. The fractal relief is tuned in absolute metres at the 6360km design radius; scaling it by R/6360km makes the GEOMETRY proportional to whatever radius a consumer (e.g. spoint) passes, so ANY radius renders identically while the camera/LOD math uses the real value. 1.0 at the design radius = exact no-op. The FS material gates keep reading the UNSCALED inline vH (reference metres) so snow/band/biome lines fire at the same heights.
 #if defined(_VERTEX_) || defined(_PROBE_) || defined(_HEIGHTBAKE_)
 highp float broadShapeM(vec3 dir, float reliefMul, float ridgeMul){   // W7: returns metres (~13000) -> highp
   if (hasHpf == 0) return 0.0;
@@ -732,7 +733,7 @@ highp float composeHeightC(vec3 dir0, highp vec2 faceLocal, float tileM, HCache 
 }
 // Self-deriving wrapper: probe/bake + any single-call site compute the cache inline (one hpfSample, no waste).
 highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){
-  return composeHeightC(dir0, faceLocal, tileM, computeHCache(dir0), false);   // probe/bake/position: FULL carves
+  return composeHeightC(dir0, faceLocal, tileM, computeHCache(dir0), false) * (uReliefScale > 0.0 ? uReliefScale : 1.0);   // probe/bake/position: FULL carves. *uReliefScale = scale-invariant relief (geometry+probe scale with the radius; guard -> 1.0 if the uniform is unset so it can never flatten the planet)
 }
 #endif   // broadShapeM/broadShape/vtxDisplace/composeHeight + computeHCache/composeHeightC: VS/PROBE (excluded from render FS, FS-1)
 
@@ -1092,7 +1093,7 @@ void main() {
             highp vec2 off = (i == 0) ? vec2(0.0, 0.0) : (i == 1) ? vec2(duP, 0.0) : (i == 2) ? vec2(-duP, 0.0) : (i == 3) ? vec2(0.0, duP) : vec2(0.0, -duP);
             highp vec2 fl = faceWarp((vertex.xy + off) * defOffset.z + defOffset.xy);
             highp vec3 dd = normalize(defLocalToWorld * vec3(fl, defRadius));
-            highp float hh = composeHeightC(dd, fl, defOffset.z, nCache, i != 0);   // i==0 centre = POSITION (full carves); i!=0 taps = NORMAL (skip carves, ~2ms)
+            highp float hh = composeHeightC(dd, fl, defOffset.z, nCache, i != 0) * (uReliefScale > 0.0 ? uReliefScale : 1.0);   // i==0 centre = POSITION (full carves); i!=0 taps = NORMAL (skip carves, ~2ms). *uReliefScale = scale-invariant relief (geometry+normal scale with the radius)
             if (i == 0) { hN0 = hh; }
             else if (i == 1) { hPU = hh; dPU = dd; } else if (i == 2) { hMU = hh; dMU = dd; }
             else if (i == 3) { hPV = hh; dPV = dd; } else { hMV = hh; dMV = dd; }

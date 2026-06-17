@@ -123,10 +123,17 @@ const normalize=v=>{const r=Math.hypot(...v)||1;return [v[0]/r,v[1]/r,v[2]/r]};
 // Planet radius in working units. Earth-scale km. Apparent size is set by
 // where the camera starts (cam.pos below), not by this scalar -- RADIUS just
 // sets the units everything else is denominated in.
-const RADIUS=6371.0;
-// WebGL2 terrain works in METERS. Surface radius 6.36e6 m; the km-unit world maps to it 1 unit = this many m.
-const WEBGL2_TERRAIN_R_M = 6360000.0;
-const WEBGL2_M_PER_UNIT = WEBGL2_TERRAIN_R_M / RADIUS;
+// ADJUSTABLE PLANET RADIUS (user 2026-06-17 'make it adjustable in size without its contents changing'):
+// window.__planetScale (default 1) scales the planet's RATED radius. Because the SDK is scale-invariant
+// (gl-render uReliefScale scales the relief with R, and the quadtree/worldToFaceLocal/faceWarp all use the
+// real R), a different radius renders IDENTICALLY -- only the reported number changes (so a consumer like
+// spoint, or anything reading window.__WEBGL2_TERRAIN_R_M, gets the value you set). Set window.__planetScale
+// then reload. e.g. __planetScale=0.01 -> a 63,600 m planet that looks exactly the same as the 6,360 km one.
+const _planetScale = (typeof window !== 'undefined' && typeof window.__planetScale === 'number' && window.__planetScale > 0) ? window.__planetScale : 1.0;
+const RADIUS=6371.0 * _planetScale;
+// WebGL2 terrain works in METERS. Surface radius 6.36e6 m * scale; the km-unit world maps to it 1 unit = this many m.
+const WEBGL2_TERRAIN_R_M = 6360000.0 * _planetScale;
+const WEBGL2_M_PER_UNIT = WEBGL2_TERRAIN_R_M / RADIUS;   // ratio is scale-INVARIANT (both scale) -> the km<->m mapping is unchanged
 // EXPOSE the world-scale constants as globals so a scripted browser-witness (page.evaluate runs
 // in a SEPARATE scope and cannot see these module consts) can build a correct camera pose in
 // metres. Without this, witness scripts guessed the metre scale (got undefined -> NaN eye -> black

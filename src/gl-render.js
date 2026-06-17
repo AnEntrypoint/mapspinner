@@ -477,6 +477,12 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(loc('uClimateRelief'), g('climateRelief', 0.0));
     gl.uniform1f(loc('uIsleWide'),      g('isleWide', 0.0));
     gl.uniform1f(loc('uCarveWide'),     g('carveWide', 0.0));
+    // SCALE-INVARIANT relief (2026-06-17): the fractal relief is tuned in absolute metres at the 6360km
+    // DESIGN radius. Scale it by R/6360km so the GEOMETRY is proportional to whatever radius a consumer
+    // passes -> any radius renders identically (the dev demo at 6360km => exactly 1.0 = no-op), while the
+    // camera/LOD/collision use the real R. Set on BOTH render + _PROBE_ here so the rendered mesh and the
+    // collision probe scale together (else the camera clamps to an unscaled surface).
+    gl.uniform1f(loc('uReliefScale'),   R / 6360000.0);
   }
 
 
@@ -1121,7 +1127,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
       gl.activeTexture(gl.TEXTURE7); gl.bindTexture(gl.TEXTURE_2D_ARRAY, _surfNrm); gl.uniform1i(U('uSurfNrm'), 7);
     }
     gl.uniform1f(U('uHasSurfTex'), hasSurf ? 1.0 : 0.0);
-    const _texTileM = _g('texTile', 2400.0);
+    const _texTileM = _g('texTile', 2400.0) * (R / 6360000.0);   // SCALE-INVARIANT (2026-06-17): the surface-texture repeat scales with the radius so the photo splat stays proportional to the terrain at ANY planet scale (the whole texture pyramid derives from this tile size). 1.0 at the 6360km design radius = no-op.
     gl.uniform1f(U('uTexTileM'),   _texTileM);  // metres per repeat (user: 24m read as noise/rock -- 100x bigger)
     // CAMERA-RELATIVE TEXTURE UV (2026-06-15 'UV jumps wildly up close'): reduce the camera world pos mod the
     // tile period in fp64 here on the CPU, pass the small remainder. The shader builds the UV from

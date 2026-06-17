@@ -50,9 +50,8 @@ const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
 // cc=dot(c,center) -- NOT atan(cu/R) (that ignores the altitude/normalize scalar). cc>0 for any camera
 // over this face (it is the front face). z/altitude term stays the raw center projection.
 const ATAN_INV_K = 4.0 / Math.PI;   // 1/(pi/4): undo faceWarp's (p/R)*pi/4 scaling
-function worldToFaceLocal(face, camWorld) {
+function worldToFaceLocal(face, camWorld, R) {   // R = configured planet radius (== quadtree size / defRadius). SCALE-INVARIANT 2026-06-17: was hardcoded 6360000, which broke the LOD when a consumer (spoint) passed a different radius (camAlt = camDist-6360000 went negative). Now the real R.
   const F = FACE_FRAME[face];
-  const R = 6360000.0;              // == quadtree size / defRadius (the face warp radius)
   const cu = dot(camWorld, F.u), cv = dot(camWorld, F.v), cc = dot(camWorld, F.c);
   // GUARD: worldToFaceLocal runs for ALL 6 faces every frame. For a face the camera is NOT in
   // front of, cc<=0 and cu/cc flips sign / blows up -> a garbage _cam that explodes the quadtree
@@ -699,14 +698,14 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
       // LOD drive uses lodRefPos (aim-shifted, altitude preserved) so deepest LOD follows the
       // look point; the quad record keeps the TRUE-camera localCam (for the VS geomorph
       // defCamera uniform), and the cull below uses the TRUE camera (camDirX/Y/Z, camWorldPos).
-      const lodLocalCam = worldToFaceLocal(face, lodRefPos);
-      const localCam = worldToFaceLocal(face, camWorldPos);
+      const lodLocalCam = worldToFaceLocal(face, lodRefPos, R);
+      const localCam = worldToFaceLocal(face, camWorldPos, R);
       // pass the TRUE camera nadir (localCam x,y) so the far-LOD falloff protects the real foreground
       // (decoupled from the aim-shifted lodLocalCam) -- nearby stays fine while the far horizon trims.
       // ALSO pass the AIM ground point (face-local x,y) as a SECOND foreground-protect center so the
       // pitched-down bottom-of-screen band stays full-LOD in every look azimuth (fixes the small
       // azimuth-asymmetric bottom-edge missing quads). null aim (look misses the sphere) -> nadir only.
-      const aimLocal = aimGroundPt ? worldToFaceLocal(face, aimGroundPt) : null;
+      const aimLocal = aimGroundPt ? worldToFaceLocal(face, aimGroundPt, R) : null;
       // pass the TRUE altitude (|camWorldPos|-R) so the quadtree does not derive it from the WARPED
       // face-local hypot (which overestimates off the face centre -> LOD stalled everywhere but the
       // start point; user 2026-06-03). camDist = |camWorldPos|, R = planet radius.
