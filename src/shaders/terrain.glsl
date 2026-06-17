@@ -1292,7 +1292,9 @@ uniform vec4 uSurfMeanL;     // per-layer mean linear luminance of the photo col
 uniform float uBiomeTint;    // how much macro biome/climate color is mixed OVER the texture (__biomeTint, default 0.22; was a hard 0.5 = washed the photo color out). 0 = pure texture color, 1 = pure biome.
 uniform float uTexBright;    // overall ground brightness multiplier (__texBright, default 0.92)
 uniform float uTexSat;       // texture chroma saturation around its own luma (__texSat, default 1.0; >1 = more vivid photo color)
-uniform float uXSoft;        // FAR crossover blend WIDTH (__xSoft, default 0.14): the splat A/B height-blend width at distance (near is always ~0.06 = hard displacement fingers). Bigger = softer gradient but a WIDER partial-mix ring; smaller = crisper, the crossover resolves fully sooner (user 2026-06-16 'ring of wrong color, crossover doesnt fully complete').
+uniform float uXSoft;        // crossover fade HALF-WIDTH (__xSoft): the A/B crossover is ONE constant-width directional fade smoothstep(-uXSoft,uXSoft,s); the width is CONSTANT (warp shifts POSITION only, never width -- user 2026-06-17). Bigger = softer/wider fade, smaller = crisper.
+uniform float uXFinger;      // near-field displacement FINGERING amount (__xFinger): how hard the two materials interlock by their relief up close; fades to 0 with distance (crossFade) so the mipped/far crossover is a SIMPLE fade with NO band (user 2026-06-17 'a simple fade from the over texture to the under texture').
+uniform float uOrdPush;      // overlay-priority POSITIONAL push (__ordPush): the covering material (higher ord: sand<rock<grass<snow) expands over the covered one by shifting the fade's 50% point -- a position shift, NOT a width change. Makes grass cover the grass<->sand band so it never reads as green sand (user 2026-06-17).
 uniform float uBiomeWarp;    // biome-distribution domain-warp amount (__biomeWarp, default 1.0): warps the climate temp/humid that selects the biome so biome regions FINGER/break up instead of wide blobs (user 2026-06-16). 0 = off (raw anchor blobs), >1 = more broken up.
 uniform float uNrmLow;       // low-octave normal strength (__nrmLow, default 1.0) -- scales the two lower octaves of the rock normal pyramid
 uniform float uXFade0;       // crossover-displacement fade start metres (__xFade0, default 3000)
@@ -1895,14 +1897,15 @@ void main() {
         // 0.5x beachTop band was a ~15m strip = a thin horizontal LINE). uBeachWidth (default 5x) widens it.
         float beach = (1.0 - smoothstep(bandWarp, uBeachTopM * uBeachWidth + bandWarp, vH))
                     * (1.0 - smoothstep(0.18, 0.55, slope));
-        // SAND BLEED (2026-06-13): patchy sand spills above the main beach line, modulated by VS
-        // warp noise so the edge reads as wind-blown pockets, not a strict elevation cut. At peak it
-        // adds ~0.3 sand weight far above the beach, creating a natural dappled transition.
-        float sandBleed = max(0.0, vTexWarp.y) * 0.35 * max(0.0, 1.0 - smoothstep(30.0, 200.0, vH));
+        // SAND BLEED REMOVED (user 2026-06-17 'our warp should not affect the width of the band'): the old
+        // sandBleed = max(0,vTexWarp.y)*0.35*... added SAND WEIGHT by the WARP AMPLITUDE, so the grass<->sand
+        // band grew wider where the warp was positive and narrower where it wasn't = the variable width. The
+        // beach gate below keeps a CONSTANT vH-width (both smoothstep edges get +bandWarp) so bandWarp shifts
+        // the band POSITION but never its WIDTH; that is now the ONLY width source -> uniform band everywhere.
         // SAND REGIONS SUPPRESS ROCK (user 2026-06-10 'rock being used instead of sand'): in
         // deserts/dunes/beaches sand drapes moderate slopes; rock only wins on genuinely steep faces
         // there (gate shifted toward 0.5-0.7 inside sand regions instead of slopeRock 0.28-0.55).
-        float sandRegion = clamp(max(max(dryHot, max(beach, sandBleed)), smoothstep(0.0, 0.25, vDuneCrest)), 0.0, 1.0);
+        float sandRegion = clamp(max(max(dryHot, beach), smoothstep(0.0, 0.25, vDuneCrest)), 0.0, 1.0);
         // SPLAT ROCK GATE DECOUPLED from the macro slopeRock (user 2026-06-11 'a lot of grass turning
         // into rocky patches again'): the user-calibrated global soft blend slopeRock [-0.6,1] puts
         // ~37% ROCK LAYER weight on perfectly flat ground, and the displacement-sharpened top-2
@@ -2009,8 +2012,7 @@ void main() {
         // color (grass/rock/sand/snow), NOT the macro biome color. mcA = layer A's base color.
         vec3 mcA = lA < 0.5 ? bcGrass : (lA < 1.5 ? bcRock : (lA < 2.5 ? bcShore : bcSnow));
         vec3 texMatColor = mcA;
-        vec4 texAlb = vec4(cA, dispA); vec3 texNrm = nA;
-        float splatRock = (abs(lA - 1.0) < 0.5) ? 1.0 : 0.0;   // height-blend rock fraction (layer 1 = rock)
+        vec3 texNrm = nA;
         // TEXTURE-DETAIL FADES (user 2026-06-15): two curves keyed on camera distance.
         // texFade (20->40km) fades the NORMAL textures (user 'mip the normal textures closer, gone by 40km').
         // crossFade (CLOSER, uXFade0->uXFade1 default 3->9km) fades the CROSSOVER ramp's high-octave
@@ -2025,124 +2027,69 @@ void main() {
         // detail->flat-material collapse created a visible ARC at its transition distance (proven by A/B: the
         // arc vanishes when the collapse is pushed all-near or all-far -- it IS the transition zone). The GPU
         // mip chain already fades the albedo detail gradually with distance (no discrete boundary), so let it.
-        float bSharp = 1.0;   // hoisted: displacement height-blend pick (1 = pure layer A when no 2nd layer); used by texL below so the shade-match matches the texMatColor pick
+        // ===== CROSSOVER: ONE clean constant-width directional fade (user 2026-06-17 redesign) =====
+        // REPLACED the displacement water-level blend (bw + wRamp + ord*0.45, mh = max(hA,hB)-bw). That model
+        // had three faults the user named: (1) when the displacement mipped away at distance it collapsed to a
+        // narrow ord-biased BAND, not a fade ('the texture band when mipped back to fading produces a band');
+        // (2) its width tracked the warp/displacement ('our warp should not affect the width of the band');
+        // (3) a HARD texMatColor pick over a SMOOTHLY-mixed photo -> the photo wore the wrong layer's
+        // brightness = GREEN SAND. The new model is a single smoothstep fade: WIDTH is the constant uXSoft,
+        // POSITION is shifted by overlay priority (the covering material expands), and an optional near-field
+        // displacement FINGERING fades to zero with distance so the far/mipped crossover is a SIMPLE A->B fade.
+        float ordA = lA < 0.5 ? 0.6 : (lA < 1.5 ? 0.3 : (lA < 2.5 ? 0.0 : 1.0));   // overlay priority: sand<rock<grass<snow
+        // layer-A detail = the photo's OWN hue rescaled to layer A's MATERIAL brightness. Each layer keeps its
+        // own colour AND brightness, so a transition pixel is a true grass<->sand blend -- never the grass
+        // photo wearing sand brightness (that mismatch was the 'green sand').
+        float mA = uSurfMeanL[int(lA + 0.5)];
+        vec3 satA = max(mix(vec3(dot(cA, LUMA)), cA, uTexSat), 0.0);
+        vec3 detailA = satA * (dot(mcA, LUMA) / max(mA, 0.02));
+        vec3 detail = detailA;   // single-layer default; the crossfade below overwrites it when a 2nd layer exists
+        float bSharp = 1.0;      // 1 = pure layer A; reused by the texDn relief fade below
         if (wB > 0.02) {   // second layer only where a real transition exists
             vec4 albB = surfTriTap(uSurfAlb, wt4, tw, lB);
             vec3 cB = albB.rgb;   // CHROMA EXPRESSED (match cA)
             vec3 nB = surfTriNrm(uSurfNrm, wt4,      tw, lB, n) * 1.0
                     + surfTriNrm(uSurfNrm, wt4*0.25, tw, lB, n) * (1.7 * uNrmLow);   // 2-octave (match nA, PERF)
             float dispB = albB.a;
-            // HEIGHT-BLEND POKE-THROUGH (user 'each texture's higher areas should poke through the other,
-            // offset by the ramp'): height = displacement + a weight-ramp offset (gate positions the
-            // boundary); higher wins over a soft width so the loser's high bumps poke through = fingers,
-            // no hard line. ONE blend for ALL pairs. Mips smooth dispA/dispB at distance -> soft far edge.
-            float bw = mix(uXSoft, 0.06, crossFade);   // crossover blend WIDTH, distance-ramped: crossFade 1 near (bw=0.06 = hard displacement fingers) -> 0 far (bw=uXSoft = a soft GRADIENT, not a hard line). uXSoft 0.40->0.14 default (user 2026-06-16 'ring of wrong color, crossover doesnt fully complete'): 0.40 was a WIDE partial-mix band = the wrong-color ring; 0.14 = a gentle gradient that still resolves to one material. LIVE-tunable via window.__xSoft (Tweaks panel).
-            // weight-ramp coefficient 1.1 -> 0.5 (user 2026-06-14 'we want that crossover on ALL
-            // crossovers'): a weaker weight ramp lets the DISPLACEMENT decide the winner over a WIDER
-            // weight range, so the near-hard displacement-driven distribution spans a broad margin for
-            // EVERY pair (rock-slope, snow, biome...), not just the explicitly-widened beach gate.
-            // AMPLIFY the displacement's influence (user 2026-06-14 'the high-freq textures arent
-            // affecting the crossover point yet'): the raw displacement sits near its 0.5 mean so the
-            // per-layer DIFFERENCE was tiny -> the crossover was weight-driven, not texture-driven. Center
-            // + scale it (x3) so the high-freq relief clearly decides the boundary; the weight just
-            // positions it. (Mips average the displacement to ~0.5 at distance -> auto-smooth far edge.)
-            // NON-LINEAR weight ramp (user 2026-06-14 'the ramp isnt complete enough between sections ->
-            // cutoff lines at the end'): a CONSTANT weight bias let displacement fingers survive right up
-            // to where the gate drops the layer = a hard cutoff line. Make the bias WEAK mid-ramp (wide
-            // displacement crossover) and STRONG at the ends so the fingers taper to nothing before the
-            // gate cuts off -> the ramp completes smoothly, no end line.
-            float wRamp = (bAB - 0.5) * mix(1.4, 4.0, clamp(abs(bAB - 0.5) * 2.0, 0.0, 1.0));   // mid 0.6->1.4 (user 2026-06-14 'all crossover bands a bit wide, rock too'): stronger weight bias = NARROWER displacement crossover on every pair
-            // OVERLAY ORDER (user 2026-06-14 'flip the order of the textures overlay on the ramps, grass
-            // goes over sand etc'): bias the height by a per-material overlay priority so the COVERING
-            // material wins the crossover -> grass overlays sand+rock, snow overlays all (sand<rock<grass<snow).
-            float ordA = lA < 0.5 ? 0.6 : (lA < 1.5 ? 0.3 : (lA < 2.5 ? 0.0 : 1.0));
             float ordB = lB < 0.5 ? 0.6 : (lB < 1.5 ? 0.3 : (lB < 2.5 ? 0.0 : 1.0));
-            // LOD-STABLE boundary (user 2026-06-14 'still see the hard color line' -- the high-octave
-            // displacement mips FLAT at distance so the crossover collapsed to a smooth ramp = a line/band).
-            // Add the LOW-octave (2.4km tile) displacement, which stays varied much farther out, so the
-            // grass/sand interlocks (fingers) at ALL distances -- still the texture DISPLACEMENT, not noise.
-            // PERF (2026-06-15): low-octave disp taps (dispA_lo/dispB_lo) REMOVED -- 2 surfTriTap/pixel saved
-            // in the FS. The high-octave dispA (faded close by crossFade) fingers the near boundary; beyond
-            // crossFade the crossover settles to the smooth weight-ramp (wRamp+ord) = no mid-distance fingering,
-            // acceptable. (dispB_lo/texFade no longer used here.)
-            // ord FADED BY crossFade (user 2026-06-16 'resolves right when close, but as a GRADIENT at distance
-            // it fades to the WRONG shade/texture'): the overlay-priority offset ordA*0.45 is a CONSTANT, so once
-            // the displacement mips away at distance it DOMINATES wRamp and flips a gate-correct material to the
-            // higher-priority one (e.g. a rock area next to grass -> grass far off, since ord grass 0.6 > rock 0.3).
-            // Multiply ord by crossFade so far away the climate/slope/height GATE (wRamp) decides cleanly = the
-            // SAME material the close-up resolves to; close-up keeps the overlay order (grass over sand, snow over all).
-            // ord KEPT at all distances (user 2026-06-16 'on the fade the layer that goes on top pushes out'):
-            // the overlay-priority offset makes the higher-priority layer (snow>grass>rock>sand) expand over the
-            // lower at the boundary. Earlier it was faded out at distance (fade-to-wrong-material), but that root
-            // was the +4000m height bug (now removed) -- so restore the constant ord so the top layer pushes out
-            // at the fade stage too. Only the DISPLACEMENT fingering fades with crossFade (close detail), not the order.
-            float hA = (dispA - 0.5) * 1.5 * crossFade + wRamp + ordA * 0.45;
-            float hB = (dispB - 0.5) * 1.5 * crossFade - wRamp + ordB * 0.45;
-            float mh = max(hA, hB) - bw;
-            float waH = max(hA - mh, 0.0), wbH = max(hB - mh, 0.0);
-            bSharp = waH / max(waH + wbH, 1e-4);
-            texAlb = vec4(mix(cB, cA, bSharp), mix(dispB, dispA, bSharp));
-            texNrm = mix(nB, nA, bSharp);
             vec3 mcB = lB < 0.5 ? bcGrass : (lB < 1.5 ? bcRock : (lB < 2.5 ? bcShore : bcSnow));
-            // HARD color pick (user 2026-06-14 'grass mixed with sand creates a hard line between slope
-            // grass and grass around it -- match the two grasses'): a linear color mix tan-tinted the grass
-            // inside the sand zone so it differed from pure grass outside. Now the boundary is FINGERED by
-            // the LOD-stable displacement, so a near-hard color pick keeps grass PURE bcGrass everywhere
-            // (the two grasses match) and flips cleanly to sand along the fingers -- no tint, no straight line.
-            // HARD color pick (user 2026-06-15 'light grass around rock crossovers then dark grass -- one type
-            // of grass'): the 0.42-0.58 ramp made a light tan-green BAND where grass color blended halfway to
-            // rock at the boundary, reading as a second 'light grass'. Tighten to a near-step so grass holds its
-            // ONE shade right up to the rock and flips cleanly along the displacement fingers (no light band).
-            texMatColor = mix(mcB, mcA, smoothstep(0.48, 0.52, bSharp));
+            // SIGNED SEAM COORDINATE s (+deep in A, -deep in B, 0 at the visual seam):
+            //   (bAB-0.5)*2.0        = the gate weight (0 at the weight boundary, +1 deep in A; the A/B top-2
+            //                          swap flips its sign continuously across the seam, so the fade is symmetric);
+            //   (ordA-ordB)*uOrdPush = POSITION shift only -- the covering material's 50% point moves outward,
+            //                          width UNCHANGED (grass covers the grass<->sand band so it can't read green);
+            //   finger               = displacement interlock, faded to 0 by crossFade so the FAR crossover is a
+            //                          plain over->under fade (no band) and the warp can't widen it at distance.
+            float finger = (dispA - dispB) * uXFinger * crossFade;
+            float s = (bAB - 0.5) * 2.0 + (ordA - ordB) * uOrdPush + finger;
+            bSharp = smoothstep(-uXSoft, uXSoft, s);   // CONSTANT-width directional fade (width = 2*uXSoft)
+            // crossfade the two fully-resolved per-layer detail colours (each at its OWN brightness): near, the
+            // displacement fingering drives bSharp hard to 0/1 = pure pixels (no muddy mid); far, bSharp is a
+            // smooth gradient = the simple over->under fade. No green sand at any distance.
+            float mB = uSurfMeanL[int(lB + 0.5)];
+            vec3 satB = max(mix(vec3(dot(cB, LUMA)), cB, uTexSat), 0.0);
+            vec3 detailB = satB * (dot(mcB, LUMA) / max(mB, 0.02));
+            detail = mix(detailB, detailA, bSharp);
+            texMatColor = mix(mcB, mcA, bSharp);   // base material colour follows the SAME fade (consistent, no mismatch)
+            texNrm = mix(nB, nA, bSharp);
         }
-        // MATCH COLOR TO NORMAL (user 2026-06-14 'green grassy patches with the rock normals -- should be
-        // rock colored or grass normals'): texNrm follows the displacement height-blend (rock on bumps in
-        // the slope-transition band) but the macro albedo used the slope gate -> grass color under a rock
-        // normal. Push the macro color toward bcRock by the splat's actual rock fraction so the COLOR
-        // follows the same selection the NORMAL does (bounded -- splatRock is 0 where rock isn't in top-2).
+        // detail + texMatColor are now resolved PER-LAYER inside the crossover above (each layer's photo hue at
+        // its OWN material brightness, crossfaded by bSharp) -- so no separate texC/texL recompute, and no
+        // 'green sand' from a mixed photo wearing a hard-picked brightness. k = how much textured detail shows
+        // vs the flat material colour; texFarFade hands the splat off to the macro biome past the splat radius.
         float k = uTexMix * texFarFade;
-        // macro-tinted detail (user 2026-06-10 'the textured patch must be tinted to the same shade
-        // as the spot its replacing'): the texture contributes STRUCTURE + relative chroma only,
-        // luminance-normalized onto the macro biome/climate color, so the splat never shifts the
-        // shade of the ground it covers. uTexPhoto (default 0) can blend raw photo color back in.
-        vec3 texC = texAlb.rgb;   // NATURAL texture color (2026-06-15: x1.2/x1.8 boost read too bright/cartoony -- use the photo's own chroma, no boost; the biome tint below + brightness shade-match set the final intensity)
-        // LAYER-MEAN shade-match (user 2026-06-11 'dont see grass/snow textures' + 'terrain gets
-        // darker'): dividing by the PER-PIXEL luminance cancelled all texture structure, and the
-        // raw-photo blend that replaced it shifted the shade (the photos are darker than the macro).
-        // Dividing by the layer's MEAN luminance (loader-computed uSurfMeanL) keeps every per-pixel
-        // deviation visible while the patch average lands exactly on the macro shade.
-        float mA = uSurfMeanL[int(lA + 0.5)];
-        // HARD shade-match pick (user 2026-06-15 'a line between two grass colors around the mountain'): texL
-        // used the SMOOTH bAB so the grass BRIGHTNESS ramped as rock entered the top-2 just below the treeline
-        // = a band of off-shade grass circling the mountain. Use the SAME hard 0.48-0.52 pick as texMatColor so
-        // grass keeps its pure brightness until rock actually dominates -> no grass-shade band.
-        float texL = mix(uSurfMeanL[int(lB + 0.5)], mA, smoothstep(0.48, 0.52, bSharp));
-        // SATURATE the photo chroma around its own luma (user 2026-06-15 'doesnt look like the color of
-        // the textures at all'): push texC away from grey by uTexSat so the real hue reads, THEN rescale
-        // to the material brightness. uTexSat=1 keeps the photo native; >1 = more vivid.
-        float texCL = dot(texC, LUMA);
-        texC = max(mix(vec3(texCL), texC, uTexSat), 0.0);
-        vec3 detail = texC * (dot(texMatColor, LUMA) / max(texL, 0.02));   // texture's OWN color (cA/cB now RGB) at the MATERIAL brightness (layer-mean normalized) -> chroma expressed, shade-matched (2026-06-15)
-        // ROCK SHOWS THE TRUE PHOTO (user 2026-06-10 'we still see the original rock texture --
-        // replace completely'): tinting rock to the macro shade just reproduced the old grey/tan,
-        // so the rock layer takes the raw photo color; grass/sand/snow stay shade-matched.
-        // raw-photo rock is NEAR-FIELD only (user 2026-06-11 'elevation and color mismatching'):
-        // with mip-out the raw photo (mean lum .18, dark grey) was carrying to every distance, so
-        // far mountains went dark instead of the macro tan. Fade photoF out as the texture detail
-        // goes sub-pixel (pxWorld 60->240m); the far field returns to the shade-matched mip average.
-        float nearTex = 1.0 - smoothstep(60.0, 240.0, pxWorld);
-        float photoF = max(uTexPhoto, max(smoothstep(0.25, 0.6, w4.y) * 0.5, uTexPhotoNear) * nearTex);
-        // MATERIAL IDENTITY (user 2026-06-12): the photo's OWN hue at the MACRO's luminance -- the
-        // ground reads unambiguously as its material (grass green / sand tan / rock grey) without the
-        // raw photo's darkness ('terrain gets darker' lesson) and without the macro's biome-brown
-        // repaint ('neither grass nor sand' defect). Layer-mean normalized like `detail`.
-        // low-freq albedo is now NORMALS-ONLY (texC is luma structure), so the old raw-photo 'identity'
-        // hue is gone; texIdent == detail = MACRO color * structure (keeps rock its macro tan-grey, not
-        // grey). The 4x detail carries the fine structure for every material.
-        // base = flat MATERIAL color (far/low-k); near = structured detail. The macro biome albedo is no
-        // longer the base, so NO biome color bleeds into the ground (user 'take away all biome inheritance').
+        // albedo = the per-layer textured detail (k high = near) fading to the flat material colour (k low =
+        // far / past the splat radius). The macro biome albedo is NOT the base, so no biome colour bleeds into
+        // the ground; each material reads unambiguously as itself (grass green / sand tan / rock grey / snow).
+        // (Dead uTexPhoto/uTexPhotoNear raw-photo path removed 2026-06-17 -- it computed photoF every pixel and
+        // never used it; the per-layer detail above carries material identity.)
         albedo = clamp(mix(texMatColor, detail, k), 0.0, 1.0);
-        albedo = mix(albedo, biomeC, uBiomeTint);   // LIVE LEVER (2026-06-15 'doesnt look like the texture color at all'): the hard 0.5 biome mix washed the photo color out -> default 0.22, dial via window.__biomeTint
+        // BIOME TINT OFF SAND (user 2026-06-17 'green sand'): biomeC is green in a grassland, and mixing it over a
+        // beach/desert sand patch greened the sand. Fade the tint out where the sand layer dominates (w4.z) so
+        // sand stays tan; grass/rock/snow keep the full subtle biome tint. (Pairs with the overlay push that
+        // makes grass cover most of the band -- together: grass where it should be, clean tan sand where it isn't.)
+        float biomeTintHere = uBiomeTint * (1.0 - 0.85 * clamp(w4.z, 0.0, 1.0));
+        albedo = mix(albedo, biomeC, biomeTintHere);   // LIVE LEVER (window.__biomeTint, default 0.22): macro biome color subtly over the texture
         albedo *= uTexBright;   // overall ground brightness (__texBright, default 0.92)
         // FAR CONTINUITY (user 2026-06-15 'weird crossover at ~6Mm [altitude]'): outside the splat radius this
         // whole block is SKIPPED -> far terrain = the PURE macro biome albedo (biomeC), but inside the block

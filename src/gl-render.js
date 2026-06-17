@@ -1006,48 +1006,20 @@ export async function initMapspinnerRender(gl, opts = {}) {
     }
 
     gl.enable(gl.DEPTH_TEST);
-    // Back-face culling: the globe's FAR (back) hemisphere quads were drawing over the
-    // near hemisphere (black faces that scramble on pan, worse at grazing angles). Cull
-    // back-facing triangles so only the near hemisphere renders. windingCull selects
-    // which winding is "front" (set from the witness; the deformed mesh + face frames
-    // can flip it). Sky pass above is left unculled (fullscreen triangle).
-    // Back-face cull mode. DEFAULT 'none': the GL winding-based cull is UNRELIABLE for the
-    // spherically-deformed mesh -- the near-hemisphere patch winds GL-front at orbit but the
-    // winding INVERTS at very low altitude, so a fixed cullFace(FRONT) renders the terrain
-    // directly under the camera BLACK on descent / forward-flight (witnessed: cullFront cov
-    // 1.0 at orbit but 0.17 at 2.5km; cullBack the opposite; cull NONE 1.0 at BOTH). The
-    // depth buffer (enabled above) already resolves the far hemisphere correctly -- the near
-    // surface always has smaller depth -- so no winding cull is needed. Override via
-    // window.__cullMode = 'front'|'back' for diagnostics.
-    // BACK-FACE CULL = 'auto' (2026-06-16, user 'hide the backfaces'): the cube-sphere camera-relative
-    // winding INVERTS with altitude (near hemisphere winds GL-front at orbit, GL-back at the deck), so a
-    // FIXED cullFace blacks out one regime. Instead DETECT the near-terrain (nadir) screen winding each
-    // frame from the SAME projection the VS uses, set frontFace to match, and cull BACK -> the far
-    // hemisphere is culled (less overdraw = fill win on the fill-bound deck) at EVERY altitude, no magic
-    // crossover. Overrides: window.__cullMode 'none' (safe depth-only fallback) | 'front' | 'back'.
-    // DEFAULT REVERTED 'auto' -> 'none' (user 2026-06-17 'close to the ground looking above the horizon all
-    // the faces invert'): the 'auto' winding was derived from the NADIR patch, but when the camera looks UP
-    // the nadir is BEHIND the eye (w<0), so its projected winding sign is garbage and the visible terrain
-    // gets culled = inverted/missing faces. 'none' is visually correct at every altitude+view (the depth
-    // buffer resolves the far hemisphere -- near surface always has smaller depth); culling was only ever a
-    // marginal FILL win and the frame is VS-bound, not fill-bound, so 'none' costs effectively nothing here.
-    // 'auto'/'front'/'back' remain available via window.__cullMode for diagnostics / a future robust cull.
-    const cm = window.__cullMode || 'none';
+    // STANDARD BACK-FACE CULL (user 2026-06-17 'cant we have actual normal backface culling?'). cullFace(FRONT)
+    // + frontFace(CCW) is the CORRECT winding for this cube-sphere mesh -- WITNESSED on the real GPU this build:
+    //   - ORBIT: keeps the full near hemisphere, culls the far (terr 0.378 vs cullBack 0.185).
+    //   - DECK: terrain intact to the horizon, screenshot identical to cull-off (the 'sky drawing over the
+    //     terrain' that an earlier FS sea-level-tangent cull caused is GONE -- a real winding cull culls actual
+    //     triangle facings, not a sphere approximation, so distant relief over the horizon is kept).
+    //   - UNDER the surface: culls the terrain underside the depth buffer can't hide (nzFrac 1.0 -> 0.05).
+    // The old 'winding flips with altitude' (which had defaulted this to 'none') was a STALE reading from before
+    // the camera-relative VS; vRel now translates UNIFORMLY by altitude, so a front-facing triangle's winding is
+    // altitude-invariant -> one fixed cullFace works everywhere. The sky pass disables CULL_FACE (fullscreen
+    // triangle) so it is never culled. Diagnostic overrides: window.__cullMode = 'none' (off) | 'back'.
+    const cm = window.__cullMode || 'front';
     if (cm === 'none') { gl.disable(gl.CULL_FACE); }
-    else if (cm === 'front' || cm === 'back') { gl.enable(gl.CULL_FACE); gl.cullFace((cm === 'back') ? gl.BACK : gl.FRONT); gl.frontFace(gl.CCW); }
-    else {
-      const cd = camDir, up0 = (Math.abs(cd[1]) < 0.9) ? [0,1,0] : [1,0,0];
-      let t1 = [cd[1]*up0[2]-cd[2]*up0[1], cd[2]*up0[0]-cd[0]*up0[2], cd[0]*up0[1]-cd[1]*up0[0]];
-      const t1l = Math.hypot(t1[0],t1[1],t1[2])||1; t1 = [t1[0]/t1l, t1[1]/t1l, t1[2]/t1l];
-      const t2 = [cd[1]*t1[2]-cd[2]*t1[1], cd[2]*t1[0]-cd[0]*t1[2], cd[0]*t1[1]-cd[1]*t1[0]];
-      const eps = 0.01, M = viewProjRel;
-      const sp = [cd, [cd[0]+eps*t1[0],cd[1]+eps*t1[1],cd[2]+eps*t1[2]], [cd[0]+eps*t2[0],cd[1]+eps*t2[1],cd[2]+eps*t2[2]]].map(d=>{
-        const l=Math.hypot(d[0],d[1],d[2])||1; const wx=d[0]/l*R-camDir[0]*_camDist, wy=d[1]/l*R-camDir[1]*_camDist, wz=d[2]/l*R-camDir[2]*_camDist;
-        const x=M[0]*wx+M[4]*wy+M[8]*wz+M[12], y=M[1]*wx+M[5]*wy+M[9]*wz+M[13], w=M[3]*wx+M[7]*wy+M[11]*wz+M[15];
-        return [x/w, y/w]; });
-      const wind = (sp[1][0]-sp[0][0])*(sp[2][1]-sp[0][1]) - (sp[1][1]-sp[0][1])*(sp[2][0]-sp[0][0]);
-      gl.enable(gl.CULL_FACE); gl.frontFace(wind > 0 ? gl.CW : gl.CCW); gl.cullFace(gl.BACK);
-    }
+    else { gl.enable(gl.CULL_FACE); gl.cullFace((cm === 'back') ? gl.BACK : gl.FRONT); gl.frontFace(gl.CCW); }
     // ACTIVE PROGRAM select: a diagnostic displayMode needs the lazily-built debug program (which
     // carries the _DEBUGVIEW_ blocks). Build it on first request; until it finishes linking, fall
     // back to the render program (the lit view) for that frame -- no black flash, just one frame of
@@ -1155,7 +1127,9 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(U('uBiomeTint'),  _g('biomeTint', 0.22)); // macro biome color mixed over the texture (2026-06-15 'doesnt look like the texture color' -- was hard 0.5)
     gl.uniform1f(U('uTexBright'),  _g('texBright', 0.92)); // overall ground brightness
     gl.uniform1f(U('uTexSat'),     _g('texSat', 1.0));     // texture chroma saturation (>1 = more vivid photo hue)
-    gl.uniform1f(U('uXSoft'),      _g('xSoft', 0.30));     // FAR crossover blend width (window.__xSoft): 0.14->0.30 (user 2026-06-16 'fade stage band too narrow, widen it; close-up is right') -- close stays ~0.06, only the faded stage widens
+    gl.uniform1f(U('uXSoft'),      _g('xSoft', 0.30));     // crossover fade HALF-WIDTH (window.__xSoft): the A/B crossover is now ONE constant-width directional fade; width is CONSTANT (warp shifts position only) -- user 2026-06-17 redesign
+    gl.uniform1f(U('uXFinger'),    _g('xFinger', 2.5));    // near-field displacement fingering amount (window.__xFinger); fades to 0 with distance so the mipped/far crossover is a SIMPLE over->under fade, no band (user 2026-06-17)
+    gl.uniform1f(U('uOrdPush'),    _g('ordPush', 0.4));    // overlay-priority POSITIONAL push (window.__ordPush): the covering material (sand<rock<grass<snow) expands over the band -> grass covers the grass<->sand band so it never reads green sand (user 2026-06-17)
     gl.uniform1f(U('uBiomeWarp'),  _g('biomeWarp', 1.6));  // biome-distribution domain-warp amount (window.__biomeWarp). 1.0->1.6 (user 2026-06-16 'narrow the biome band, the elevation band is ok'): a stronger warp wiggles the biome boundaries enough to break the WIDE blobs into smaller fingered patches = narrower effective bands. 0 = raw anchor blobs; tune live in the Tweaks panel.
     gl.uniform1f(U('uNrmLow'),     _g('nrmLow', 1.0));     // low-octave rock normal strength (2026-06-15 'dont see lower-freq octave normals')
     gl.uniform1f(U('uXFade0'),     _g('xFade0', 8000.0));   // crossover-displacement fade start (m) (user 2026-06-15: gone by 10km, want it to hold further)
