@@ -982,6 +982,9 @@ export async function initMapspinnerRender(gl, opts = {}) {
         gl.uniform1f(SU('skyR'), R);
         gl.uniform1f(SU('uSkyFade'), skyFade);
         gl.disable(gl.DEPTH_TEST);
+        gl.disable(gl.CULL_FACE);   // the sky is a fullscreen triangle -- NEVER cull it. The terrain cull
+        // state (frontFace/cullFace) persists from the previous frame's draw, so without this the sky
+        // triangle inherits whatever winding was culled and VANISHES (user 2026-06-17 'the sky disappears').
         gl.bindVertexArray(skyVao);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
         gl.enable(gl.DEPTH_TEST);
@@ -1008,7 +1011,14 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // frame from the SAME projection the VS uses, set frontFace to match, and cull BACK -> the far
     // hemisphere is culled (less overdraw = fill win on the fill-bound deck) at EVERY altitude, no magic
     // crossover. Overrides: window.__cullMode 'none' (safe depth-only fallback) | 'front' | 'back'.
-    const cm = window.__cullMode || 'auto';
+    // DEFAULT REVERTED 'auto' -> 'none' (user 2026-06-17 'close to the ground looking above the horizon all
+    // the faces invert'): the 'auto' winding was derived from the NADIR patch, but when the camera looks UP
+    // the nadir is BEHIND the eye (w<0), so its projected winding sign is garbage and the visible terrain
+    // gets culled = inverted/missing faces. 'none' is visually correct at every altitude+view (the depth
+    // buffer resolves the far hemisphere -- near surface always has smaller depth); culling was only ever a
+    // marginal FILL win and the frame is VS-bound, not fill-bound, so 'none' costs effectively nothing here.
+    // 'auto'/'front'/'back' remain available via window.__cullMode for diagnostics / a future robust cull.
+    const cm = window.__cullMode || 'none';
     if (cm === 'none') { gl.disable(gl.CULL_FACE); }
     else if (cm === 'front' || cm === 'back') { gl.enable(gl.CULL_FACE); gl.cullFace((cm === 'back') ? gl.BACK : gl.FRONT); gl.frontFace(gl.CCW); }
     else {
