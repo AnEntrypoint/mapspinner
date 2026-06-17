@@ -262,7 +262,7 @@ canvas.addEventListener('wheel', e=>{
   cam.speed = Math.max(0.001, Math.min(200, cam.speed*factor));
 }, {passive:false});
 
-let lastT=performance.now(); let frame=0; let emaMspf=0; let _drsCool=0;
+let lastT=performance.now(); let frame=0; let emaMspf=0; let _drsCool=0; let _drsOwnsVdrs=false;
 // Ocean wave clock: advances by dt*oceanTimeScale so the Wave-speed slider can
 // slow/freeze the waves (0=frozen) independently of wall-clock time. Fed to both
 // the FFT step and the fragment foam/shore phase.
@@ -629,30 +629,32 @@ function frameLoop(){
     const fps = 1000 / emaMspf;
     document.title = `TerrainView8 - fps: ${fps.toFixed(6)}, mspf: ${emaMspf.toFixed(6)}`;
     frame++;
-    // ---- DYNAMIC RESOLUTION (2026-06-16, "144fps space->deck"): hold the target framerate by gently
-    // dialing RENDER-SCALE (buffer pixels) only -- NEVER by dropping geometry/material detail (those stay
-    // full-res at every altitude). STEADY-STATE = ZERO RESIZES: a WIDE dead-band (~125-169fps at the 144
-    // target) + a 45-frame cooldown mean the framerate-is-fine case touches nothing; resolution steps only
-    // on sustained altitude transitions (a few 0.06 steps) and climbs back to native in space.
-    // OPT-IN (window.__drs===true), NOT DEFAULT: each step calls window.__setRenderScale, which reallocates
-    // the canvas backing store = a one-frame hitch. Measured A/B on the real AMD spool over a hard
-    // space->deck descent: DRS off = 3 spikes>2x / p95 11.7 / max 23ms; DRS on = 5 spikes / p95 16 / max
-    // 54ms -- it adds ~2 resize blips per descent, which violates the user's "smooth persistent graphics the
-    // way we have now". Kept off by default to preserve that smoothness; the no-hitch path is VIEWPORT/FBO
-    // DRS (flex gl.viewport into a fixed-size target + upscale-blit, no realloc) -- TODO next.
-    // Reuses emaMspf (alpha-0.1 frame EMA); window.__drsTargetFps overrides the 144 target.
-    if (window.__drs === true && window.__setRenderScale && frameMs > 0 && frameMs < 100) {
+    // ---- DYNAMIC RESOLUTION (2026-06-16/17, "144fps PROPERLY space->deck, no transfer spikes"): hold the
+    // target framerate by dialing the HITCH-FREE viewport-DRS (gl-render __vdrsScale) -- NEVER by dropping
+    // geometry/material detail (those stay full-res at every altitude). The controller drives the FBO
+    // viewport fraction, so a step is a free gl.viewport change with NO canvas realloc = NO transfer spike
+    // (the old canvas-resize path added ~2 resize blips/descent; the FBO path eliminates them -- witnessed
+    // bufConst across __vdrsScale 1.0->0.45 on the real AMD spool). Reaches 144 at the deck (vdrsScale ~0.45
+    // pixel-bound). STEADY-STATE: a dead-band (~131-160fps at 144) holds vdrsScale; it steps 0.05 every 20
+    // frames only while off-target, and climbs back to 1.0 (native) when there's headroom (space).
+    // OPT-IN (window.__drs===true): tradeoff is single-sample AA at vdrsScale<1 (edges alias vs context
+    // MSAA) -- a multisample FBO is the look-preserving follow-up before this can default on.
+    // window.__drsTargetFps overrides 144; reuses emaMspf (alpha-0.1 frame EMA).
+    if (window.__drs === true && frameMs > 0 && frameMs < 100) {
+      window.__vdrs = true; _drsOwnsVdrs = true;   // route through the hitch-free FBO path
       _drsCool++;
       const tMs = 1000 / (window.__drsTargetFps || 144);
-      const drsCeil = Math.min(window.devicePixelRatio || 1, 2), drsFloor = 0.5;
-      const rs = window.__renderScale || drsCeil;
-      if (_drsCool >= 45) {
-        if (emaMspf > tMs * 1.15 && rs > drsFloor + 1e-3) {        // too slow -> shed pixels (all detail kept)
-          window.__setRenderScale(Math.max(drsFloor, rs - 0.06)); _drsCool = 0;
-        } else if (emaMspf < tMs * 0.85 && rs < drsCeil - 1e-3) {  // headroom -> restore resolution toward native
-          window.__setRenderScale(Math.min(drsCeil, rs + 0.06)); _drsCool = 0;
+      const vFloor = 0.45;
+      let vs = (typeof window.__vdrsScale === 'number') ? window.__vdrsScale : 1.0;
+      if (_drsCool >= 20) {                                         // 20 frames is safe -- a vdrs step never hitches
+        if (emaMspf > tMs * 1.10 && vs > vFloor + 1e-3) {           // too slow -> shed pixels (all detail kept)
+          window.__vdrsScale = Math.max(vFloor, vs - 0.05); _drsCool = 0;
+        } else if (emaMspf < tMs * 0.90 && vs < 1.0 - 1e-3) {       // headroom -> restore resolution toward native
+          window.__vdrsScale = Math.min(1.0, vs + 0.05); _drsCool = 0;
         }
       }
+    } else if (_drsOwnsVdrs) {                                      // __drs turned off -> release vdrs back to native
+      window.__vdrs = false; window.__vdrsScale = 1.0; _drsOwnsVdrs = false;
     }
     const camDistR = Math.hypot(...cam.pos)/RADIUS;
     const quadN = (fr && fr.quadCount) || 0;
