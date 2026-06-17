@@ -299,6 +299,8 @@ export function makeHeight(U, hpfSample) {
     let bShape = broadShapeM(dir0, reliefMul, ridgeMul);
     let h = ((cbias + bShape) + U.uLandBias);
     if ((h < 0.0)) {
+      let COAST_RING_CEIL = 500.0;
+      h = g.min(h, (cbias + COAST_RING_CEIL));
       let SEABED_EASE = 25.0;
       let d0 = (-h);
       let d = ((d0 < SEABED_EASE) ? (((d0 * d0) / SEABED_EASE) * (2.0 - (d0 / SEABED_EASE))) : d0);

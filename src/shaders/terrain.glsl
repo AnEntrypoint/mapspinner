@@ -637,6 +637,15 @@ highp float composeHeightC(vec3 dir0, highp vec2 faceLocal, float tileM, HCache 
       // whole ocean into 'almost-land everywhere', user 2026-06-14) with the flat-at-waterline curve so
       // both sides meet the waterline at slope 0 (no crease); beyond SEABED_EASE the true bathymetry
       // resumes so the ocean goes DEEP.
+      // NO OFFSHORE 'RING OF LAND' (user 2026-06-17): the smooth continental cbias descends MONOTONICALLY
+      // offshore, but bShape can rebound the seabed back to near sea level ~10-15km out (node transect:
+      // cbias -591m bumped to raw -0.4m), forming a shallow ring/collar around coasts. Cap the underwater
+      // elevation at cbias + COAST_RING_CEIL -- bShape relief is allowed only that far above the smooth
+      // continental floor, so the IMMEDIATE shore (cbias still near the coastline value -> high cap) keeps
+      // its gentle beach (no coastal cliff), while the deeper-cbias offshore rebounds are pushed back under
+      // (no ring). Tune COAST_RING_CEIL by eye (lower = ring suppressed harder + flatter near-coast shelf).
+      const highp float COAST_RING_CEIL = 500.0;
+      h = min(h, cbias + COAST_RING_CEIL);
       const highp float SEABED_EASE = 25.0;   // metres of depth flattened at the shore (decoupled from the land beach)
       highp float d0 = -h;
       highp float d = (d0 < SEABED_EASE) ? (d0 * d0 / SEABED_EASE) * (2.0 - d0 / SEABED_EASE) : d0;
@@ -900,6 +909,8 @@ void main() {
     // shelf/slope bathymetry remap + underwater displacement -- MUST mirror composeHeight exactly
     // (this is the FS-material running value; composeHeight is the geometry/probe height).
     if (vH < 0.0) {
+        const highp float COAST_RING_CEIL = 500.0;   // mirror composeHeight: no offshore 'ring of land' (cap seabed at cbias+CEIL so bShape can't rebound to sea level offshore)
+        vH = min(vH, cbias + COAST_RING_CEIL);
         const highp float SEABED_EASE = 25.0;   // mirror composeHeight: tiny waterline lip, steep plunge (no 'second beach')
         highp float dSea0 = -vH;
         highp float dSea = (dSea0 < SEABED_EASE) ? (dSea0 * dSea0 / SEABED_EASE) * (2.0 - dSea0 / SEABED_EASE) : dSea0;
