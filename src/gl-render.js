@@ -706,6 +706,46 @@ export async function initMapspinnerRender(gl, opts = {}) {
   const SU = n => { let l = _usloc.get(n); if (l === undefined) { l = gl.getUniformLocation(skyProg, n); _usloc.set(n, l); } return l; };
   const skyVao = gl.createVertexArray();
 
+  // ---- VIEWPORT DYNAMIC RESOLUTION (opt-in, window.__vdrs===true): render the scene into a FIXED full-
+  // size FBO at a FLEXED gl.viewport, then a fullscreen-quad LINEAR upscale to the canvas. Unlike the
+  // canvas-resize render-scale (which reallocates the drawing buffer = a one-frame hitch / "transfer
+  // spike"), changing resolution here only changes the VIEWPORT rect + the sampled sub-rect -> NO realloc,
+  // NO hitch. The FBO is (re)allocated ONLY when the CANVAS size changes (window resize), never on a
+  // resolution change, so window.__vdrsScale can be dialed every frame for smooth space->deck 144 holding.
+  // Single-sample MVP (no MSAA in the FBO -> edges alias at rs<=1; a multisample FBO + resolve is the
+  // look-preserving follow-up). DEFAULT path (vdrs off) is byte-untouched: scene renders straight to the
+  // canvas with the context MSAA. window.__vdrsScale in (0,1] = viewport fraction (the upscale source rect).
+  const upVsSrc = '#version 300 es\nprecision highp float;\nout vec2 vUv;\nvoid main(){ vec2 p=vec2((gl_VertexID==1)?3.0:-1.0,(gl_VertexID==2)?3.0:-1.0); vUv=p*0.5+0.5; gl_Position=vec4(p,0.0,1.0); }';
+  const upFsSrc = '#version 300 es\nprecision highp float;\nuniform sampler2D uTex;\nuniform vec2 uUvScale;\nin vec2 vUv;\nout vec4 fragColor;\nvoid main(){ fragColor=texture(uTex, vUv*uUvScale); }';
+  const upProg = gl.createProgram();
+  gl.attachShader(upProg, rawShader(gl.VERTEX_SHADER, upVsSrc));
+  gl.attachShader(upProg, rawShader(gl.FRAGMENT_SHADER, upFsSrc));
+  gl.linkProgram(upProg);
+  if(!gl.getProgramParameter(upProg, gl.LINK_STATUS)) throw new Error('upscale link: '+gl.getProgramInfoLog(upProg));
+  const upUTex = gl.getUniformLocation(upProg, 'uTex');
+  const upUScale = gl.getUniformLocation(upProg, 'uUvScale');
+  const upVao = gl.createVertexArray();
+  let _vdrsFbo = null, _vdrsColor = null, _vdrsDepth = null, _vdrsW = 0, _vdrsH = 0, _vdrsRsThisFrame = 0;
+  function ensureVdrsTargets(W, H){
+    if (_vdrsFbo && _vdrsW === W && _vdrsH === H) return;   // realloc ONLY on a real canvas-size change
+    if (_vdrsColor) gl.deleteTexture(_vdrsColor);
+    if (_vdrsDepth) gl.deleteRenderbuffer(_vdrsDepth);
+    if (_vdrsFbo)   gl.deleteFramebuffer(_vdrsFbo);
+    _vdrsColor = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, _vdrsColor);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    _vdrsDepth = gl.createRenderbuffer(); gl.bindRenderbuffer(gl.RENDERBUFFER, _vdrsDepth);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, W, H);
+    _vdrsFbo = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, _vdrsFbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, _vdrsColor, 0);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, _vdrsDepth);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    _vdrsW = W; _vdrsH = H;
+  }
+
   // ---- mesh grid: OVERLAP-RING tessellation (replaces the old dropped-skirt curtain).
   // The mesh spans (GRID+2) cells in each axis: the INTERIOR GRID cells cover the tile's
   // usable region in param coord [0,1] exactly as before, plus ONE EXTRA RING of cells on
@@ -908,7 +948,21 @@ export async function initMapspinnerRender(gl, opts = {}) {
       window.__deviceLost = gl.isContextLost();
     }
 
-    gl.viewport(0,0,gl.drawingBufferWidth,gl.drawingBufferHeight);
+    // VIEWPORT-DRS (opt-in): render the scene into the fixed FBO at a flexed viewport (the upscale tail
+    // blits it to the canvas), else straight to the canvas. THC bake mode rebinds the canvas mid-frame, so
+    // vdrs stays off when THC is active. No canvas realloc happens here -> dialing __vdrsScale is hitch-free.
+    const _vW = gl.drawingBufferWidth, _vH = gl.drawingBufferHeight;
+    let _vrs = 0;
+    if (typeof window !== 'undefined' && window.__vdrs === true && !thcActive()) {
+      _vrs = Math.min(1.0, Math.max(0.3, +window.__vdrsScale || 1.0));
+      ensureVdrsTargets(_vW, _vH);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, _vdrsFbo);
+      gl.viewport(0, 0, Math.max(1, Math.round(_vW*_vrs)), Math.max(1, Math.round(_vH*_vrs)));
+    } else {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0,0,_vW,_vH);
+    }
+    _vdrsRsThisFrame = _vrs;
     gl.clearColor(0.0,0.0,0.0,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
 
     // SKY/ATMOSPHERE PASS: atmospheric limb/halo behind the terrain. Fades in below
@@ -1275,6 +1329,23 @@ export async function initMapspinnerRender(gl, opts = {}) {
       if (typeof window !== 'undefined') window.__instUploads = (window.__instUploads | 0) + (_dirty ? 1 : 0);
     }
     if (typeof window !== 'undefined') window.__lastDrawCalls = (n > 0) ? 2 : 0;
+    // VIEWPORT-DRS UPSCALE: blit the flexed-viewport FBO to the canvas via a fullscreen-quad LINEAR sample
+    // of the rendered [0,rs] sub-rect. No canvas realloc occurred this frame -> the resolution change is
+    // hitch-free. preserveDrawingBuffer witness reads + page screenshots capture this final canvas image.
+    if (_vdrsRsThisFrame > 0) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+      gl.disable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE); gl.disable(gl.BLEND); gl.depthMask(true);
+      gl.useProgram(upProg);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, _vdrsColor);
+      gl.uniform1i(upUTex, 0);
+      gl.uniform2f(upUScale, _vdrsRsThisFrame, _vdrsRsThisFrame);
+      gl.bindVertexArray(upVao);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.bindVertexArray(null);
+      gl.enable(gl.DEPTH_TEST);
+      gl.useProgram(_activeProg);   // restore the terrain program for the next frame's uniform sets
+    }
     return 0;   // glError is checked via checkGlError() once per frame after quadtree (CPU/GPU pipelining)
   }
 
