@@ -1134,7 +1134,7 @@ void main() {
     // water): 0.12->0.06 tile-scaled + floor 60->30. Still reaches below a coarser neighbor to hide the
     // LOD T-junction crack (the real discontinuity is tens of m, far under 0.06*tilespan), but the
     // vertical curtain is half as tall = far less visible when the seabed is seen through clear water.
-    highp float skirt = (vertex.z > 0.5 && uIsWater < 0.5) ? max(defOffset.z * 0.06, 30.0) : 0.0;   // W7: metres (tile-size scaled) -> highp
+    highp float skirt = (vertex.z > 0.5 && uIsWater < 0.5) ? max(defOffset.z * 0.06, 30.0 * (uReliefScale > 0.0 ? uReliefScale : 1.0)) : 0.0;   // W7: metres (tile + radius scaled) -> highp. SCALE-INVARIANT: 30m floor scales with reliefScale (was absolute -> deep skirt walls at small radius)
     vWorld = dir0 * (R + hR - skirt);   // ABSOLUTE world pos (RENDER height: ocean top flat) -> FS lighting/atmosphere
     // TEXTURE DOMAIN WARP -- VS-side, DOUBLED BACK (user 2026-06-12): 225/900/3500 -> 450/1800/7000.
     {

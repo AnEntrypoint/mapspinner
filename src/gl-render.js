@@ -485,7 +485,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // passes -> any radius renders identically (the dev demo at 6360km => exactly 1.0 = no-op), while the
     // camera/LOD/collision use the real R. Set on BOTH render + _PROBE_ here so the rendered mesh and the
     // collision probe scale together (else the camera clamps to an unscaled surface).
-    gl.uniform1f(loc('uReliefScale'),   R / 6360000.0);
+    gl.uniform1f(loc('uReliefScale'),   g('reliefScale', opts.reliefScale != null ? opts.reliefScale : R / 6360000.0));   // DECOUPLED: relief height scales independently of radius (opts.reliefScale / live window.__reliefScale); default R/6360000 (pristine at Earth)
   }
 
 

@@ -6,8 +6,8 @@
 // with the camera in LOCAL (undeformed cube-face) space -> returns leaf quads [{level,tx,ty,ox,oy,l}].
 
 export class Quadtree {
-  constructor() {
-    this.size = 6360000.0;     // root half-extent / planet radius (m)
+  constructor(size) {
+    this.size = size || 6360000.0;   // root half-extent / planet radius (m). SCALE-INVARIANT: planet-orchestrator passes the configured R; was hardcoded 6360000 -> small-radius consumers got a broken (camAlt-negative) LOD mesh.
     this.maxLevel = 20;
     this.splitDist = 1.1;      // computed from splitFactor+viewport+fov
     this.distFactor = 2.0;     // altitude weighting

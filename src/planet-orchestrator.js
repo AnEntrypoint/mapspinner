@@ -193,11 +193,11 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
   const _now = () => (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
   const _t = { start: _now() };
   // No producer/wasm: terrain shape is the per-vertex GPU fractal (broadShapeM in terrain.glsl).
-  const render = await initMapspinnerRender(gl, { radius: R, gridMeshSize });
+  const render = await initMapspinnerRender(gl, { radius: R, gridMeshSize, reliefScale: opts.reliefScale });
   _t.shaderCompileMs = +(_now() - _t.start).toFixed(0);
   // JS quadtree (replaces the deleted wasm PL.updateQuadtree/computeSplitDist/setConfig). Pure
   // geometry LOD selection; terrain shape is the GPU fractal, so no wasm is needed for the mesh.
-  const qt = new Quadtree();
+  const qt = new Quadtree(R);   // SCALE-INVARIANT: LOD quadtree root half-extent = configured radius (was hardcoded 6360000)
 
   // ---- HIERARCHICAL PARAMETER FIELD (HPF) ----------------------------------------
   // The anchor field drives generation as a CONTINUOUS function of world direction. To keep

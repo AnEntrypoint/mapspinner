@@ -34,6 +34,9 @@ export const HEIGHT_UNIFORM_DEFAULTS = {
 
 export function createHeightSampler(opts = {}) {
   const radius = opts.radius || 6360000
+  // SCALE-INVARIANT relief: mirror the GLSL composeHeight wrapper's uReliefScale (R/6360000,
+  // or an independent opts.reliefScale) so the CPU physics height matches the rendered surface.
+  const reliefScale = opts.reliefScale != null ? opts.reliefScale : radius / 6360000
   const hpfTexRes = opts.hpfTexRes || 128
   const BAKE_MAX_LEVEL = Math.round(Math.log2(hpfTexRes))   // matches planet-orchestrator bake
   const af = opts.anchorField || createAnchorField({ seed: opts.seed })
@@ -94,7 +97,7 @@ export function createHeightSampler(opts = {}) {
   function heightAt(dir) {
     const d = g.normalize(dir)
     const C = H.computeHCache(d)
-    return H.composeHeightC(d, [0, 0], 100, C, false)
+    return H.composeHeightC(d, [0, 0], 100, C, false) * reliefScale
   }
   // World-space surface point for a direction: dir * (radius + height).
   function surfacePoint(dir) { const d = g.normalize(dir); return g.mul(d, radius + heightAt(d)) }
