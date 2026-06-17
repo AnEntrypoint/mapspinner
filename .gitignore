@@ -34,3 +34,8 @@ src/shaders/.gitignore
 /playwright-report/
 tests/**/*-snapshots/
 .kilo/
+
+# plugkit browser witness profile + index (not source)
+.plugkit-browser-profile/
+.codeinsight
+.rs-exec.lock

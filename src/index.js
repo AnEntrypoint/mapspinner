@@ -1,9 +1,13 @@
 // mapspinner SDK entry point
 // Primary exports for external consumers (e.g., spoint integration)
 
-export { initMapspinnerPlanet, initMapspinnerRender } from './planet-orchestrator.js';
+export { initMapspinnerPlanet } from './planet-orchestrator.js';
+export { initMapspinnerRender } from './gl-render.js';
 export { Quadtree } from './quadtree.js';
 export { createAnchorField } from './anchor-field.js';
+// Headless CPU terrain-height sampler (transpiled from terrain.glsl, single source
+// of truth) for physics/sampling on a server with no GPU. See height-cpu.js.
+export { createHeightSampler, HEIGHT_UNIFORM_DEFAULTS } from './height-cpu.js';
 
 // Version marker
 export const VERSION = '0.1.0';

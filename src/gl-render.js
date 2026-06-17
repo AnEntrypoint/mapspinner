@@ -68,9 +68,12 @@ export async function initMapspinnerRender(gl, opts = {}) {
   // the live tab while gl-render.js refreshed = the entire 'no change' debugging saga. A per-load ?v= query
   // forces a fresh fetch every page load (matches the ?t= the hot-reload at ~L201 already uses).
   const _sv = '?v=' + (typeof performance !== 'undefined' ? (performance.now()|0) : Date.now());
-  let src = await (await fetch('./src/shaders/terrain.glsl' + _sv)).text();
+  // EMBEDDABLE: fetch shaders relative to THIS module (import.meta.url), not the page,
+  // so the SDK loads its shaders when consumed from node_modules by a host (e.g. spoint),
+  // not only from the mapspinner dev page where ./src was page-relative.
+  let src = await (await fetch(new URL('./shaders/terrain.glsl' + _sv, import.meta.url))).text();
   // Analytic Bruneton-style atmosphere helpers, shared by terrain FS + sky pass.
-  let atmoSrc = await (await fetch('./src/shaders/atmosphere.glsl' + _sv)).text();
+  let atmoSrc = await (await fetch(new URL('./shaders/atmosphere.glsl' + _sv, import.meta.url))).text();
 
   // NON-BLOCKING COMPILE (user 2026-06-02: 'startup takes really long'). The terrain shader's
   // first (cold-cache) compile can take tens of seconds; querying COMPILE_STATUS/LINK_STATUS
@@ -508,7 +511,8 @@ export async function initMapspinnerRender(gl, opts = {}) {
     const albAll = new Uint8Array(SZ * SZ * 4 * MATS.length);
     const nrmAll = new Uint8Array(SZ * SZ * 4 * MATS.length);
     for (let m = 0; m < MATS.length; m++) {
-      const [ci, di] = await Promise.all([img('./textures/' + MATS[m] + '-color.jpg'), img('./textures/' + MATS[m] + '-displacement.jpg')]);
+      const _tex = (n) => new URL('../textures/' + n, import.meta.url).href   // EMBEDDABLE: module-relative, not page-relative
+      const [ci, di] = await Promise.all([img(_tex(MATS[m] + '-color.jpg')), img(_tex(MATS[m] + '-displacement.jpg'))]);
       const c = px(ci), d = px(di);
       // DE-SHADE (user 2026-06-11 'flat, unangled bowls of rock'): the photos carry baked large-scale
       // shading (shadowed depressions), which at a 2.4km tile pastes bowl-shaped shadows onto geometry
