@@ -953,6 +953,10 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // signature -- all gl_Position go NaN and nothing draws. The probe reads __lastVP /
     // __lastVPFinite instead of guessing from a black screenshot.
     if (typeof window !== 'undefined') {
+      // EMBED depth-share: expose the projection planes so a host (e.g. spoint) can match
+      // its own camera near/far/fovy and SHARE the depth buffer (planet occludes + is
+      // occluded by host geometry instead of being a clearDepth backdrop).
+      window.__planetNearFar = { near, far, fovy: cam.fovy || 0.785, aspect };
       window.__lastVP = viewProjRel;
       window.__lastVPFinite = viewProjRel.every(v => Number.isFinite(v));
       window.__deviceLost = gl.isContextLost();
