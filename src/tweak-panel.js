@@ -28,7 +28,7 @@ const GROUPS = [
     ['climateRelief', 'Climate relief width',  0,   1,    0.05, 0.65],
     ['isleWide',      'Island zone width',     0,   1,    0.05, 1.0],
     ['nrmStepM',      'Normal smooth step m',  50,  1200, 25,   0.0],
-    ['splitFactor',   'LOD density (split)',   0.05, 1.0, 0.01, 0.36],
+    ['splitFactor',   'LOD density (split)',   0.05, 1.0, 0.01, 0.30],
   ]],
   ['Beach / coast', [
     ['beachTop',      'Beach ceiling (m)',     0,   1000, 10,   210.0],

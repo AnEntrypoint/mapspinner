@@ -26,7 +26,7 @@ const DEFAULTS = {
     fsNormal: 0,           // window.__fsNormal (cross-dFdx FS normal, diagnostic, default off)
   },
   lod: {
-    splitFactor: 0.36,    // window.__splitFactor (null = orchestrator altitude ramp). 0.28->0.36 (user 2026-06-16 baked live-tuned value: more LOD density)
+    splitFactor: 0.30,    // window.__splitFactor (null = orchestrator altitude ramp). 0.36->0.30 (user 2026-06-17 'a little lower mesh density': fewer quads/vertices = less VS-bound cost = more fps, modest detail trade)
   },
   geometry: {
     elevEdgeInset: 0.5,    // window.__elevEdgeInset (mesh-edge elevation sample inset; gl-render)
