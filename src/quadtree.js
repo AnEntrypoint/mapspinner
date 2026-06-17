@@ -16,6 +16,7 @@ export class Quadtree {
     this._nadir = [0, 0];      // TRUE camera nadir (face-local x,y) for the far-LOD foreground protect
     this._aim = null;          // AIM ground point (face-local x,y), 2nd foreground-protect center (or null)
     this._leaves = [];
+    this._cull = null;         // optional hierarchical-cull context (see nodeOutsideFrustum); null = no pruning
   }
 
   setConfig(size, maxLevel, distFactor) {
@@ -48,6 +49,15 @@ export class Quadtree {
   // bigger to keep splitting, so distant terrain stays coarse while the near/under-camera stays fine.
   // Falloff scaled by altitude so high views (where 'far' is the whole visible disc) are unaffected.
   _recurse(level, tx, ty, ox, oy, l) {
+    // HIERARCHICAL FRUSTUM CULL (derived from agargaro/batched-mesh-extensions' dynamic-BVH frustum
+    // cull -- the ALGORITHM, reimplemented for this cube-sphere quadtree, NOT imported). Reject a whole
+    // off-screen SUBTREE at the internal node with ONE conservative bounding-sphere-vs-6-planes test,
+    // instead of letting the orchestrator run its 18-projection per-leaf quadOutsideFrustum on every
+    // descendant leaf. CONSERVATIVE (the node sphere encloses each descendant leaf's R+/-CULL_MAX_ELEV
+    // shell), so a pruned node's leaves would ALL have failed the leaf frustum test anyway -> the
+    // surviving (drawn) leaf set is IDENTICAL = zero visual change. Gated level>=2 to match the leaf
+    // cull's gate (coarse roots always kept -> no whole-face blank from an off-by-one in the bounds).
+    if (this._cull !== null && level >= 2 && nodeOutsideFrustum(this._cull, ox, oy, l)) return;
     const dist = this._cameraDist(ox, oy, l);
     // DISTANCE FALLOFF: coarsen far quads when low. Use the lateral distance to the quad CENTER
     // (NOT its nearest edge -- a big near quad has a far edge, which must NOT penalize it, or the
@@ -126,7 +136,7 @@ export class Quadtree {
   // aim-shift). Defaults to the LOD ref's x,y when not supplied (back-compat). aimX/aimY (optional) =
   // the look ray's ground-hit in face-local coords; a SECOND foreground-protect center so the
   // pitched-down bottom-of-screen band stays full-LOD in every azimuth (null/omitted -> nadir only).
-  updateQuadtree(camX, camY, camZ, nadirX, nadirY, aimX, aimY, camAlt) {
+  updateQuadtree(camX, camY, camZ, nadirX, nadirY, aimX, aimY, camAlt, cull) {
     this._cam[0] = camX; this._cam[1] = camY; this._cam[2] = camZ;
     // TRUE ALTITUDE (fix off-center LOD stall, user 2026-06-03 'LOD dense only at the start point').
     // camX,camY are the atan-WARPED face-local lateral coords (from worldToFaceLocal); off the face
@@ -141,6 +151,7 @@ export class Quadtree {
     this._nadir[1] = (nadirY !== undefined) ? nadirY : camY;
     this._aim = (aimX !== undefined && aimY !== undefined) ? [aimX, aimY] : null;
     this._leaves.length = 0;
+    this._cull = (cull != null) ? cull : null;   // per-frame frustum-cull context, or null (cull off)
     this._recurse(0, 0, 0, -this.size, -this.size, 2.0 * this.size);
     return this._leaves;
   }
@@ -156,4 +167,62 @@ export function localToDeformed(x, y, z, R) {
   const wy = R * Math.tan((y / R) * k);
   const inv = (z + R) / Math.sqrt(wx * wx + wy * wy + R * R);
   return [wx * inv, wy * inv, R * inv];
+}
+
+// CONSERVATIVE node-vs-frustum test for the hierarchical cull in _recurse. `cull` is a context the
+// orchestrator fills once per frame + per face (reused, alloc-free):
+//   { planes:Float64Array(24)  -- 6 normalized camera-RELATIVE frustum planes [a,b,c,d] (eye at origin),
+//     ex,ey,ez                 -- eye (world), to make the sphere center camera-relative,
+//     ux,uy,uz, vx,vy,vz, cx,cy,cz  -- THIS face's U,V,center orthonormal axes (FACE_FRAME[face]),
+//     R, maxElev }             -- planet radius + the same +/- elevation margin the leaf cull uses.
+// Builds the node's world bounding sphere from its 4 tan-warped corners at the R+maxElev shell -- the
+// corners are the angular EXTREMES of the patch, so in 3D they bound every interior/edge surface point
+// (the screen-space edge-midpoint bulge that the leaf test's 3x3 grid guards against is a 2D-NDC issue,
+// not a 3D bounding-sphere one) -- plus a maxElev blanket for the inner (R-maxElev) shell. Rejects only
+// if the sphere lies fully outside one plane (signedDist < -radius). Over-estimating the radius only
+// ever KEEPS more (never over-culls), so the leaf set is preserved by construction.
+function nodeOutsideFrustum(cull, ox, oy, l) {
+  const R = cull.R, WK = Math.PI / 4.0, ME = cull.maxElev;
+  const ux = cull.ux, uy = cull.uy, uz = cull.uz, vx = cull.vx, vy = cull.vy, vz = cull.vz, cx = cull.cx, cy = cull.cy, cz = cull.cz;
+  const rr = R + ME;
+  // The 4 corners share only TWO distinct x-warps and TWO y-warps, so the exact bounding sphere costs
+  // 6 tan (4 edges + the 2 center warps), not 10. Corners are the angular extremes of the patch, so on
+  // a convex sphere they bound every interior/edge surface point in 3D (the edge-midpoint bulge the leaf
+  // test's 3x3 grid guards against is a 2D-NDC concern, not a 3D one). radius = farthest corner at the
+  // R+ME shell + an ME blanket for the inner (R-ME) shell -> encloses ALL descendant leaf geometry.
+  const tX0 = R * Math.tan((ox / R) * WK), tX1 = R * Math.tan(((ox + l) / R) * WK);
+  const tY0 = R * Math.tan((oy / R) * WK), tY1 = R * Math.tan(((oy + l) / R) * WK);
+  // node-center world direction (same tan-warp + face frame as the VS and quadOutsideFrustum)
+  const cwX = R * Math.tan(((ox + l * 0.5) / R) * WK), cwY = R * Math.tan(((oy + l * 0.5) / R) * WK);
+  let ax = cwX * ux + cwY * vx + R * cx, ay = cwX * uy + cwY * vy + R * cy, az = cwX * uz + cwY * vz + R * cz;
+  let ln = Math.hypot(ax, ay, az) || 1;
+  const C0x = (ax / ln) * R, C0y = (ay / ln) * R, C0z = (az / ln) * R;   // sphere center (sea-level surface)
+  let maxR2 = 0;
+  for (let ci = 0; ci < 4; ci++) {
+    const wx = (ci & 1) ? tX1 : tX0, wy = (ci & 2) ? tY1 : tY0;
+    ax = wx * ux + wy * vx + R * cx; ay = wx * uy + wy * vy + R * cy; az = wx * uz + wy * vz + R * cz;
+    ln = Math.hypot(ax, ay, az) || 1;
+    const dx = (ax / ln) * rr - C0x, dy = (ay / ln) * rr - C0y, dz = (az / ln) * rr - C0z;
+    const d2 = dx * dx + dy * dy + dz * dz; if (d2 > maxR2) maxR2 = d2;
+  }
+  const radius = Math.sqrt(maxR2) + ME;
+  // bounding-sphere center relative to the eye (the planes live in camera-relative space)
+  const Cx = C0x - cull.ex, Cy = C0y - cull.ey, Cz = C0z - cull.ez;
+  const P = cull.planes;   // 6 planes, index 0=left 1=right 2=bottom 3=top 4=near 5=far
+  // NEAR plane FIRST, mirroring quadOutsideFrustum's near handling EXACTLY so the surviving leaf set
+  // is byte-identical (verified by node A/B). quadOutsideFrustum KEEPS any quad straddling the near
+  // plane (its NDC AABB is only partial there, so off-screen is unprovable) and only culls quads fully
+  // in front (tested vs the sides) or fully behind the camera. A node sphere straddling near must
+  // therefore NOT be pruned -- defer to the per-leaf test. This is the load-bearing oblique-low-alt
+  // no-blank invariant (the recurring over-cull class the renderer comments warn about).
+  const nearSD = P[16] * Cx + P[17] * Cy + P[18] * Cz + P[19];
+  if (nearSD <= -radius) return true;    // sphere fully behind the camera -> cull (matches !anyFront)
+  if (nearSD < radius) return false;     // straddles the near plane -> KEEP (matches the near-straddle keep)
+  // fully in front of near: prune iff the sphere is fully outside a side or far plane.
+  if (P[0]  * Cx + P[1]  * Cy + P[2]  * Cz + P[3]  < -radius) return true;  // left
+  if (P[4]  * Cx + P[5]  * Cy + P[6]  * Cz + P[7]  < -radius) return true;  // right
+  if (P[8]  * Cx + P[9]  * Cy + P[10] * Cz + P[11] < -radius) return true;  // bottom
+  if (P[12] * Cx + P[13] * Cy + P[14] * Cz + P[15] < -radius) return true;  // top
+  if (P[20] * Cx + P[21] * Cy + P[22] * Cz + P[23] < -radius) return true;  // far
+  return false;
 }

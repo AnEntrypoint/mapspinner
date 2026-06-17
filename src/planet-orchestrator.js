@@ -132,6 +132,33 @@ function quadOutsideFrustum(face, ox, oy, l, R, vpr, eye) {
   return (maxX < -1 - M) || (minX > 1 + M) || (maxY < -1 - M) || (minY > 1 + M);
 }
 
+// Extract the 6 normalized frustum planes (Gribb-Hartmann) from a COLUMN-MAJOR clip-from-cameraRelative
+// matrix (proj * viewRotation; the translate(-eye) is folded out via the manual eye-subtract, exactly as
+// quadOutsideFrustum feeds vpr). Plane[i] = [a,b,c,d], `inside` half-space a*x+b*y+c*z+d >= 0 for a
+// camera-relative point (x,y,z). Writes 6*4 floats into `out`. Feeds the quadtree's hierarchical cull
+// (quadtree.nodeOutsideFrustum) -- the BVH-style subtree prune derived from batched-mesh-extensions.
+function extractFrustumPlanes(m, out) {
+  const r0x=m[0], r0y=m[4], r0z=m[8],  r0w=m[12];   // x-row
+  const r1x=m[1], r1y=m[5], r1z=m[9],  r1w=m[13];   // y-row
+  const r2x=m[2], r2y=m[6], r2z=m[10], r2w=m[14];   // z-row
+  const r3x=m[3], r3y=m[7], r3z=m[11], r3w=m[15];   // w-row
+  // The 4 SIDE planes are WIDENED by CULL_NDC_MARGIN (the same 0.06-NDC slack quadOutsideFrustum keeps
+  // an edge-touching quad with). Combining row_x with W*row_w gives the plane x >= -(1+M)*w, so the
+  // hierarchical prune never removes a near-edge leaf the per-leaf test would keep -> identical leaf set
+  // (node A/B verified). Near + far stay un-margined (near is handled specially; far matches NDC z<=1).
+  const W = 1.0 + CULL_NDC_MARGIN;
+  _setPlane(out, 0, W*r3x+r0x, W*r3y+r0y, W*r3z+r0z, W*r3w+r0w);  // left
+  _setPlane(out, 1, W*r3x-r0x, W*r3y-r0y, W*r3z-r0z, W*r3w-r0w);  // right
+  _setPlane(out, 2, W*r3x+r1x, W*r3y+r1y, W*r3z+r1z, W*r3w+r1w);  // bottom
+  _setPlane(out, 3, W*r3x-r1x, W*r3y-r1y, W*r3z-r1z, W*r3w-r1w);  // top
+  _setPlane(out, 4,   r3x+r2x,   r3y+r2y,   r3z+r2z,   r3w+r2w);  // near
+  _setPlane(out, 5,   r3x-r2x,   r3y-r2y,   r3z-r2z,   r3w-r2w);  // far
+}
+function _setPlane(out, i, a, b, c, d) {
+  const len = Math.hypot(a, b, c) || 1, o = i * 4;
+  out[o] = a/len; out[o+1] = b/len; out[o+2] = c/len; out[o+3] = d/len;
+}
+
 // Pick the cube face the camera is most directly over (largest dot of camDir with
 // the face's outward center axis).
 function pickFace(camWorld) {
@@ -655,6 +682,33 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
     // each corner camera-relative in JS doubles (fp32-precision fix for the ground-nadir blank).
     const _cm = cullActive ? render.cullMatrix({ eye: camWorldPos, center: camTarget, up: camUp, fovy, surfElev }) : null;
     const vpr = _cm ? _cm.viewProjNoEye : null;
+    // HIERARCHICAL FRUSTUM CULL context (batched-mesh-extensions-derived BVH-style subtree prune; see
+    // quadtree.nodeOutsideFrustum). Extract the 6 camera-relative frustum planes from the SAME vpr the
+    // per-leaf quadOutsideFrustum uses, ONCE per frame; the quadtree then rejects whole off-screen
+    // SUBTREES before they reach the ~700-leaf per-leaf cull loop below (measured ~0.4-0.8ms of
+    // GPU-independent CPU at the deck, ~61% of leaves off-screen). null when the frustum cull is off
+    // (vpr null) -> the quadtree prunes nothing (conservative; mirrors the vpr-null leaf guard below).
+    // The drawn leaf set is UNCHANGED -- the node sphere is conservative, so any pruned subtree's leaves
+    // would all have been frustum-culled at the leaf level anyway.
+    let cullCtx = null;
+    if (cullActive && vpr) {
+      // GATE: the subtree prune is a CPU-rebuild WIN at every view EXCEPT looking near-straight-DOWN,
+      // where the visible cone fills the frustum (nothing off-screen to prune) so the per-node test is
+      // pure overhead (node A/B sweep: ~0.8x at exact nadir; 1.0-1.85x everywhere else). Disable it
+      // within ~18deg of straight down. lookDot = fwd . up: -1 straight down, 0 horizon, +1 up. The
+      // pruned leaf set is IDENTICAL either way, so toggling is visually seamless + frame-time-safe
+      // (the rebuild is pipelined behind the GPU frame regardless). window.__hcull forces on/off.
+      const fl = Math.hypot(fwd[0], fwd[1], fwd[2]) || 1;
+      const lookDot = (fwd[0] * camWorldPos[0] + fwd[1] * camWorldPos[1] + fwd[2] * camWorldPos[2]) / (fl * camDist);
+      const hcOn = (typeof window !== 'undefined' && window.__hcull != null) ? !!window.__hcull : (lookDot > -0.95);
+      if (hcOn) {
+        const planes = new Float64Array(24);
+        extractFrustumPlanes(vpr, planes);
+        cullCtx = { planes, ex: camWorldPos[0], ey: camWorldPos[1], ez: camWorldPos[2],
+                    ux: 0, uy: 0, uz: 0, vx: 0, vy: 0, vz: 0, cx: 0, cy: 0, cz: 0,
+                    R, maxElev: CULL_MAX_ELEV };
+      }
+    }
     // BEHIND-LIMB CULL (the dominant bottleneck fix). The baseline measured ~80% of all
     // generated quads sitting BEHIND the planet's horizon -- they are geometrically
     // occluded by the globe (depth-culled to nothing) yet each still costs 3 FBO tile-gen
@@ -709,9 +763,17 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
       // pass the TRUE altitude (|camWorldPos|-R) so the quadtree does not derive it from the WARPED
       // face-local hypot (which overestimates off the face centre -> LOD stalled everywhere but the
       // start point; user 2026-06-03). camDist = |camWorldPos|, R = planet radius.
+      // point the reused cull context at THIS face's local frame (the quadtree maps node corners to
+      // world dirs with these axes); the planes + eye are already set for the whole frame.
+      if (cullCtx) {
+        const Fc = FACE_FRAME[face];
+        cullCtx.ux = Fc.u[0]; cullCtx.uy = Fc.u[1]; cullCtx.uz = Fc.u[2];
+        cullCtx.vx = Fc.v[0]; cullCtx.vy = Fc.v[1]; cullCtx.vz = Fc.v[2];
+        cullCtx.cx = Fc.c[0]; cullCtx.cy = Fc.c[1]; cullCtx.cz = Fc.c[2];
+      }
       const leaves = qt.updateQuadtree(lodLocalCam[0], lodLocalCam[1], lodLocalCam[2], localCam[0], localCam[1],
                                        aimLocal ? aimLocal[0] : undefined, aimLocal ? aimLocal[1] : undefined,
-                                       camDist - R);
+                                       camDist - R, cullCtx);
       const n = leaves.length;
       if (n <= 0) continue;
       const F = FACE_FRAME[face];
