@@ -555,61 +555,14 @@ highp float broadShape(vec3 dir, float tileM){ return broadShape(dir); }
 // (THC-Normal W1) so geometry (VS), collision (PROBE) and the height-bake all call the SAME field --
 // no parallel re-derivation. fp = face-local warped metres (continuous across tiles), tileM = quad
 // size for the Nyquist octave fade, rugged = anchor-driven amplitude. Pure value (no gradient).
-float vtxDisplace(highp vec2 fp, float tileM, float rugged){   // W7: fp = face-local metres ~6.4e6 -> highp; fp/wl feeds the noise lattice
-  if (vtxDetail <= 0.0 || rugged <= 0.0) return 0.0;
-  float wl0 = 960.0;         // coarsest fine octave wavelength (m) -- 3x WIDER / less frequent (user 2026-06-09:
-                             // 'make this high frequency elevation noise 3x wider, its very nice but too small').
-                             // Was 320m; 320*3=960. The noise the user sees on ALL land widens 3x (finest octave
-                             // 30m vs 10m). The mountain-gated erosive copy below rides the same widened basis.
-  float amp0 = 11.0;         // 8->11m: wider features carry a touch more amplitude to stay as visible as the old bump
-  float ridge = smoothstep(1.3, 1.75, rugged);   // only the highest mountain belts fold to ridges
-  float sumF = 0.0, sumR = 0.0, a = amp0, wl = wl0;
-  // PER-PATCH STAIR-STEP FIX (user 'stair steps were per patch, not per vert'): the old Nyquist fade keyed
-  // cellM=tileM/16 / nyqWl on tileM = the LEAF SIZE (a per-patch constant). Two ADJACENT leaves at different
-  // LOD (tileM differs 2x) then weighted the octaves DIFFERENTLY, so their micro-relief disagreed at the
-  // shared edge by a constant -> a per-patch HEIGHT STEP at every LOD boundary. Make vtxDisplace a FIXED
-  // octave set, a PURE function of the world-pos fp with NO tileM dependence -> every leaf computes the
-  // IDENTICAL height at a given point = C0 across all LOD boundaries by construction (no per-patch step).
-  // A coarse leaf's 16-cell mesh simply under-samples the finest octaves (smooth interpolation, not a step);
-  // the amplitude is small (amp0 8m * uHiFreqCut 0.25 * ruggedAmp) so any residual aliasing is minor and
-  // far less visible than the per-patch steps it removes. (tileM kept in the signature for callers.)
-  int vbOcts = (uVtxBaseOcts > 0) ? uVtxBaseOcts : 6;
-  for (int o=0; o<vbOcts; o++){
-    float n = vnoise2(fp / wl);             // [-1,1]
-    sumF += a * n;                           // smooth fBm
-    float r = 1.0 - abs(n); r *= r;          // ridged: sharp crest at n=0
-    sumR += a * (r * 2.0 - 1.0);
-    a *= 0.55; wl *= 0.5;
-  }
-  float sum = mix(sumF, sumR * 0.9, ridge);
-  // MOUNTAIN EROSIVE DETAIL (user 2026-06-09: 'take the high-freq elevation noise, make it 3x WIDER (less
-  // frequent) -- nice but too small -- and add it to all mountainous zones at a little less intensity as
-  // part of the mountain pattern, to simulate erosive detail'). SAME vnoise2(fp/wl) basis as the bump above
-  // (so it reads as the same noise the user likes), but wl0 = 3*320 = 960m (3x wider / lower frequency).
-  // Gated by `mtnGate` (the rugged/mountain signal) so it ONLY lands in mountainous zones, and at LOWER
-  // amplitude than the base bump (ea0 5m vs 8m) per 'a little less intensity'. 4-octave ridged-leaning fBm
-  // for erosive gully/ridgeline shape. Added INSIDE vtxDisplace so it shares the LOD-invariant, seam-safe,
-  // face-local path (no per-patch step) and is picked up by the composeHeight central-diff lit normal.
-  float mtnGate = smoothstep(0.30, 0.70, rugged);   // ramps in as soon as the massif lifts so ALL mountains get erosive perlin (user 2026-06-14); was (0.40,0.85)
-  float eros = 0.0;   // mountain erosive relief, kept SEPARATE from the uHiFreqCut trim (see return)
-  if (mtnGate > 0.0) {
-    float ea = 8.0, ewl = 1440.0, esumF = 0.0, esumR = 0.0;   // ea 4->8 + ewl 1920->1440: stronger, sharper rugged ravine relief so mountains read ROCKY (engage the rockSlope gate), not round/smooth (user 2026-06-14). Decoupled from uHiFreqCut so it lands full-strength.
-    int veOcts = (uVtxErodeOcts > 0) ? uVtxErodeOcts : 4;
-    for (int o = 0; o < veOcts; o++) {
-      float en = vnoise2(fp / ewl);
-      esumF += ea * en;
-      float er = 1.0 - abs(en); er *= er;
-      esumR += ea * (er * 2.0 - 1.0);
-      ea *= 0.55; ewl *= 0.5;
-    }
-    eros = mix(esumF, esumR * 0.9, 0.6) * mtnGate;   // ridged-leaning erosive relief, mountain-gated
-  }
-  float ruggedAmp = clamp(rugged, 0.4, 1.15);
-  // DECOUPLE (user 2026-06-14, workflow-found root cause): the everywhere-bump `sum` still rides the
-  // uHiFreqCut altitude-blotch trim (0.25), but the mountain `eros` does NOT -- it was being silently
-  // quartered (6.0->1.5m), which is why mountains read as smooth grass. eros now lands full-strength.
-  return (sum * uHiFreqCut + eros) * vtxDetail * ruggedAmp;
-}
+// vtxDisplace REMOVED (user 2026-06-17 'we put vertex micro detail on 0 ... wasted calculation on those'):
+// vtxDetail defaulted to 0, so this ALWAYS early-returned 0 before any octave ran -- the fine-relief + the
+// mountain-erosion octave loops were dead code. Stubbed to 0.0 so vDisp is identically 0 at every call site
+// (the look is unchanged; relief is carried by broadShapeM's o>=6 octaves + the detail overlay). The
+// vtxDetail / uVtxBaseOcts / uVtxErodeOcts uniforms are now inert (left as harmless dead decls; setters
+// pruned next pass). NOTE: this is CODE CLEANUP, not a speed win -- the early-return meant it already cost
+// nothing; the real VS cost is broadShapeM (see the fps note).
+float vtxDisplace(highp vec2 fp, float tileM, float rugged){ return 0.0; }
 
 // PERLIN-EVERYWHERE detail fbm (user 2026-06-10): ONE 3-octave value fbm shared by the FS albedo
 // overlay and the composeHeight elevation term below (same field -> the brightness variation and the
