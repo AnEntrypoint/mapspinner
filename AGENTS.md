@@ -111,6 +111,25 @@ knot solver pattern (node bisection over the real quadtree) lives in recall
 resurrect the lab mirror (byte-sync drift was a recurring failure class). NO node-WebGL2 binding
 exists on win32 (headless-gl/@kmamal are WebGL1).
 
+## CLI testing lab (scripts/lab.mjs) -- 2026-06-18, NOT the deleted byte-sync mirror
+
+The CLI lab is BACK as `scripts/lab.mjs`, but it is NOT the old src/lab terrain-lab mirror (that
+byte-sync-drift class stays dead). It composes the REAL surfaces, no parallel reimplementation:
+- HEIGHT GRAPH = CPU via src/height-cpu.js (transpiled from terrain.glsl by gen-height.mjs), pure
+  node, no GPU: `node scripts/lab.mjs heightmap [--res N] [--center lat,lon] [--span deg]
+  [--radius m] [--hillshade] [--out f.png]` -> grayscale PNG (no-dep, node zlib) + min/max/relief/
+  landFrac stats. `npm run lab:heightmap`.
+- GLSL build/validate = headless Chromium with --use-angle=swiftshader (GPU-free software WebGL2,
+  self-launches chrome + the dev server, tears both down): `glsl-check` asserts terrain.glsl COMPILES
+  + reports the GL backend; `parity [--n N] [--tol m]` sweeps CPU heightAt vs the GPU _PROBE_
+  sampleGroundM (the standing parity gate for shader height edits); `build` = gen-height + glsl-check.
+BACKEND CHOICE (user 'pick the best option' 2026-06-18): SwiftShader = portable, CI-able,
+deterministic = the default. It CANNOT witness the ANGLE/FXC mis-translation class (a different GLSL
+translator) -- for the FXC witness run chrome with --use-angle=d3d11 on a Windows runner (CHROME +
+PAGE_URL env overrides). The GPU-free core (heightmap + src/lab.test.js) runs ANYWHERE; the headless
+half needs a chrome (auto-detected) + degrades cleanly when absent. Surfaced the coastal scale-
+variance finding (scale-coastal-absolute-width: uBeachShelfM absolute width breaks exact 1/100 scale).
+
 ## The efficient terrain-debug loop (USE THIS, never restart-and-eyeball)
 
 Debug LIVE in the browser through `window.__diag` / `window.__dbg`, NOT by restarting the server

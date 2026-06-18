@@ -17,7 +17,11 @@
   "scripts": {
     "gen": "node scripts/gen-height.mjs",
     "test": "node scripts/gen-height.mjs && node --test \"src/**/*.test.js\"",
-    "dev": "PORT=8080 node server.js"
+    "dev": "PORT=8080 node server.js",
+    "lab": "node scripts/lab.mjs",
+    "lab:heightmap": "node scripts/lab.mjs heightmap",
+    "lab:build": "node scripts/lab.mjs build",
+    "lab:parity": "node scripts/lab.mjs parity"
   },
   "repository": {
     "type": "git",

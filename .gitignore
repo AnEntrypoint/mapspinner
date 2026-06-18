@@ -39,3 +39,6 @@ tests/**/*-snapshots/
 .plugkit-browser-profile/
 .codeinsight
 .rs-exec.lock
+
+# CLI lab (scripts/lab.mjs) generated output: heightmap PNGs + glsl-check logs
+/lab-out/
