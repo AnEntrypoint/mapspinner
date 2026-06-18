@@ -1071,17 +1071,14 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // + strata band thickness and cliff-strata material strength (FS texturing). Defaults = the tuned
     // literals so the look is unchanged until the user dials a window global.
     const _g = (n,d)=> (typeof window!=='undefined' && window['__'+n]!=null) ? +window['__'+n] : d;
-    gl.uniform1f(U('canyonDepthMul'), _g('canyonDepth', 2.0));   // Kept 2.0 (must match the probe default line ~427); the canyon-intensity cut lives in CANYON_INCISE_DEPTH (terrain.glsl). LIVE fine-tune via window.__canyonDepth.
-    gl.uniform1f(U('uVsCheap'),       (typeof window!=='undefined' && window.__vsCheap) ? 1.0 : 0.0);   // VS carve-cost profiling A/B
-    gl.uniform1f(U('uBeachShelfM'),   _g('beachShelf', 0.0));   // land coastal shelf (geometry): h<S eased h*h/S = wide beach
-    gl.uniform1f(U('uLandBias'),      _g('landBias', 0.0));        // +650m hypsometry bias = ~+30% land:sea (window.__landBias); MUST match the probe (setComposeHeightUniforms) for collision parity
-    gl.uniform1f(U('uHiFreqCut'),     _g('hiFreqCut', 0.25));   // 0.5->0.25 (2026-06-10 'blotchy' -- see setComposeHeightUniforms)
+    // DESTRUCTIVE-OPT 2026-06-18 (workflow wohggez72, glr-dedup-setComposeHeight): the inline canyonDepthMul/
+    // uVsCheap/uBeachShelfM/uLandBias/uHiFreqCut/cliffAmt/uHpfInset/uFloatLinearOK sets that used to live here
+    // were exact redundant duplicates of setComposeHeightUniforms(U) -- called just above at line ~1068 with the
+    // SAME locator U and SAME window-read values -- so they re-uploaded identical values every frame. Deleted:
+    // byte-identical render, fewer uniform calls/frame. The NON-overlapping sets (uVertexAO/uAoAmt/uWireframe/
+    // uFsCheap, none of which setComposeHeightUniforms touches) stay.
     gl.uniform1f(U('uVertexAO'),      _g('vertexAO', 1.0));    // per-vertex shading/AO strength (DEFECT 2, 2026-06-06)
-    gl.uniform1f(U('cliffAmt'),       _g('cliffAmt', 1.0));
     gl.uniform1f(U('uAoAmt'),         _g('aoAmt', 1.0));
-    gl.uniform1f(U('uHpfInset'),      (typeof window!=='undefined' && window.__hpfInset === false) ? 0.0 : 1.0);   // SEAM FIX: inset sampler permanent default (matches bakeFace fu=x/(RES-1)); window.__hpfInset===false rolls back. PROBE+RENDER flip together.
-    // uFloatLinearOK lets hpfSample collapse the manual 4-tap bilinear to a single hardware texture().
-    gl.uniform1i(U('uFloatLinearOK'), _halfFloatLinearOK ? 1 : 0);
     gl.uniform1f(U('uWireframe'),     (typeof window!=='undefined' && window.__wireframe) ? 1.0 : 0.0);
     gl.uniform1f(U('uFsCheap'),        (typeof window!=='undefined' && window.__fsCheap) ? 1.0 : 0.0);  // GPU-timer VS-isolation frame (window.__gpuTimer)
     // (uBiomeBandBias render setter removed 2026-06-18 -- dead with the anchor-point biome system.)
@@ -1090,7 +1087,8 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // night floor + earthshine, exposure + post-ACES Look (sat/contrast). Defaults = the tuned look.
     // (uBiomeSat + uBiomeClimate render setters removed 2026-06-18 -- dead with the anchor-point biome system removal.)
     gl.uniform1f(U('uVariationAmt'),   _g('variationAmt', 0.04));   // 0.08->0.04 (2026-06-10 'blotchy': mottle patches across the 4x massifs)
-    gl.uniform1f(U('uDetailOverlay'),  _g('detailOverlay', 6.0));   // perlin-everywhere albedo+elevation fbm (2026-06-10; user-tuned 6)
+    // (uDetailOverlay inline set removed 2026-06-18 destructive-opt wohggez72 -- redundant duplicate of
+    //  setComposeHeightUniforms(U) line ~454, same locator/value; one uniform call/frame saved, render identical.)
     gl.uniform1f(U('uHazeMul'),        _g('hazeMul', 0.65));        // aerial-perspective strength (2026-06-10 'pale hazy': 1.0 milked the midground)
     // uDiffWrap lives in ATMOSPHERE.glsl (atm_sunSkyIrradiance), not terrain.glsl -- the 2026-06-11
     // dead-code scan only covered terrain.glsl and wrongly deleted this setter (wrap silently -> 0,
