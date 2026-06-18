@@ -399,20 +399,20 @@ function frameLoop(){
       // The orchestrator works in METERS (its producer generates meter-scale elevation).
       // We drive it in meter-space and scale the km-unit camera into meters via
       // WEBGL2_M_PER_UNIT below.
-      // SPLITFACTOR PIN (user 2026-06-14): set 0.28 BEFORE orch init so the FIRST quadtree build uses
-      // it -- otherwise window.__splitFactor is undefined for the first frames and the orchestrator's
-      // altitude ramp (planet-orchestrator.js:445, taken when __splitFactor==null) overrides any opts
-      // default. gen-controls re-affirms the same 0.28 on apply(). 0.28 lands ~500-600 quads at the
-      // deck; splitDist floors at 1.1 so this is near the coarse limit.
-      if (window.__splitFactor == null) window.__splitFactor = 0.28;
+      // NO SPLITFACTOR PIN: the SDK orchestrator now defaults to the blessed flat mesh density
+      // (TERRAIN_DEFAULTS.splitFactor; altitude ramp is opt-in) so the demo does NOT establish LOD
+      // density -- it just consumes the SDK default. Move a Tweaks-panel slider to override live.
       import('./src/planet-orchestrator.js')
-        .then(m => m.initMapspinnerPlanet(glw, { radius: WEBGL2_TERRAIN_R_M, frustumCull: true,  // DEFAULT-ON 2026-06-15: NDC-AABB frustum cull (quadOutsideFrustum, over-cull-fixed) -- deck quads 750->179, ~1.58x, coverage stays 1.0 (witnessed). window.__frustumCull=false disables live.
+        .then(m => m.initMapspinnerPlanet(glw, { radius: WEBGL2_TERRAIN_R_M,  // frustumCull is DEFAULT-ON in the SDK (orchestrator: opts.frustumCull !== false) -- the demo no longer passes it. window.__frustumCull=false disables live.
           // FPS lever (2026-06-14): mesh GRID is overridable via ?grid=N for live triangle-count
           // A/B (the bottleneck is triangle/vertex throughput, not the broadShapeM ALU -- octMax
           // 12->3 left frame time flat). Absent param falls through to gl-render's 16 default.
           gridMeshSize: ((new URLSearchParams(location.search).get('grid')|0) || undefined) }))
         .then(orch => { window.__planetOrch = orch; window.__planetOrchGL = glw; window.__planetOrchStatus='ready';
-          import('./src/terrain-gen-controls.js').then(()=>{ try{ window.__gen && window.__gen.apply(); }catch(_){} }).catch(e=>console.warn('gen-controls',e)); })
+          // Load the gen-controls overlay (installs window.__gen for the Generation panel) but do NOT
+          // call __gen.apply() on boot -- the SDK already renders the blessed look from its defaults;
+          // apply() now runs only when the user changes a Generation-panel control (pure live overlay).
+          import('./src/terrain-gen-controls.js').catch(e=>console.warn('gen-controls',e)); })
         .catch(e => { window.__planetOrchStatus='error:'+(e.message||e); console.error('orch init',e); });
     }
   }

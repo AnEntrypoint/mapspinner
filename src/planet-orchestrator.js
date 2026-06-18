@@ -13,6 +13,7 @@
 import { Quadtree } from './quadtree.js';
 import { initMapspinnerRender } from './gl-render.js';
 import { createAnchorField } from './anchor-field.js';
+import { TERRAIN_DEFAULTS as TD } from './terrain-defaults.js';
 
 // MUST match the render's localToWorld3 transformation exactly (col0=U, col1=V,
 // col2=center). This is the face's local orthonormal frame: a face-local point
@@ -201,9 +202,11 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
   // saturated the atlas (1920/1920) and drove tileGenMs to ~950ms. The live sweep
   // (__diag.sweepSplit, browser-3) found splitFactor 1.0 puts px/poly median at 9.7
   // (orbit) / 26.8 (lowalt) -- 100%/98% inside the 4-50 band -- while collapsing the quad
-  // count (orbit 860->20, lowalt 1272->328). 1.0 is the calibrated default; override live
-  // via window.__splitFactor.
-  const splitFactor = opts.splitFactor ?? 1.0;
+  // count (orbit 860->20, lowalt 1272->328). The SDK default is the BLESSED flat mesh density
+  // (TERRAIN_DEFAULTS.splitFactor = 0.30) -- the demo used to PIN this via window.__splitFactor and
+  // never ran the altitude ramp below, so a flat 0.30 IS the calibrated look. A bare SDK consumer
+  // gets it with no setup. Override live via window.__splitFactor or per-instance via opts.splitFactor.
+  const splitFactor = opts.splitFactor ?? TD.splitFactor;
   const gridMeshSize = opts.gridMeshSize || 11;   // 16->11 FPS lever (triangle-throughput bound, not ALU; GRID 8 jagged biome crossovers, see gl-render.js GRID)
 
   gl.getExtension('EXT_color_buffer_float');   // RGBA32F atlas render targets
@@ -482,7 +485,12 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
     // splitFactor branch, so the deck-cap reference threw ReferenceError: altKm is not defined
     // and killed the whole render loop (frozen __altM, zero quads, overlay never torn down).
     const altKm = Math.max(0, (camDist - R) / 1000);
-    if (typeof window === 'undefined' || window.__splitFactor == null) {
+    // ALTITUDE->splitFactor RAMP is OPT-IN (opts.altSplitRamp). The demo always pinned
+    // window.__splitFactor so this ramp never ran -- the blessed look is the FLAT splitFactor at all
+    // altitudes. Default-off so a bare SDK consumer renders that same flat look without the demo's
+    // pin. A consumer wanting altitude-adaptive density passes opts.altSplitRamp:true and leaves
+    // window.__splitFactor unset.
+    if (opts.altSplitRamp && (typeof window === 'undefined' || window.__splitFactor == null)) {
       const PEAK = 1.4;   // 2.0 -> 1.4 (user 2026-06-04 destructive FPS run, browser-18 measured): at the
       // 6km closeup the frame is 96.6% VS+raster-bound (fullMs 36.3, vsRaster 35.1, fs 1.2 = dead lever).
       // A LIVE __splitFactor sweep at 6km showed PEAK 2.0 over-subdivides the low-alt footprint into a

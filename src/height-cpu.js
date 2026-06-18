@@ -13,20 +13,19 @@
 import { makeHeight } from './height-gen.js'
 import { createAnchorField } from './anchor-field.js'
 import * as g from './glsl-rt.js'
+import { SHAPE_UNIFORM_DEFAULTS } from './terrain-defaults.js'
 
 // Renderer uniform defaults -- MUST mirror gl-render.js (setComposeHeightUniforms
 // line ~450 + the render set line ~1089). Override per-field via opts.uniforms to
 // match a host that dials window.__* levers.
 export const HEIGHT_UNIFORM_DEFAULTS = {
   hasHpf: 1,
-  uLandBias: 0.0,
-  uBeachShelfM: 0.0,        // 0 -> the GLSL guard uses 600m (wide beach)
-  canyonDepthMul: 2.0,
-  uDetailOverlay: 6.0,
-  uHiFreqCut: 0.25,
-  uCarveWide: 0.0, uMtnBandWide: 0.0, uClimateRelief: 0.0, uIsleWide: 0.0,
+  // SHAPE levers come from the SDK canonical defaults (src/terrain-defaults.js) so the CPU height
+  // path == the GPU _PROBE_ == the demo's blessed look in ONE place. SHAPE_UNIFORM_DEFAULTS carries:
+  // uLandBias -800, uBeachShelfM 0 (->600m guard), canyonDepthMul 1.0, uDetailOverlay 50, uHiFreqCut
+  // 0.95, uCarveWide 0, uMtnBandWide 0.1, uClimateRelief 0.65, uIsleWide 1.0, cliffAmt 3.0.
+  ...SHAPE_UNIFORM_DEFAULTS,
   uVsCheap: 0.0,
-  cliffAmt: 1.0,
   uOctMax: 12, uInciseRidgeOcts: 4, uBroadLowOcts: 2, uPeakOcts: 3,   // uBroadLowOcts 8->2 mirrors gl-render.js:467 (the high octaves only feed the 2400m-step mesa-flatness SLOPE gate, averaged out -> 0 elevation effect; A/B-confirmed)
   uDetailFbmOcts: 3,
   // (vtxDetail / uVtxBaseOcts / uVtxErodeOcts dropped 2026-06-18 to restore the

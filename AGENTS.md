@@ -161,13 +161,19 @@ and guessing from screenshots. One `page.evaluate` dispatch reads the actual run
    recall "TV8 live-debug display modes" in rs-learn for the full mode list.
 6. Re-measure. Repeat. The whole loop is browser-side; the server stays up.
 
-GEN-CONTROLS OVERRIDE + JS CACHE TRAP (cost many turns of invisible edits): the LIVE biome material
-values (bcRock, slopeRock, bandEdgesHi/Lo, snowEdges...) come from `window.__gen.state.biome` in
-`src/terrain-gen-controls.js` (~L35-41), which OVERRIDES the gl-render.js defaults — edit the
-gen-controls state, not the gl-render default. AND the browser HTTP-caches JS modules, so reloads
-serve stale code; force fresh via a CDP `Network.setCacheDisabled` before `page.goto`, and VERIFY any
-change took with `gl.getUniform(orch.render.prog, name)` — never trust an edit is live. Recall "TV8
-gen-controls overrides gl-render defaults CRITICAL 2026-06-03".
+SDK-SIDE DEFAULTS = SINGLE SOURCE OF TRUTH (`src/terrain-defaults.js`, 2026-06-18): EVERY terrain
+look/shape/lod/biome/ocean default lives in `TERRAIN_DEFAULTS` (+ `SHAPE_UNIFORM_DEFAULTS` for the
+CPU mirror). gl-render's `g()/_g()/o3()/C()` fallbacks, planet-orchestrator's `splitFactor` default
+(+ the altitude ramp now OPT-IN via `opts.altSplitRamp`), and height-cpu's `HEIGHT_UNIFORM_DEFAULTS`
+all READ from it -- so a BARE SDK consumer renders the calibrated "blessed" look with no setup. The
+demo (`planet.html` / `tweak-panel.js` / `terrain-gen-controls.js`) is a PURE CONSUMER: it no longer
+force-sets any `window.__` global on boot (the old `applyBaked()` force-set + `__gen.apply()` boot
+call + `__splitFactor=0.28` pin are gone) and just provides LIVE overlays that write a global ONLY
+when a control moves. Edit a default in `terrain-defaults.js`, never per-call-site. When you change a
+SHAPE default re-bake the `height-cpu.test.js` golden (`npm test`) -- the CPU + GPU read the same TD.
+(RESOLVED: the old "gen-controls OVERRIDES gl-render defaults at boot" trap no longer exists -- panels
+do not apply at boot. JS-cache trap still applies: force fresh via CDP `Network.setCacheDisabled`
+before `page.goto` and verify with `gl.getUniform(orch.render.prog, name)`.)
 
 CLIENT-EDIT WITNESS: any edit to `terrain.glsl` / `*.js` / `planet.html` must be witnessed in the
 SAME turn via a `browser` dispatch asserting the invariant (compile clean + glError 0 + the metric

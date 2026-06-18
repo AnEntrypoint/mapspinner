@@ -43,10 +43,14 @@ test('surfacePoint(dir) = normalize(dir) * (radius + heightAt)', () => {
 test('golden samples (regression lock; update only with an intended terrain.glsl change)', () => {
   // Captured from the current transpiled field. If terrain.glsl height changes,
   // re-run gen-height.mjs then update these to the new (parity-verified) values.
+  // RE-BAKED 2026-06-18: HEIGHT_UNIFORM_DEFAULTS now carries the blessed SDK shape defaults
+  // (terrain-defaults.js SHAPE_UNIFORM_DEFAULTS: landBias -800, detailOverlay 50, hiFreqCut 0.95,
+  // canyonDepthMul 1.0, cliffAmt 3.0, mtnBandWide 0.1, climateRelief 0.65, isleWide 1.0) -- the
+  // values the demo used to force via window.__ now live SDK-side, so the default CPU field shifted.
   const golden = [
-    [[0.9, 0.1, 0.4], -26.9084],
-    [[1, 0, 0], -47.1960],
-    [[0.577, 0.577, 0.577], -3698.9762],
+    [[0.9, 0.1, 0.4], 135.9252],
+    [[1, 0, 0], -133.761],
+    [[0.577, 0.577, 0.577], -3875.4983],
   ]
   for (const [dir, exp] of golden) {
     const h = hs.heightAt(dir)

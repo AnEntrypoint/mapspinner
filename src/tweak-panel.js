@@ -8,10 +8,14 @@
 // Imported (cache-busted) by planet.html so it reliably reaches a warm tab. Add a lever here the moment
 // you wire a new window.__ uniform in gl-render -- this is the single place to expose tweakables.
 
+import { TERRAIN_DEFAULTS as TD } from './terrain-defaults.js';
+
 // [key, label, min, max, step, default-shown]. key -> window.__<key>.
-// DEFAULTS BAKED 2026-06-16 from the user's live-tuned session (read off their tab via /cmd, cw:1920).
-// These ARE the look the user dialled in; applyBaked() below forces them as the live globals on load so
-// a fresh page == the tuned look (no manual re-tweak). 'r' resets a slider to its baked value.
+// The panel is a PURE LIVE OVERLAY: it does NOT force-set any global on boot (the SDK already
+// renders the blessed look from src/terrain-defaults.js -- TD below). A window.__<key> is written
+// ONLY when the user moves a control. The slider's displayed default + the 'r' reset target read
+// the SDK canonical TD[key] where it exists (single source of truth), falling back to the per-row
+// literal for UI-only levers (renderScale). The min/max/step/label columns are pure UI metadata.
 const GROUPS = [
   ['Canyon / carve', [
     ['canyonDepth',   'Canyon depth',          0,   8,    0.1,  0.0],
@@ -85,14 +89,12 @@ const GROUPS = [
   ]],
 ];
 
-// The baked values applied as live globals on load. FORCE-set (not null-guarded) so they win over
-// gen-controls' applyShaderGlobals for the shared look levers; runs after a double-rAF (post-init).
-function applyBaked(){
-  for (const [, levers] of GROUPS) for (const [key,,,,,def] of levers) {
-    if (key === 'renderScale') continue;   // canvas init owns the load default (DPR); the slider drives it live, don't force a load-time resize
-    window['__' + key] = def;
-  }
-  const o = window.__planetOrch; if (o && o.clearCache) o.clearCache();
+// The SDK canonical default for a lever (single source of truth) -- TD[key] when present (scalar),
+// else the per-row literal for UI-only levers. The panel uses this for display + reset only; it does
+// NOT write the global at boot (removed: the SDK now renders the blessed look on its own).
+function levDefault(key, rowDef){
+  const v = TD[key];
+  return (typeof v === 'number') ? v : rowDef;
 }
 
 function build(){
@@ -122,7 +124,8 @@ function build(){
 
     for (const [key, label, min, max, step, def] of levers) {
       const g = '__' + key;
-      const cur = (window[g] != null) ? +window[g] : def;   // SHOW current/default, do NOT write the global until touched
+      const dflt = levDefault(key, def);                    // SDK canonical default (TD), UI-literal fallback
+      const cur = (window[g] != null) ? +window[g] : dflt;   // SHOW current/default, do NOT write the global until touched
       const row = document.createElement('div');
       row.style.cssText = 'display:flex;align-items:center;gap:4px;margin:1px 0';
 
@@ -144,9 +147,9 @@ function build(){
       num.oninput = () => apply(num.value);
 
       const rst = document.createElement('button');
-      rst.textContent = 'r'; rst.title = 'reset to ' + def;
+      rst.textContent = 'r'; rst.title = 'reset to ' + dflt;
       rst.style.cssText = 'flex:0 0 16px;font:10px monospace;padding:0;cursor:pointer';
-      rst.onclick = () => apply(def);
+      rst.onclick = () => apply(dflt);
 
       row.append(lab, rng, num, rst);
       det.appendChild(row);
@@ -158,6 +161,6 @@ function build(){
   window.__tweakPanel = { rebuild: build };
 }
 
-function boot(){ build(); requestAnimationFrame(() => requestAnimationFrame(applyBaked)); }
+function boot(){ build(); }   // build the panel only; NO force-apply -- the SDK renders the blessed look by default
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
 else boot();

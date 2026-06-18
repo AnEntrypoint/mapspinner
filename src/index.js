@@ -8,6 +8,10 @@ export { createAnchorField } from './anchor-field.js';
 // Headless CPU terrain-height sampler (transpiled from terrain.glsl, single source
 // of truth) for physics/sampling on a server with no GPU. See height-cpu.js.
 export { createHeightSampler, HEIGHT_UNIFORM_DEFAULTS } from './height-cpu.js';
+// Canonical SDK-side defaults: every terrain look/shape/lod lever's blessed value. The render
+// layers read these as their fallbacks so a bare consumer (no demo panels) renders the calibrated
+// look. See src/terrain-defaults.js.
+export { TERRAIN_DEFAULTS, SHAPE_UNIFORM_DEFAULTS } from './terrain-defaults.js';
 
 // Version marker
 export const VERSION = '0.1.0';

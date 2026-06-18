@@ -3,6 +3,12 @@
 // uniforms (screenQuadCorners C / verticals N / cornerNorms L / offset / camera /
 // blending / localToWorld) are computed in JS. No WebGPU.
 
+// SDK CANONICAL DEFAULTS: the g()/_g()/o3()/C() fallbacks below read TD.<key> so the calibrated
+// "blessed" look lives in ONE SDK-side place (src/terrain-defaults.js). A window.__<key> override
+// (set live by the demo's tweak panel) still wins per-frame; with no override the SDK renders the
+// blessed look on its own -- the demo no longer has to force-set anything on boot.
+import { TERRAIN_DEFAULTS as TD } from './terrain-defaults.js';
+
 // ---- minimal column-major mat4 helpers (no gl-matrix dep) ----------------------------
 const M4 = {
   mul(a, b) { // a*b, column-major (OpenGL convention)
@@ -450,14 +456,14 @@ export async function initMapspinnerRender(gl, opts = {}) {
   // composeHeight (render, _PROBE_) calls this with its own uniform-locator so they CANNOT diverge.
   function setComposeHeightUniforms(loc) {
     const g = (n,d)=> (typeof window!=='undefined' && window['__'+n]!=null) ? +window['__'+n] : d;
-    gl.uniform1f(loc('uHiFreqCut'),     g('hiFreqCut', 0.25));   // DECISIVE: ungated *= at terrain.glsl fine octaves; 0.5->0.25 (2026-06-10 'blotchy': the 4x fine band read as leopard dapple at altitude -- live-isolated, hiFreqCut=0 removed it entirely)
-    gl.uniform1f(loc('uDetailOverlay'), g('detailOverlay', 6.0));  // perlin-everywhere ELEVATION term in composeHeight -- probe must match the VS or collision diverges
+    gl.uniform1f(loc('uHiFreqCut'),     g('hiFreqCut', TD.hiFreqCut));   // DECISIVE: ungated *= at terrain.glsl fine octaves; 0.5->0.25 (2026-06-10 'blotchy': the 4x fine band read as leopard dapple at altitude -- live-isolated, hiFreqCut=0 removed it entirely)
+    gl.uniform1f(loc('uDetailOverlay'), g('detailOverlay', TD.detailOverlay));  // perlin-everywhere ELEVATION term in composeHeight -- probe must match the VS or collision diverges
     // (vtxDetail probe setter removed 2026-06-18 -- vtxDisplace is a 0.0 stub, the uniform is gone.)
-    gl.uniform1f(loc('canyonDepthMul'), g('canyonDepth', 2.0));   // DEFAULT MUST MATCH the render set (line ~982) or the _PROBE_ collision carves shallower than the rendered geometry. Kept 2.0 so a warm tab (module-cached gl-render) and a fresh load are CONSISTENT -- the canyon-intensity cut now lives in CANYON_INCISE_DEPTH (terrain.glsl, cache-busted = reliably delivered; gl-render is NOT cache-busted on a soft reload). LIVE fine-tune via window.__canyonDepth.
+    gl.uniform1f(loc('canyonDepthMul'), g('canyonDepth', TD.canyonDepth));   // TD.canyonDepth=1.0 (demo baked __canyonDepth=0 -> shader floors to 1.0). DEFAULT MUST MATCH the render set (line ~982) or the _PROBE_ collision carves shallower than the rendered geometry. Kept 2.0 so a warm tab (module-cached gl-render) and a fresh load are CONSISTENT -- the canyon-intensity cut now lives in CANYON_INCISE_DEPTH (terrain.glsl, cache-busted = reliably delivered; gl-render is NOT cache-busted on a soft reload). LIVE fine-tune via window.__canyonDepth.
     gl.uniform1f(loc('uVsCheap'),       (typeof window!=='undefined' && window.__vsCheap) ? 1.0 : 0.0);   // VS carve-cost profiling A/B
-    gl.uniform1f(loc('uBeachShelfM'),   g('beachShelf', 0.0));   // land coastal shelf (geometry); probe MUST match render
-    gl.uniform1f(loc('uLandBias'),      g('landBias', 0.0));       // +650m hypsometry bias = ~+30% land:sea (measured: landFrac 0.041 -> 0.054 over a 700-dir sphere grid, user 2026-06-14). window.__landBias dials it live.
-    gl.uniform1f(loc('cliffAmt'),       g('cliffAmt', 1.0));
+    gl.uniform1f(loc('uBeachShelfM'),   g('beachShelf', TD.beachShelf));   // land coastal shelf (geometry); probe MUST match render
+    gl.uniform1f(loc('uLandBias'),      g('landBias', TD.landBias));       // hypsometry bias = ~+30% land:sea (measured: landFrac 0.041 -> 0.054 over a 700-dir sphere grid, user 2026-06-14). window.__landBias dials it live.
+    gl.uniform1f(loc('cliffAmt'),       g('cliffAmt', TD.cliffAmt));
     gl.uniform1i(loc('uFloatLinearOK'), _halfFloatLinearOK ? 1 : 0);
     // FXC unroll-defeat (2026-06-12 AMD d3d11 fix): runtime octave bound for broadShapeM; the shader
     // guards uOctMax<=0 -> 12, so this set is belt-and-braces. Live dial: window.__octMax.
@@ -475,10 +481,10 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(loc('uHpfInset'),      (typeof window!=='undefined' && window.__hpfInset === false) ? 0.0 : 1.0);   // SEAM FIX: inset sampler is the permanent default (matches bakeFace fu=x/(RES-1)); window.__hpfInset===false rolls back
     // ANCHOR-STEP A/B TOGGLES (per-area stairstep, wrxo0rr7a). Default 0 = current; set window.__<name>=1
     // to widen that anchor-keyed band. Set HERE so BOTH render and the _PROBE_ collision see them (parity).
-    gl.uniform1f(loc('uMtnBandWide'),   g('mtnBandWide', 0.0));
-    gl.uniform1f(loc('uClimateRelief'), g('climateRelief', 0.0));
-    gl.uniform1f(loc('uIsleWide'),      g('isleWide', 0.0));
-    gl.uniform1f(loc('uCarveWide'),     g('carveWide', 0.0));
+    gl.uniform1f(loc('uMtnBandWide'),   g('mtnBandWide', TD.mtnBandWide));
+    gl.uniform1f(loc('uClimateRelief'), g('climateRelief', TD.climateRelief));
+    gl.uniform1f(loc('uIsleWide'),      g('isleWide', TD.isleWide));
+    gl.uniform1f(loc('uCarveWide'),     g('carveWide', TD.carveWide));
     // SCALE-INVARIANT relief (2026-06-17): the fractal relief is tuned in absolute metres at the 6360km
     // DESIGN radius. Scale it by R/6360km so the GEOMETRY is proportional to whatever radius a consumer
     // passes -> any radius renders identically (the dev demo at 6360km => exactly 1.0 = no-op), while the
@@ -1077,8 +1083,8 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // SAME locator U and SAME window-read values -- so they re-uploaded identical values every frame. Deleted:
     // byte-identical render, fewer uniform calls/frame. The NON-overlapping sets (uVertexAO/uAoAmt/uWireframe/
     // uFsCheap, none of which setComposeHeightUniforms touches) stay.
-    gl.uniform1f(U('uVertexAO'),      _g('vertexAO', 1.0));    // per-vertex shading/AO strength (DEFECT 2, 2026-06-06)
-    gl.uniform1f(U('uAoAmt'),         _g('aoAmt', 1.0));
+    gl.uniform1f(U('uVertexAO'),      _g('vertexAO', TD.vertexAO));    // per-vertex shading/AO strength (DEFECT 2, 2026-06-06)
+    gl.uniform1f(U('uAoAmt'),         _g('aoAmt', TD.aoAmt));
     gl.uniform1f(U('uWireframe'),     (typeof window!=='undefined' && window.__wireframe) ? 1.0 : 0.0);
     gl.uniform1f(U('uFsCheap'),        (typeof window!=='undefined' && window.__fsCheap) ? 1.0 : 0.0);  // GPU-timer VS-isolation frame (window.__gpuTimer)
     // (uBiomeBandBias render setter removed 2026-06-18 -- dead with the anchor-point biome system.)
@@ -1086,15 +1092,15 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // extinction, biome saturation pull, intra-biome mottle, sky-fill relief, terminator sunset glow,
     // night floor + earthshine, exposure + post-ACES Look (sat/contrast). Defaults = the tuned look.
     // (uBiomeSat + uBiomeClimate render setters removed 2026-06-18 -- dead with the anchor-point biome system removal.)
-    gl.uniform1f(U('uVariationAmt'),   _g('variationAmt', 0.04));   // 0.08->0.04 (2026-06-10 'blotchy': mottle patches across the 4x massifs)
+    gl.uniform1f(U('uVariationAmt'),   _g('variationAmt', TD.variationAmt));   // 0.08->0.04 (2026-06-10 'blotchy': mottle patches across the 4x massifs)
     // (uDetailOverlay inline set removed 2026-06-18 destructive-opt wohggez72 -- redundant duplicate of
     //  setComposeHeightUniforms(U) line ~454, same locator/value; one uniform call/frame saved, render identical.)
-    gl.uniform1f(U('uHazeMul'),        _g('hazeMul', 0.65));        // aerial-perspective strength (2026-06-10 'pale hazy': 1.0 milked the midground)
+    gl.uniform1f(U('uHazeMul'),        _g('hazeMul', TD.hazeMul));        // aerial-perspective strength (2026-06-10 'pale hazy': 1.0 milked the midground)
     // uDiffWrap lives in ATMOSPHERE.glsl (atm_sunSkyIrradiance), not terrain.glsl -- the 2026-06-11
     // dead-code scan only covered terrain.glsl and wrongly deleted this setter (wrap silently -> 0,
     // restoring the very view-angle darkening b990add fixed). Scan BOTH shader files before
     // declaring a uniform dead.
-    gl.uniform1f(U('uDiffWrap'),       _g('diffWrap', 0.5));   // diffuse wrap: 0.7 flattened ALL slope shading; 0.5 = grazing lift without killing the N.L relief keytion'); 0.5 = grazing lift without killing the N.L relief key
+    gl.uniform1f(U('uDiffWrap'),       _g('diffWrap', TD.diffWrap));   // diffuse wrap: 0.7 flattened ALL slope shading; 0.5 = grazing lift without killing the N.L relief keytion'); 0.5 = grazing lift without killing the N.L relief key
     // SURFACE PHOTO-TEXTURES (TEXTURE6/7): triplanar grass/rock/sand/snow splat. hasSurfTex stays 0
     // until the async loader uploads (procedural-only fallback, no flash -- the splat fades in).
     const hasSurf = !!_surfAlb;
@@ -1119,61 +1125,61 @@ export async function initMapspinnerRender(gl, opts = {}) {
       cam.eye[0] - Math.floor(cam.eye[0] / _wrapM) * _wrapM,
       cam.eye[1] - Math.floor(cam.eye[1] / _wrapM) * _wrapM,
       cam.eye[2] - Math.floor(cam.eye[2] / _wrapM) * _wrapM);
-    gl.uniform1f(U('uTexNrmK'),    _g('texNrmK', 1.0));   // user-dialed 2026-06-15 2.0->1.0 (live window.__texNrmK). texture detail-normal strength
-    gl.uniform1f(U('uBiomeTint'),  _g('biomeTint', 0.22)); // macro biome color mixed over the texture (2026-06-15 'doesnt look like the texture color' -- was hard 0.5)
-    gl.uniform1f(U('uTexBright'),  _g('texBright', 0.92)); // overall ground brightness
-    gl.uniform1f(U('uTexSat'),     _g('texSat', 1.0));     // texture chroma saturation (>1 = more vivid photo hue)
-    gl.uniform1f(U('uXSoft'),      _g('xSoft', 0.30));     // crossover fade HALF-WIDTH (window.__xSoft): the A/B crossover is now ONE constant-width directional fade; width is CONSTANT (warp shifts position only) -- user 2026-06-17 redesign
-    gl.uniform1f(U('uXFinger'),    _g('xFinger', 2.5));    // near-field displacement fingering amount (window.__xFinger); fades to 0 with distance so the mipped/far crossover is a SIMPLE over->under fade, no band (user 2026-06-17)
-    gl.uniform1f(U('uOrdPush'),    _g('ordPush', 0.4));    // overlay-priority POSITIONAL push (window.__ordPush): the covering material (sand<rock<grass<snow) expands over the band -> grass covers the grass<->sand band so it never reads green sand (user 2026-06-17)
-    gl.uniform1f(U('uBiomeWarp'),  _g('biomeWarp', 1.6));  // biome-distribution domain-warp amount (window.__biomeWarp). 1.0->1.6 (user 2026-06-16 'narrow the biome band, the elevation band is ok'): a stronger warp wiggles the biome boundaries enough to break the WIDE blobs into smaller fingered patches = narrower effective bands. 0 = raw anchor blobs; tune live in the Tweaks panel.
-    gl.uniform1f(U('uNrmLow'),     _g('nrmLow', 1.0));     // low-octave rock normal strength (2026-06-15 'dont see lower-freq octave normals')
-    gl.uniform1f(U('uXFade0'),     _g('xFade0', 8000.0));   // crossover-displacement fade start (m) (user 2026-06-15: gone by 10km, want it to hold further)
-    gl.uniform1f(U('uXFade1'),     _g('xFade1', 20000.0));  // crossover-displacement fade end (m) -- 'fully faded by ~20km would be more appropriate'
-    gl.uniform1f(U('uTriSharp'),   _g('triSharp', 4.0));     // triplanar weight exponent (2026-06-15 ^8 'normals flipping between two states' -> 4 smooth)
-    gl.uniform1f(U('uNrmFade0'),   _g('nrmFade0', 40000.0)); // normal-texture fade start (m) -- DOUBLED from 20km (2026-06-15)
-    gl.uniform1f(U('uNrmFade1'),   _g('nrmFade1', 80000.0)); // normal-texture fade end (m) -- DOUBLED from 40km
-    gl.uniform1f(U('uBandWarp'),   _g('bandWarp', 1100.0));  // snow/rock/BEACH band warp amplitude (m), low-freq (2026-06-15 'use the snow warp on the beach too')
-    gl.uniform1f(U('uBeachWidth'), _g('beachWidth', 5.0));   // grass<->beach crossover band width x beachTop (2026-06-15 'band super narrow, displacement does little') -- wide = displacement-fingered shoreline
-    gl.uniform1f(U('uTexFar0'),    _g('texFar0', 0.0));      // splat->biome far-fade start (pxWorld m). User baked 0 = the splat fades from the deck out.
-    gl.uniform1f(U('uTexFar1'),    _g('texFar1', 12000.0));  // splat->biome far-fade end (pxWorld m). WIDENED to 12000 (user 2026-06-16 'widen the fade band'): the baked 2000 squeezed the splat->macro detail-normal+albedo handoff into a narrow band = a visible LIT RING; spreading the END to 12000 makes the handoff gradual so the ring disappears.
-    gl.uniform1f(U('uTexMix'),     _g('texMix', 0.85));     // splat blend amount (0 = off)
-    gl.uniform1f(U('uTexWarp'),    _g('texWarp', 0.23));    // anti-repetition warp amplitude (-30% from 0.325, grass warp too intense)
-    gl.uniform1f(U('uTexPhoto'),   _g('texPhoto', 0.0));    // raw photo-color fraction (0 = patch matches the macro shade exactly)
-    gl.uniform1f(U('uTexPhotoNear'), _g('texPhotoNear', 0.45));  // near-field material identity (photo hue at macro luminance; user 2026-06-12 'must be either grass or sand')
+    gl.uniform1f(U('uTexNrmK'),    _g('texNrmK', TD.texNrmK));   // user-dialed 2026-06-15 2.0->1.0 (live window.__texNrmK). texture detail-normal strength
+    gl.uniform1f(U('uBiomeTint'),  _g('biomeTint', TD.biomeTint)); // macro biome color mixed over the texture (2026-06-15 'doesnt look like the texture color' -- was hard 0.5)
+    gl.uniform1f(U('uTexBright'),  _g('texBright', TD.texBright)); // overall ground brightness
+    gl.uniform1f(U('uTexSat'),     _g('texSat', TD.texSat));     // texture chroma saturation (>1 = more vivid photo hue)
+    gl.uniform1f(U('uXSoft'),      _g('xSoft', TD.xSoft));     // crossover fade HALF-WIDTH (window.__xSoft): the A/B crossover is now ONE constant-width directional fade; width is CONSTANT (warp shifts position only) -- user 2026-06-17 redesign
+    gl.uniform1f(U('uXFinger'),    _g('xFinger', TD.xFinger));    // near-field displacement fingering amount (window.__xFinger); fades to 0 with distance so the mipped/far crossover is a SIMPLE over->under fade, no band (user 2026-06-17)
+    gl.uniform1f(U('uOrdPush'),    _g('ordPush', TD.ordPush));    // overlay-priority POSITIONAL push (window.__ordPush): the covering material (sand<rock<grass<snow) expands over the band -> grass covers the grass<->sand band so it never reads green sand (user 2026-06-17)
+    gl.uniform1f(U('uBiomeWarp'),  _g('biomeWarp', TD.biomeWarp));  // biome-distribution domain-warp amount (window.__biomeWarp). 1.0->1.6 (user 2026-06-16 'narrow the biome band, the elevation band is ok'): a stronger warp wiggles the biome boundaries enough to break the WIDE blobs into smaller fingered patches = narrower effective bands. 0 = raw anchor blobs; tune live in the Tweaks panel.
+    gl.uniform1f(U('uNrmLow'),     _g('nrmLow', TD.nrmLow));     // low-octave rock normal strength (2026-06-15 'dont see lower-freq octave normals')
+    gl.uniform1f(U('uXFade0'),     _g('xFade0', TD.xFade0));   // crossover-displacement fade start (m) (user 2026-06-15: gone by 10km, want it to hold further)
+    gl.uniform1f(U('uXFade1'),     _g('xFade1', TD.xFade1));  // crossover-displacement fade end (m) -- 'fully faded by ~20km would be more appropriate'
+    gl.uniform1f(U('uTriSharp'),   _g('triSharp', TD.triSharp));     // triplanar weight exponent (2026-06-15 ^8 'normals flipping between two states' -> 4 smooth)
+    gl.uniform1f(U('uNrmFade0'),   _g('nrmFade0', TD.nrmFade0)); // normal-texture fade start (m) -- DOUBLED from 20km (2026-06-15)
+    gl.uniform1f(U('uNrmFade1'),   _g('nrmFade1', TD.nrmFade1)); // normal-texture fade end (m) -- DOUBLED from 40km
+    gl.uniform1f(U('uBandWarp'),   _g('bandWarp', TD.bandWarp));  // snow/rock/BEACH band warp amplitude (m), low-freq (2026-06-15 'use the snow warp on the beach too')
+    gl.uniform1f(U('uBeachWidth'), _g('beachWidth', TD.beachWidth));   // grass<->beach crossover band width x beachTop (2026-06-15 'band super narrow, displacement does little') -- wide = displacement-fingered shoreline
+    gl.uniform1f(U('uTexFar0'),    _g('texFar0', TD.texFar0));      // splat->biome far-fade start (pxWorld m). User baked 0 = the splat fades from the deck out.
+    gl.uniform1f(U('uTexFar1'),    _g('texFar1', TD.texFar1));  // splat->biome far-fade end (pxWorld m). WIDENED to 12000 (user 2026-06-16 'widen the fade band'): the baked 2000 squeezed the splat->macro detail-normal+albedo handoff into a narrow band = a visible LIT RING; spreading the END to 12000 makes the handoff gradual so the ring disappears.
+    gl.uniform1f(U('uTexMix'),     _g('texMix', TD.texMix));     // splat blend amount (0 = off)
+    gl.uniform1f(U('uTexWarp'),    _g('texWarp', TD.texWarp));    // anti-repetition warp amplitude (-30% from 0.325, grass warp too intense)
+    gl.uniform1f(U('uTexPhoto'),   _g('texPhoto', TD.texPhoto));    // raw photo-color fraction (0 = patch matches the macro shade exactly)
+    gl.uniform1f(U('uTexPhotoNear'), _g('texPhotoNear', TD.texPhotoNear));  // near-field material identity (photo hue at macro luminance; user 2026-06-12 'must be either grass or sand')
     gl.uniform4f(U('uSurfMeanL'), _surfMeanL[0], _surfMeanL[1], _surfMeanL[2], _surfMeanL[3]);   // per-layer mean linear luminance (shade-match divisor)
     // LIVE A/B ISOLATION TOGGLES (window.__rockBump / __chroma / __strata, default 1 = no change). Flip one
     // to 0 in the console to disable that detail layer and see which produces the close-up uv scramble.
-    gl.uniform1f(U('uFlatNormal'),      _g('flatNormal', 0.0));   // 1 = smooth analytic normal (isolate the geometric-normal scramble)
-    gl.uniform1f(U('uReliefShade'),    _g('reliefShade', 1.8));   // user-dialed 2026-06-15 5.0->1.8 (live window.__reliefShade). landscape/macro-slope normal exaggeration
-    gl.uniform1f(U('uSkyFill'),        _g('skyFill', 0.45));
-    gl.uniform1f(U('uTerminatorGlow'), _g('terminatorGlow', 0.30));
-    gl.uniform1f(U('uNightLights'),    _g('nightLights', 1.0));   // night/shadow FILL intensity (dim ambient lift so dark areas are not black); 0 = off
-    gl.uniform1f(U('uNightFloor'),     _g('nightFloor', 0.16));   // night-longitude terminator floor RAISED 0.05->0.16 (no black night terrain)
-    gl.uniform1f(U('uTermWidth'),      _g('termWidth', 0.25));
-    gl.uniform1f(U('uExposure'),       _g('exposure', 1.0));
-    gl.uniform1f(U('uLookSat'),        _g('lookSat', 1.15));
-    gl.uniform1f(U('uLookContrast'),   _g('lookContrast', 1.08));
+    gl.uniform1f(U('uFlatNormal'),      _g('flatNormal', TD.flatNormal));   // 1 = smooth analytic normal (isolate the geometric-normal scramble)
+    gl.uniform1f(U('uReliefShade'),    _g('reliefShade', TD.reliefShade));   // user-dialed 2026-06-15 5.0->1.8 (live window.__reliefShade). landscape/macro-slope normal exaggeration
+    gl.uniform1f(U('uSkyFill'),        _g('skyFill', TD.skyFill));
+    gl.uniform1f(U('uTerminatorGlow'), _g('terminatorGlow', TD.terminatorGlow));
+    gl.uniform1f(U('uNightLights'),    _g('nightLights', TD.nightLights));   // night/shadow FILL intensity (dim ambient lift so dark areas are not black); 0 = off
+    gl.uniform1f(U('uNightFloor'),     _g('nightFloor', TD.nightFloor));   // night-longitude terminator floor RAISED 0.05->0.16 (no black night terrain)
+    gl.uniform1f(U('uTermWidth'),      _g('termWidth', TD.termWidth));
+    gl.uniform1f(U('uExposure'),       _g('exposure', TD.exposure));
+    gl.uniform1f(U('uLookSat'),        _g('lookSat', TD.lookSat));
+    gl.uniform1f(U('uLookContrast'),   _g('lookContrast', TD.lookContrast));
     { const o3=(n,d)=>{ const w=(typeof window!=='undefined'&&window['__'+n])||null; const v=(Array.isArray(w)&&w.length===3)?w:d; gl.uniform3f(U(n), v[0],v[1],v[2]); };
-      o3('uOceanDeep',[0.008,0.025,0.06]); o3('uOceanShallow',[0.07,0.22,0.26]); o3('uOceanK',[0.016,0.007,0.0028]); }   // K halved (user 2026-06-14 'see the land under the water properly') = clearer water, bed visible through shallow/medium depth; deep basins still opaque
+      o3('uOceanDeep',TD.uOceanDeep); o3('uOceanShallow',TD.uOceanShallow); o3('uOceanK',TD.uOceanK); }   // K halved (user 2026-06-14 'see the land under the water properly') = clearer water, bed visible through shallow/medium depth; deep basins still opaque
     // (the continuous broad-shape field is now always on - the single terrain shape source -
     // so its old on/off lever uniform was removed from terrain.glsl; nothing to set here.)
     // LIVE biome ramp (window.__gen.state.biome, else tuned defaults) -- full-adjustability.
     { const bm = (typeof window!=='undefined' && window.__gen && window.__gen.state && window.__gen.state.biome) || null;
       const C = (k,d)=> (bm && bm[k]) ? bm[k] : d;
       const c3 = (n,d)=>{ const v=C(n,d); gl.uniform3f(U(n), v[0],v[1],v[2]); };
-      c3('bcDeepSea',[0.04,0.10,0.28]); c3('bcSea',[0.10,0.22,0.42]); c3('bcShore',[0.52,0.46,0.33]);
-      c3('bcLowland',[0.24,0.42,0.18]); c3('bcGrass',[0.30,0.46,0.20]);
+      c3('bcDeepSea',TD.bcDeepSea); c3('bcSea',TD.bcSea); c3('bcShore',TD.bcShore);
+      c3('bcLowland',TD.bcLowland); c3('bcGrass',TD.bcGrass);
       // bcRock follows the ROCK PHOTO mean once loaded (user 2026-06-10 'replace the original rock
       // completely'): the far-field macro rock shade matches the near-field photo so the 15-20km
       // fade has no color pop. Falls back to the tuned grey-tan until the loader lands.
-      c3('bcRock', (typeof window!=='undefined' && window.__surfRockMean) || [0.55,0.50,0.45]);
-      c3('bcSnow',[0.92,0.94,0.97]);
-      const e=C('bandEdgesLo',[150.0,1200.0]); gl.uniform2f(U('bandEdgesLo'), e[0],e[1]);
-      const eh=C('bandEdgesHi',[3500.0,6500.0]); gl.uniform2f(U('bandEdgesHi'), eh[0],eh[1]);   // [1600,3200]->[3500,6500] (2026-06-10 'rockface everywhere': tuned pre-4x; with 11.6km peaks everything above 3200m was height-rock -- rescale the treeline)
-      const sn=C('snowEdges',[6000.0,8500.0]); gl.uniform2f(U('snowEdges'), sn[0],sn[1]);   // 8000/10500->6000/8500 (user 2026-06-11 'all the snowy mountains have disappeared': only ~1% of land tops 8km (probe 3000-dir sweep, over7k 1.3%), so the whiteout-era snowline left virtually every massif bare; the whiteout's other sources (pre-rescale rock gates, alpine ice bias, tundra grey) are fixed independently, so 6km onset re-caps the real mountains without re-whitening the terrain)
-      gl.uniform1f(U('seaDepthM'), C('seaDepthM',3000.0));
-      const sr=C('slopeRock',[0.25,0.55]); gl.uniform2f(U('slopeRock'), sr[0],sr[1]); }   // [0.25,0.55] USER-SET 2026-06-12 (matches terrain-gen-controls persisted default)
+      c3('bcRock', (typeof window!=='undefined' && window.__surfRockMean) || TD.bcRock);
+      c3('bcSnow',TD.bcSnow);
+      const e=C('bandEdgesLo',TD.bandEdgesLo); gl.uniform2f(U('bandEdgesLo'), e[0],e[1]);
+      const eh=C('bandEdgesHi',TD.bandEdgesHi); gl.uniform2f(U('bandEdgesHi'), eh[0],eh[1]);   // [1600,3200]->[3500,6500] (2026-06-10 'rockface everywhere': tuned pre-4x; with 11.6km peaks everything above 3200m was height-rock -- rescale the treeline)
+      const sn=C('snowEdges',TD.snowEdges); gl.uniform2f(U('snowEdges'), sn[0],sn[1]);   // 8000/10500->6000/8500 (user 2026-06-11 'all the snowy mountains have disappeared': only ~1% of land tops 8km (probe 3000-dir sweep, over7k 1.3%), so the whiteout-era snowline left virtually every massif bare; the whiteout's other sources (pre-rescale rock gates, alpine ice bias, tundra grey) are fixed independently, so 6km onset re-caps the real mountains without re-whitening the terrain)
+      gl.uniform1f(U('seaDepthM'), C('seaDepthM',TD.seaDepthM));
+      const sr=C('slopeRock',TD.slopeRock); gl.uniform2f(U('slopeRock'), sr[0],sr[1]); }   // [0.25,0.55] USER-SET 2026-06-12 (matches terrain-gen-controls persisted default)
     gl.uniform3f(U('sunDir'), sunDir[0],sunDir[1],sunDir[2]);
     gl.uniform1i(U('displayMode'), cam.displayMode||0);
     // ---- animated ocean uniforms. time advances the Gerstner waves; amp/choppy read
@@ -1183,7 +1189,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(U('oceanAmp'), (oc.oceanAmplitude != null) ? oc.oceanAmplitude : 1.0);
     gl.uniform1f(U('oceanChoppy'), (oc.oceanChoppiness != null) ? oc.oceanChoppiness : 0.5);
     gl.uniform1f(U('oceanFoam'), (oc.oceanFoam != null) ? oc.oceanFoam : 0.5);
-    gl.uniform1f(U('uBeachTopM'), _g('beachTop', 60.0));    // beach ceiling: grass stops, sand to the waterline. 640->60 (user 2026-06-15 'distance from grass to water too high, huge beach' -- 640m put grass 640m up = a massive sand band; 60m = a normal coastal beach)
+    gl.uniform1f(U('uBeachTopM'), _g('beachTop', TD.beachTop));    // beach ceiling: grass stops, sand to the waterline. 640->60 (user 2026-06-15 'distance from grass to water too high, huge beach' -- 640m put grass 640m up = a massive sand band; 60m = a normal coastal beach)
 
     // SINGLE INSTANCED DRAW: the deform params that were per-quad uniforms (ox,oy,l,level + face)
     // are now PER-INSTANCE attributes. Build one interleaved instance buffer [ox,oy,l,level,face]

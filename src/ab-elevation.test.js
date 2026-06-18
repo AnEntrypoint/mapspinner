@@ -20,8 +20,10 @@ function maxDelta(override, N = 2500) {
 }
 
 test('CANYONS actually affect elevation', () => {
-  // canyonDepthMul guards 0->1, so this compares depth-2 vs depth-1 floors: a real delta proves canyons carve.
-  assert.ok(maxDelta({ canyonDepthMul: 0 }) > 50, 'canyonDepthMul must change elevation -- canyons carve the mesh')
+  // The SDK default canyonDepthMul is now 1.0 (terrain-defaults.js; the demo's blessed look). The
+  // shader floors <=0 to 1.0, so toggling to 0 would be a no-op vs the default -- compare against a
+  // DEEPER depth (3x) instead: a real delta proves canyons carve the mesh.
+  assert.ok(maxDelta({ canyonDepthMul: 3 }) > 50, 'canyonDepthMul must change elevation -- canyons carve the mesh')
 })
 
 test('every elevation term has a real, isolatable effect', () => {
