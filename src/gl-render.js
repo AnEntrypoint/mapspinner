@@ -503,7 +503,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
   async function loadSurfaceTextures() {
     const MATS = ['grass', 'rock', 'sand', 'snow'];   // layer order: matches terrain.glsl splat
     const SZ = 1024;
-    const img = (u) => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('load ' + u)); i.src = u; });
+    const img = (u) => new Promise((res, rej) => { const i = new Image(); i.crossOrigin = 'anonymous'; i.onload = () => res(i); i.onerror = () => rej(new Error('load ' + u)); i.src = u; });   // crossOrigin: textures fetched cross-origin (e.g. a consumer loading the SDK from unpkg) must be CORS-clean or the drawImage+getImageData de-shade below taints the canvas + throws SecurityError -> textures silently fail (flat untextured terrain). unpkg serves Access-Control-Allow-Origin:*.
     const cv = document.createElement('canvas'); cv.width = SZ; cv.height = SZ;
     const cx = cv.getContext('2d', { willReadFrequently: true });
     const px = (im) => { cx.drawImage(im, 0, 0, SZ, SZ); return cx.getImageData(0, 0, SZ, SZ).data; };
