@@ -1099,15 +1099,22 @@ void main() {
         // the carve cascade is identical in the position and the normal -- FXC can no longer drop it from
         // the centre alone ('canyons in normals/probe, flat geometry').
         HCache nCache = computeHCache(dir0);
-        for (int i = 0; i < fdIters; i++) {
-            highp vec2 off = (i == 0) ? vec2(0.0, 0.0) : (i == 1) ? vec2(duP, 0.0) : (i == 2) ? vec2(-duP, 0.0) : (i == 3) ? vec2(0.0, duP) : vec2(0.0, -duP);
+        for (int i = 1; i < fdIters; i++) {   // i=1..4 OFFSET taps ONLY (normal); the CENTRE geometry height now reuses the inline vH (dedup) -> one fewer full-carve composeHeightC/vertex
+            highp vec2 off = (i == 1) ? vec2(duP, 0.0) : (i == 2) ? vec2(-duP, 0.0) : (i == 3) ? vec2(0.0, duP) : vec2(0.0, -duP);
             highp vec2 fl = faceWarp((vertex.xy + off) * defOffset.z + defOffset.xy);
             highp vec3 dd = normalize(defLocalToWorld * vec3(fl, defRadius));
-            highp float hh = composeHeightC(dd, fl, defOffset.z, nCache, i != 0) * (uReliefScale > 0.0 ? uReliefScale : 1.0);   // i==0 centre = POSITION (full carves); i!=0 taps = NORMAL (skip carves, ~2ms). *uReliefScale = scale-invariant relief (geometry+normal scale with the radius)
-            if (i == 0) { hN0 = hh; }
-            else if (i == 1) { hPU = hh; dPU = dd; } else if (i == 2) { hMU = hh; dMU = dd; }
+            highp float hh = composeHeightC(dd, fl, defOffset.z, nCache, true) * (uReliefScale > 0.0 ? uReliefScale : 1.0);   // taps = NORMAL only (skipCarves=true). *uReliefScale = scale-invariant relief
+            if (i == 1) { hPU = hh; dPU = dd; } else if (i == 2) { hMU = hh; dMU = dd; }
             else if (i == 3) { hPV = hh; dPV = dd; } else { hMV = hh; dMV = dd; }
         }
+        // DEDUP (opt-vs-height-dedup-amd): the rendered geometry height = the inline vH cascade (895-990),
+        // which IS composeHeightC's carve cascade already computed once for the FS material. Reuse it for the
+        // POSITION instead of a 2nd full-carve composeHeightC i==0 eval (~15-20% VS). FXC-safe now: the
+        // 2026-06-15 'inline-vH diverges -> flat geometry' revert predates the uOctMax runtime-bounded loop
+        // (the single-instance FXC fix); witnessed canyons-in-geometry on real AMD d3d11.
+        // SCALE: vH is the UNSCALED Earth-scale elevation (the FS material keys off it at Earth thresholds);
+        // the POSITION needs it * uReliefScale, exactly as the old composeHeightC center did (= identical value).
+        hN0 = vH * (uReliefScale > 0.0 ? uReliefScale : 1.0);
         highp vec3 wPU = dPU * (defRadius + hPU), wMU = dMU * (defRadius + hMU);
         highp vec3 wPV = dPV * (defRadius + hPV), wMV = dMV * (defRadius + hMV);
         vN = normalize(cross(wPU - wMU, wPV - wMV));
