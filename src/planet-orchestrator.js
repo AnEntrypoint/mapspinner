@@ -388,6 +388,12 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
   // static-camera re-render PERF path. frameStart kept (the render loop still references it).
   let _frameCache = null;
   let _pipelineQuads = null;   // pre-computed quads from last frame for draw-before-compute pipelining
+  // DOUBLE-BUFFERED visible-quad POOLS (opt-cpu-quadtree-alloc): the per-frame quad set was a fresh
+  // [] of {quad:{...},face,localCam,splitDist} (2 objects/leaf/frame). _pipelineQuads, _frameCache.quads
+  // and __lastGLQuads are all set to the SAME array each rebuild (see ~865/884/889), so refilling the
+  // pool NOT held by _pipelineQuads overwrites nothing live (the pipeline is mid-draw on it, the static
+  // cache holds it). Ping-pong -> zero steady-state allocation for the quad set.
+  const _quadsPoolA = [], _quadsPoolB = [];
   let frameStart = 0;
 
   // ---- per-frame quadtree drive --------------------------------------------------
@@ -593,7 +599,9 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
     // depth-culled / off-screen, so the cost is bounded; the camera-facing face gets the
     // deep LOD. This makes the whole globe (silhouette + far side curving away) render,
     // not just the one face. The atlas LRU keys include the face, so tiles don't collide.
-    const quads = [];
+    // pick the pool NOT referenced by _pipelineQuads (first frame: null -> A). _quadN = fill counter.
+    const quads = (_pipelineQuads === _quadsPoolA) ? _quadsPoolB : _quadsPoolA;
+    let _quadN = 0;
     let fallbackCount = 0, maxFallbackLevel = -1, frontFallback = 0, culledCount = 0;
     let frontFace = pickFace(camWorldPos);
     // LOD-CENTER: the deepest LOD must land where the user is LOOKING, not at nadir.
@@ -839,9 +847,16 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
         }
         // No atlas/tile generation: terrain shape is the GPU fractal evaluated per-vertex, so every
         // visible leaf just draws (no resident-tile allocation, no ancestor fallback, no gen budget).
-        quads.push({ quad: { level, tx, ty, ox, oy, l }, face, localCam, splitDist });
+        // POOLED quad emit (reuse the slot's compound object across frames; allocate only past the
+        // high-water mark). localCam is stored by reference exactly as before -- no behaviour change.
+        let _qo = quads[_quadN];
+        if (_qo === undefined) _qo = quads[_quadN] = { quad: { level: 0, tx: 0, ty: 0, ox: 0, oy: 0, l: 0 }, face: 0, localCam: null, splitDist: 0 };
+        const _qd = _qo.quad; _qd.level = level; _qd.tx = tx; _qd.ty = ty; _qd.ox = ox; _qd.oy = oy; _qd.l = l;
+        _qo.face = face; _qo.localCam = localCam; _qo.splitDist = splitDist;
+        _quadN++;
       }
     }
+    quads.length = _quadN;   // expose exactly the filled prefix (truncate any prior-frame tail)
 
     // ===== CPU/GPU PIPELINING: draw-before-compute =====
     // Phase 1 (GPU): draw cached quads from LAST frame's camera IMMEDIATELY so the GPU
