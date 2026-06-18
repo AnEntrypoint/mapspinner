@@ -218,7 +218,7 @@ async function withHeadless(fn) {
       await waitFor(serverUp, 15000)
     }
     const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'tv8-lab-'))
-    const cr = spawn(chrome, ['--headless=new', '--use-angle=swiftshader', '--use-gl=angle',
+    const cr = spawn(chrome, ['--headless=new', '--use-angle=' + (process.env.LAB_ANGLE || 'swiftshader'), '--use-gl=angle',
       '--disable-gpu-sandbox', '--no-sandbox', '--remote-debugging-port=0',
       '--user-data-dir=' + profile, 'about:blank'], { stdio: 'ignore' })
     procs.push(cr)
@@ -233,6 +233,8 @@ async function withHeadless(fn) {
     const { targetId } = await send('Target.createTarget', { url: 'http://localhost:8080/planet.html' })
     const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true })
     await send('Runtime.enable', {}, sessionId)
+    await send('Page.enable', {}, sessionId)
+    const screenshot = async (p) => { const sr = await send('Page.captureScreenshot', { format: 'png' }, sessionId); fs.writeFileSync(p, Buffer.from(sr.data, 'base64')) }
     const evalIn = async (expr, awaitPromise = true) => {
       const r = await send('Runtime.evaluate', { expression: `(async()=>{ return (${expr}); })()`, awaitPromise, returnByValue: true }, sessionId)
       if (r.exceptionDetails) throw new Error(r.exceptionDetails.text)
@@ -256,12 +258,40 @@ async function withHeadless(fn) {
         status: st, pageErr, vendor,
         note: 'SwiftShader software cold-compile of the full terrain shader is slow (minutes); raise LAB_ORCH_TIMEOUT_MS, or use a GPU/Windows chrome with --use-angle=d3d11 (CHROME env) for a fast compile-check.' }
     }
-    const result = await fn(evalIn)
+    const result = await fn(evalIn, screenshot)
     try { ws.close() } catch {}
     return { ok: true, vendor, ...result }
   } finally {
     for (const p of procs) { try { p.kill() } catch {} }
   }
+}
+
+// SELF-SERVE visual witness: headless render of the terrain over LAND at a low oblique pose -> PNG.
+// `--d3d11` uses the real AMD/ANGLE-D3D11 (FXC) backend; default SwiftShader (GPU-free, portable).
+async function cmdShot(args) {
+  ensureOutDir()
+  if (args.d3d11) process.env.LAB_ANGLE = 'd3d11'
+  const out = args.out ? path.resolve(String(args.out)) : path.join(OUT_DIR, 'shot.png')
+  const altKm = num(args.alt, 4.0)
+  const pitch = num(args.pitch, 0.4)   // 0 = straight down, ~0.4 = oblique forward (ground fills frame)
+  const r = await withHeadless(async (evalIn, screenshot) => {
+    // parkAboveGround (planet.html:1097): OBLIQUE pitch so the forward GROUND fills the frame (uses the
+    // GPU height probe to avoid empty/nadir-over-peak frames). parkOblique/litParkOverLand aim at the
+    // HORIZON/sky -- wrong for inspecting terrain.
+    const parked = await evalIn(`(async()=>{
+      const d = window.__diag || {}, p = window.__planet;
+      if (p && p.cam && p.cam.sunLatBase!==undefined) p.cam.sunLatBase = 0.35;   // oblique sun -> relief shading
+      if (d.parkAboveGround) { try { const r = await d.parkAboveGround(${altKm}, null, ${pitch}); return (typeof r==='object')?JSON.stringify(r).slice(0,220):String(r); } catch(e){ return 'pag-err:'+e.message; } }
+      if (d.landWitness) { try { await d.landWitness(${altKm}, ${pitch}); return 'landWitness'; } catch(e){ return 'lw-err:'+e.message; } }
+      return 'no-park-fn';
+    })()`)
+    await evalIn('(async()=>{ const f=()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))); for(let i=0;i<8;i++) await f(); return 1; })()')
+    const info = await evalIn('({ glErr:(window.__lastGLRender&&window.__lastGLRender.checkGlError)?window.__lastGLRender.checkGlError():"x", kept:window.__cullStats?window.__cullStats.kept:null, altM:window.__cullStats?window.__cullStats.altM:null })')
+    await screenshot(out)
+    return { parked, ...info }
+  })
+  console.log(JSON.stringify({ out, ...r }, null, 1))
+  return r.ok ? 0 : 1
 }
 
 async function cmdGlslCheck() {
@@ -336,6 +366,9 @@ function cmdHelp() {
   glsl-check     Headless SwiftShader Chromium: assert terrain.glsl compiles, report the GL backend.
   parity [--n N=64] [--tol m=50]
                  CPU heightAt vs GPU _PROBE_ sampleGroundM divergence sweep (the parity gate).
+  shot [--alt km=4] [--pitch 0..1=0.4] [--d3d11] [--out f.png]
+                 Headless RENDER of the terrain over land at an oblique pitch (parkAboveGround: ground
+                 fills the frame) -> PNG to inspect. --d3d11 = real AMD/FXC backend (else SwiftShader).
   help
 
 Backend: CPU heights = pure node (no GPU). GLSL = headless Chromium --use-angle=swiftshader
@@ -351,7 +384,7 @@ import { pathToFileURL } from 'node:url'
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = parseArgs(process.argv.slice(2))
   const cmd = args._[0] || 'help'
-  const table = { heightmap: cmdHeightmap, build: cmdBuild, 'glsl-check': cmdGlslCheck, parity: cmdParity, help: cmdHelp }
+  const table = { heightmap: cmdHeightmap, build: cmdBuild, 'glsl-check': cmdGlslCheck, parity: cmdParity, shot: cmdShot, help: cmdHelp }
   const fn = table[cmd]
   if (!fn) { console.error(`unknown command: ${cmd}`); cmdHelp(); process.exit(2) }
   try { process.exit((await fn(args)) | 0) }
