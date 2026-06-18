@@ -274,6 +274,7 @@ async function cmdShot(args) {
   const out = args.out ? path.resolve(String(args.out)) : path.join(OUT_DIR, 'shot.png')
   const altKm = num(args.alt, 4.0)
   const pitch = num(args.pitch, 0.4)   // 0 = straight down, ~0.4 = oblique forward (ground fills frame)
+  const dir = args.dir ? ('[' + String(args.dir) + ']') : 'null'   // world dir to aim at (find a peak via height-cpu)
   const r = await withHeadless(async (evalIn, screenshot) => {
     // parkAboveGround (planet.html:1097): OBLIQUE pitch so the forward GROUND fills the frame (uses the
     // GPU height probe to avoid empty/nadir-over-peak frames). parkOblique/litParkOverLand aim at the
@@ -281,7 +282,7 @@ async function cmdShot(args) {
     const parked = await evalIn(`(async()=>{
       const d = window.__diag || {}, p = window.__planet;
       if (p && p.cam && p.cam.sunLatBase!==undefined) p.cam.sunLatBase = 0.35;   // oblique sun -> relief shading
-      if (d.parkAboveGround) { try { const r = await d.parkAboveGround(${altKm}, null, ${pitch}); return (typeof r==='object')?JSON.stringify(r).slice(0,220):String(r); } catch(e){ return 'pag-err:'+e.message; } }
+      if (d.parkAboveGround) { try { const r = await d.parkAboveGround(${altKm}, ${dir}, ${pitch}); return (typeof r==='object')?JSON.stringify(r).slice(0,220):String(r); } catch(e){ return 'pag-err:'+e.message; } }
       if (d.landWitness) { try { await d.landWitness(${altKm}, ${pitch}); return 'landWitness'; } catch(e){ return 'lw-err:'+e.message; } }
       return 'no-park-fn';
     })()`)
