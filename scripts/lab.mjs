@@ -312,7 +312,7 @@ async function cmdAbFs(args) {
     ['terminatorGlow', 2.0], ['nightLights', 3.0], ['nightFloor', 1.0], ['termWidth', 2.0], ['texNrmK', 5.0],
     ['diffWrap', 1.0], ['beachTop', 3000], ['beachWidth', 60], ['bandWarp', 9000], ['texFar0', 60000],
     ['texFar1', 90000], ['xSoft', 3.0], ['xFinger', 12], ['ordPush', 3.0], ['xFade0', 0], ['xFade1', 80],
-    ['nrmFade0', 0], ['nrmFade1', 90], ['colorVar', 2.0], ['biomeSat', 0],
+    ['nrmFade0', 0], ['nrmFade1', 90], ['colorVar', 2.0], ['biomeSat', 0], ['texTile', 8.0],
   ]
   const FR = 'const f=()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))); for(let i=0;i<5;i++) await f();'
   const r = await withHeadless(async (evalIn, screenshot) => {
