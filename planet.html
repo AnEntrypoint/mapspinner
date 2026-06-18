@@ -129,7 +129,11 @@ const normalize=v=>{const r=Math.hypot(...v)||1;return [v[0]/r,v[1]/r,v[2]/r]};
 // real R), a different radius renders IDENTICALLY -- only the reported number changes (so a consumer like
 // spoint, or anything reading window.__WEBGL2_TERRAIN_R_M, gets the value you set). Set window.__planetScale
 // then reload. e.g. __planetScale=0.01 -> a 63,600 m planet that looks exactly the same as the 6,360 km one.
-const _planetScale = (typeof window !== 'undefined' && typeof window.__planetScale === 'number' && window.__planetScale > 0) ? window.__planetScale : 1.0;
+// REAL SIZE (user 2026-06-18 'our planet is actually 100x smaller than earth'): the planet's true radius
+// is ~63.6 km (1/100 of Earth's 6371 km). Default _planetScale = 0.01 makes that the rated size. The SDK
+// is scale-invariant (RADIUS + WEBGL2_TERRAIN_R_M + reliefScale + atmPos all scale together), so the render
+// is IDENTICAL to the old 6360 km planet -- only the reported numbers shrink 100x (node h/R diff 1e-19).
+const _planetScale = (typeof window !== 'undefined' && typeof window.__planetScale === 'number' && window.__planetScale > 0) ? window.__planetScale : 0.01;
 const RADIUS=6371.0 * _planetScale;
 // WebGL2 terrain works in METERS. Surface radius 6.36e6 m * scale; the km-unit world maps to it 1 unit = this many m.
 const WEBGL2_TERRAIN_R_M = 6360000.0 * _planetScale;

@@ -77,7 +77,8 @@ function worldToFaceLocal(face, camWorld, R) {   // R = configured planet radius
 // straddling the near/limb is kept. This can't remove a quad touching the screen (such a
 // quad has >=1 corner inside every plane's half-space). vpr = the SAME viewProjRel the
 // render uses (render.cullMatrix), fed ABSOLUTE world coords (vpr folds translate(-eye)).
-const CULL_MAX_ELEV = 12000.0;   // meters: +/- elevation margin so peaks can't poke in
+const CULL_MAX_ELEV = 12000.0;   // meters: +/- elevation margin so peaks can't poke in (Earth-reference; the cull uses R*CULL_ELEV_FRAC so it scales with the planet)
+const CULL_ELEV_FRAC = CULL_MAX_ELEV / 6360000.0;   // SCALE-INVARIANT: the elevation margin as a FRACTION of R, so R*CULL_ELEV_FRAC == 12km at Earth R and 120m at the 63.6km real-size R (else the cull margin is relatively 100x too big at the small scale -> looser cull -> more quads)
 const CULL_NDC_MARGIN = 0.06;   // NDC slack so an edge-touching quad is kept (false-keep is cheap)
 // Robust screen-space-AABB frustum cull. The old 4-CORNER "all corners past one plane" test could not
 // bound a spherically-bulged + tangent-warped quad's true screen extent at oblique views -- the bulge
@@ -105,7 +106,7 @@ function quadOutsideFrustum(face, ox, oy, l, R, vpr, eye) {
     const dy = (wpx/len)*F.u[1]+(wpy/len)*F.v[1]+(R/len)*F.c[1];
     const dz = (wpx/len)*F.u[2]+(wpy/len)*F.v[2]+(R/len)*F.c[2];
     for (let s=0;s<2;s++){
-      const rad = s===0 ? (R-CULL_MAX_ELEV) : (R+CULL_MAX_ELEV);
+      const rad = s===0 ? (R*(1.0-CULL_ELEV_FRAC)) : (R*(1.0+CULL_ELEV_FRAC));   // SCALE-INVARIANT margin (R*FRAC == CULL_MAX_ELEV at Earth R)
       const X=dx*rad-ex, Y=dy*rad-ey, Z=dz*rad-ez;
       const cx = vpr[0]*X+vpr[4]*Y+vpr[8]*Z+vpr[12];
       const cy = vpr[1]*X+vpr[5]*Y+vpr[9]*Z+vpr[13];
@@ -706,7 +707,7 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
         extractFrustumPlanes(vpr, planes);
         cullCtx = { planes, ex: camWorldPos[0], ey: camWorldPos[1], ez: camWorldPos[2],
                     ux: 0, uy: 0, uz: 0, vx: 0, vy: 0, vz: 0, cx: 0, cy: 0, cz: 0,
-                    R, maxElev: CULL_MAX_ELEV };
+                    R, maxElev: R * CULL_ELEV_FRAC };   // SCALE-INVARIANT cull margin (12km at Earth R)
       }
     }
     // BEHIND-LIMB CULL (the dominant bottleneck fix). The baseline measured ~80% of all
@@ -736,7 +737,7 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
     // back-face quads through when the limb cull was disabled by the 127m guard; scale the
     // elevation slack by altitude so the cull tightens naturally near the ground.
     const altM = Math.max(0.0, camDist - R);
-    const elSlack = Math.min(CULL_MAX_ELEV, 200.0 + altM * 0.5);
+    const elSlack = Math.min(R * CULL_ELEV_FRAC, 200.0 * (R / 6360000.0) + altM * 0.5);   // SCALE-INVARIANT: the 12km cap + the 200m min slack both scale with R
     const limbCullActive = (typeof window !== 'undefined' && window.__limbCull != null ? !!window.__limbCull : true)
       && altM > 0.5;
     // CPU/GPU PIPELINING (real overlap, 2026-06-14): issue LAST frame's cached quads to the GPU

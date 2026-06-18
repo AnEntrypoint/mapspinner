@@ -1520,7 +1520,7 @@ vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, flo
         float fq = 75.0, am = 1.0;                 // octaves: ~84km / 17km / 3.4km features (halved to match VS detailFbm)
         int fdOcts = (uFSDetailOcts > 0) ? uFSDetailOcts : 3;
         for (int o = 0; o < fdOcts; o++) {
-            float wl = 40000000.0 / fq;             // feature wavelength (m) ~ 2*pi*R / fq
+            float wl = 40000000.0 * uReliefScale / fq;   // feature wavelength (m) ~ 2*pi*R/fq. *uReliefScale = SCALE-INVARIANT: the octave is angular so its WORLD wavelength scales with R; the 40000000 Earth-circumference ref must scale too or the Nyquist sub-pixel fade engages at the wrong relative distance at the small-radius scale (2026-06-18 real-size).
             float nyq = 1.0 - smoothstep(wl * 0.03, wl * 0.12, pxWorld);   // fade before sub-pixel
             ov += am * nyq * snoise3(od * fq + vec3(float(o) * 7.3));
             oa += am;
@@ -1599,7 +1599,7 @@ void main() {
             highp vec2 wpW = vec2(dot(vWorld - wOriginW, ux), dot(vWorld - wOriginW, uy));
             vec2 slopeW = oceanWaveSlope(wpW, oceanTime);
             highp float wDistW = length(camWorld - vWorld);
-            slopeW *= clamp(1.0 - wDistW / 4000.0, 0.0, 1.0);
+            slopeW *= clamp(1.0 - wDistW / (4000.0 * uReliefScale), 0.0, 1.0);   // *uReliefScale = SCALE-INVARIANT wave AA fade (wDistW is render metres -> scales with R)
             vec3 wn = normalize(uz - ux * slopeW.x - uy * slopeW.y);
             vec3 viewW = normalize(camWorld - vWorld);
             float ndl = max(dot(wn, sunDir), 0.0);
@@ -1634,7 +1634,7 @@ void main() {
         highp vec2 wpW = vec2(dot(vWorld - wOriginW, ux), dot(vWorld - wOriginW, uy));
         vec2 slopeW = oceanWaveSlope(wpW, oceanTime);
         highp float wDistW = length(camWorld - vWorld);
-        slopeW *= clamp(1.0 - wDistW / 4000.0, 0.0, 1.0);          // sub-pixel wave fade (anti-alias)
+        slopeW *= clamp(1.0 - wDistW / (4000.0 * uReliefScale), 0.0, 1.0);          // sub-pixel wave fade (anti-alias); *uReliefScale = SCALE-INVARIANT (wDistW render metres scale with R)
         vec3 wn = normalize(uz - ux * slopeW.x - uy * slopeW.y);
         vec3 viewW = normalize(camWorld - vWorld);
         float fres = 0.02 + 0.98 * pow(clamp(1.0 - max(dot(wn, viewW), 0.0), 0.0, 1.0), 5.0);
@@ -1655,7 +1655,7 @@ void main() {
         // distance haze: the terrain pass gets the full aerial-perspective march; give the water a
         // cheap matched fade toward the same sky-haze color so far ocean recedes like far land
         // (no 8-step march on the largest-area surface -- the perf theme of this pass).
-        float apGW = smoothstep(3000.0, 120000.0, wDistW) * uHazeMul;
+        float apGW = smoothstep(3000.0 * uReliefScale, 120000.0 * uReliefScale, wDistW) * uHazeMul;   // *uReliefScale = SCALE-INVARIANT water haze (wDistW render metres scale with R)
         wcol = mix(wcol, uSkyFill * vec3(0.40, 0.55, 0.78) * 1.6, apGW * 0.7);
         // day/night + tonemap chain kept consistent with the terrain pass so the two surfaces match.
         float macroMuW = dot(uz, sunDir);
@@ -1794,7 +1794,7 @@ void main() {
     vec3 texDn = vec3(0.0);   // photo-texture WORLD-SPACE normal perturbation, applied after uReliefShade
     // SPLAT RUNS UNDERWATER TOO (user 2026-06-11 'continue under water as sand and rock'): the old
     // vH > -2 gate cut the photo textures at the waterline, leaving the seabed flat-colored.
-    float texFarFade = 1.0 - smoothstep(uTexFar0, uTexFar1, pxWorld);   // splat->macro-biome handoff; LIVE LEVER (__texFar0/__texFar1) to isolate/kill the distance ring (2026-06-15)
+    float texFarFade = 1.0 - smoothstep(uTexFar0 * uReliefScale, uTexFar1 * uReliefScale, pxWorld);   // splat->macro-biome handoff; LIVE LEVER (__texFar0/__texFar1). *uReliefScale = SCALE-INVARIANT: pxWorld (m/px) scales with the planet radius, so the absolute-metre thresholds must too -> the splat fades at the same RELATIVE distance at any planet size (2026-06-18 real-size).
     if (uHasSurfTex > 0.5 && uTexMix > 0.001 && texFarFade > 0.001) {
         vec3 biomeC = albedo;   // SUBTLE landscape color variation (user 2026-06-14 're-introduce ... use existing data, make it subtle'): the macro biome/climate color is ALREADY computed; save it now and mix a touch back after the material override (no new computation).
         // material weights from the existing gates (climate = vClimate: z=temp, w=humid)
