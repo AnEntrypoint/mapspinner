@@ -27,7 +27,7 @@ export const HEIGHT_UNIFORM_DEFAULTS = {
   uCarveWide: 0.0, uMtnBandWide: 0.0, uClimateRelief: 0.0, uIsleWide: 0.0,
   uVsCheap: 0.0,
   cliffAmt: 1.0,
-  uOctMax: 12, uInciseRidgeOcts: 4, uBroadLowOcts: 8, uPeakOcts: 3,
+  uOctMax: 12, uInciseRidgeOcts: 4, uBroadLowOcts: 2, uPeakOcts: 3,   // uBroadLowOcts 8->2 mirrors gl-render.js:467 (the high octaves only feed the 2400m-step mesa-flatness SLOPE gate, averaged out -> 0 elevation effect; A/B-confirmed)
   uDetailFbmOcts: 3,
   // (vtxDetail / uVtxBaseOcts / uVtxErodeOcts dropped 2026-06-18 to restore the
   //  "mirror gl-render.js" parity contract -- gl-render removed those setters when

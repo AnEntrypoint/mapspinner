@@ -21,7 +21,8 @@
     "lab": "node scripts/lab.mjs",
     "lab:heightmap": "node scripts/lab.mjs heightmap",
     "lab:build": "node scripts/lab.mjs build",
-    "lab:parity": "node scripts/lab.mjs parity"
+    "lab:parity": "node scripts/lab.mjs parity",
+    "ab": "node scripts/ab-elevation.mjs"
   },
   "repository": {
     "type": "git",
