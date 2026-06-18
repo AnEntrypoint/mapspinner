@@ -452,7 +452,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     const g = (n,d)=> (typeof window!=='undefined' && window['__'+n]!=null) ? +window['__'+n] : d;
     gl.uniform1f(loc('uHiFreqCut'),     g('hiFreqCut', 0.25));   // DECISIVE: ungated *= at terrain.glsl fine octaves; 0.5->0.25 (2026-06-10 'blotchy': the 4x fine band read as leopard dapple at altitude -- live-isolated, hiFreqCut=0 removed it entirely)
     gl.uniform1f(loc('uDetailOverlay'), g('detailOverlay', 6.0));  // perlin-everywhere ELEVATION term in composeHeight -- probe must match the VS or collision diverges
-    gl.uniform1f(loc('vtxDetail'),      g('vtxDetail', 1.0));    // DECISIVE: vtxDisplace strength (early-return on 0)
+    // (vtxDetail probe setter removed 2026-06-18 -- vtxDisplace is a 0.0 stub, the uniform is gone.)
     gl.uniform1f(loc('canyonDepthMul'), g('canyonDepth', 2.0));   // DEFAULT MUST MATCH the render set (line ~982) or the _PROBE_ collision carves shallower than the rendered geometry. Kept 2.0 so a warm tab (module-cached gl-render) and a fresh load are CONSISTENT -- the canyon-intensity cut now lives in CANYON_INCISE_DEPTH (terrain.glsl, cache-busted = reliably delivered; gl-render is NOT cache-busted on a soft reload). LIVE fine-tune via window.__canyonDepth.
     gl.uniform1f(loc('uVsCheap'),       (typeof window!=='undefined' && window.__vsCheap) ? 1.0 : 0.0);   // VS carve-cost profiling A/B
     gl.uniform1f(loc('uBeachShelfM'),   g('beachShelf', 0.0));   // land coastal shelf (geometry); probe MUST match render
@@ -465,8 +465,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1i(loc('uInciseRidgeOcts'), (typeof window!=='undefined' && window.__inciseRidgeOcts!=null) ? (window.__inciseRidgeOcts|0) : 4);
     gl.uniform1i(loc('uBroadLowOcts'),    (typeof window!=='undefined' && window.__broadLowOcts!=null) ? (window.__broadLowOcts|0) : 2);   // 8->2 PERF (2026-06-15): MEASURED 0 visual error (mtn+space) -- broadShapeLowM only feeds the 2400m-FD-step mesa-flatness slope gate, which is low-freq so the high octaves do nothing (its elevation-AO consumer was removed).
     gl.uniform1i(loc('uPeakOcts'),        (typeof window!=='undefined' && window.__peakOcts!=null) ? (window.__peakOcts|0) : 3);
-    gl.uniform1i(loc('uVtxBaseOcts'),     (typeof window!=='undefined' && window.__vtxBaseOcts!=null) ? (window.__vtxBaseOcts|0) : 6);   // REVERTED 3->6 (user 2026-06-15 'normals blobby, dont match the terrain the way they used to'): the framebuffer pixel-diff metric that OK'd the cut is LIT-LUMA = near-blind to relief at nadir (AGENTS warning), so it missed that these vtxDisplace octaves ARE the fine micro-relief the per-vertex normal needs to match the terrain. Geometry-detail octaves: judge BY EYE, not the luma diff.
-    gl.uniform1i(loc('uVtxErodeOcts'),    (typeof window!=='undefined' && window.__vtxErodeOcts!=null) ? (window.__vtxErodeOcts|0) : 4);
+    // (uVtxBaseOcts/uVtxErodeOcts probe setters removed 2026-06-18 -- vtxDisplace is a 0.0 stub, the uniforms are gone.)
     gl.uniform1i(loc('uDetailFbmOcts'),   (typeof window!=='undefined' && window.__detailFbmOcts!=null) ? (window.__detailFbmOcts|0) : 3);
     gl.uniform1i(loc('uFSDetailOcts'),    (typeof window!=='undefined' && window.__fsDetailOcts!=null) ? (window.__fsDetailOcts|0) : 3);
     // FXC fold-defeat (2026-06-12, the rock-on-flat patches): the lit-normal FD step is uniform-fed
@@ -1067,7 +1066,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // (uOctMax/uInciseRidgeOcts/uBroadLowOcts/uPeakOcts/uVtxBaseOcts) now affect the render so each fractal's
     // visual contribution can be measured live. (Inline sets below are now redundant-but-harmless duplicates.)
     setComposeHeightUniforms(U);
-    gl.uniform1f(U('vtxDetail'), (typeof window!=='undefined' && window.__vtxDetail!=null) ? +window.__vtxDetail : 1.0);
+    // (vtxDetail render setter removed 2026-06-18 -- vtxDisplace is a 0.0 stub, the uniform is gone.)
     // CLIFF / CANYON levers (live-tunable): canyon depth multiplier, cliff terrace strength (VS shape)
     // + strata band thickness and cliff-strata material strength (FS texturing). Defaults = the tuned
     // literals so the look is unchanged until the user dials a window global.
@@ -1085,12 +1084,11 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1i(U('uFloatLinearOK'), _halfFloatLinearOK ? 1 : 0);
     gl.uniform1f(U('uWireframe'),     (typeof window!=='undefined' && window.__wireframe) ? 1.0 : 0.0);
     gl.uniform1f(U('uFsCheap'),        (typeof window!=='undefined' && window.__fsCheap) ? 1.0 : 0.0);  // GPU-timer VS-isolation frame (window.__gpuTimer)
-    gl.uniform1f(U('uBiomeBandBias'), _g('biomeBandBias', 0.5));   // 1.0->0.5 (2026-06-10 'entire terrain white': elevCool h/4500 maxed the alpine temp-drop by 4.5km on the 11.6km terrain -> ice biome over all highland; halving via the uniform = effective h/9000, no shader-cache bust)
+    // (uBiomeBandBias render setter removed 2026-06-18 -- dead with the anchor-point biome system.)
     // REAL-WORLD LOOK overhaul (live-tunable via window globals / DEFAULTS.look). Beer-Lambert ocean
     // extinction, biome saturation pull, intra-biome mottle, sky-fill relief, terminator sunset glow,
     // night floor + earthshine, exposure + post-ACES Look (sat/contrast). Defaults = the tuned look.
-    gl.uniform1f(U('uBiomeSat'),       _g('biomeSat', 0.72));
-    gl.uniform1f(U('uBiomeClimate'),   _g('biomeClimate', 0.0));   // anchor-point (climate temp/humid) biome system, default 0 = OFF (user 2026-06-16 'get rid of the anchor-point biomes, elevation creates snow already'). 1 = re-enable the climate biomeColor + climate snow. window.__biomeClimate.
+    // (uBiomeSat + uBiomeClimate render setters removed 2026-06-18 -- dead with the anchor-point biome system removal.)
     gl.uniform1f(U('uVariationAmt'),   _g('variationAmt', 0.04));   // 0.08->0.04 (2026-06-10 'blotchy': mottle patches across the 4x massifs)
     gl.uniform1f(U('uDetailOverlay'),  _g('detailOverlay', 6.0));   // perlin-everywhere albedo+elevation fbm (2026-06-10; user-tuned 6)
     gl.uniform1f(U('uHazeMul'),        _g('hazeMul', 0.65));        // aerial-perspective strength (2026-06-10 'pale hazy': 1.0 milked the midground)

@@ -172,8 +172,7 @@ uniform int uOctMax;            // broadShapeM octave count (12); runtime-bound 
 uniform int uInciseRidgeOcts;   // inciseRidgeField octave count (4); runtime-bound to defeat FXC unrolling
 uniform int uBroadLowOcts;      // broadShapeLowM octave count (8); runtime-bound to defeat FXC unrolling
 uniform int uPeakOcts;          // broadShapeM peak crest octave count (3); runtime-bound to defeat FXC unrolling
-uniform int uVtxBaseOcts;       // vtxDisplace base fBm octave count (6); runtime-bound to defeat FXC unrolling
-uniform int uVtxErodeOcts;      // vtxDisplace mountain erosion octave count (4); runtime-bound to defeat FXC unrolling
+// (uVtxBaseOcts/uVtxErodeOcts removed 2026-06-18 -- vtxDisplace is a 0.0 stub, these were dead.)
 uniform int uDetailFbmOcts;     // detailFbm octave count (3); runtime-bound to defeat FXC unrolling
 uniform int uFSDetailOcts;      // FS detail overlay octave count (3); runtime-bound to defeat FXC unrolling
 float inciseRidgeField(vec3 d, float baseFreq, float freqMul){
@@ -399,7 +398,7 @@ highp float broadShapeLowM(vec3 dir){   // W7: metres (~13000) + freq (~49152) a
 // in the VS/PROBE region can call them). vtxDetail = the micro-relief A/B global; vnoise2
 // is the 2D value-noise vtxDisplace octaves sample; ruggedFromElevAmp + faceWarp map anchor->amplitude
 // and face-local metres->warped metres. All pure, dependency-light (defRadius + smoothstep only).
-uniform float vtxDetail;   // micro-relief strength (1=on) -- kept as a global so it can be A/B'd
+// (vtxDetail removed 2026-06-18 -- vtxDisplace is a 0.0 stub, this micro-relief lever was dead.)
 // W7 highp ISLAND: vnoise2 args are face-local metres / wavelength = fp(~6.4e6)/wl(~1m) -> ~6e6, far
 // past fp16. The vtxDisplace micro-relief lattice needs full precision or the ground bump quantizes.
 // W10 PRECISION: the old fract(p*443.897) hash overflowed fp32 integer-exactness at fine octaves
@@ -1258,13 +1257,12 @@ uniform vec2 snowEdges;     // (snow start, snow end)
 uniform float seaDepthM;    // depth (m) over which sea->deepSea
 uniform vec2 slopeRock;     // (lo, hi) slope range that forces rock
 uniform float uAoAmt;       // canyon/cliff ambient-occlusion strength (window.__aoAmt; 1.0 default)
-uniform float uBiomeBandBias;// elevation/latitude biome-band bias strength (window.__biomeBandBias; 1.0)
+// (uBiomeBandBias removed 2026-06-18 -- dead with the anchor-point biome system.)
 // REAL-WORLD LOOK overhaul uniforms (2026-06-05 workflow wxb9n2907) -- all window.__gen-overridable.
 uniform vec3  uOceanDeep;    // deep open-ocean color (near-black navy)            [0.008,0.025,0.06]
 uniform vec3  uOceanShallow; // shallow-water turquoise (first metres)             [0.07,0.22,0.26]
 uniform vec3  uOceanK;       // per-channel Beer-Lambert extinction (kR>>kG>>kB)   [0.030,0.012,0.0045]
-uniform float uBiomeSat;     // biome-palette saturation pull toward luminance (1=full, <1 desaturate) 0.72
-uniform float uBiomeClimate; // anchor-point (climate temp/humid) biome system on/off (window.__biomeClimate, default 0 = OFF). User 2026-06-16 'get rid of the anchor-point biomes, elevation creates snow already': 0 = elevation-only material (height-band grass/rock/snow + splat), skips the biomeColor compute + the climate-snow = FS cut.
+// (uBiomeSat + uBiomeClimate removed 2026-06-18 -- dead with the anchor-point biome system removal.)
 uniform float uVariationAmt; // intra-biome value mottle amplitude (+/-)           0.08
 uniform float uHazeMul;      // aerial-perspective strength multiplier (1 = full haze, 0 = none)
 // LIVE A/B ISOLATION TOGGLES (window.__rockBump / __chroma / __strata, default 1). Multiply each material
@@ -1859,16 +1857,9 @@ void main() {
         // line so high mountains show rock between alpine grass and snow, not grass straight to snow.
         float rockBand = smoothstep(snowEdges.x - 2200.0 + bandWarp, snowEdges.x - 400.0 + bandWarp, vH) * (1.0 - snowHi);
         float wRock = max(wRockSlope, rockBand);
-        float snowCold = (1.0 - smoothstep(0.30, 0.75, climate.z)) * smoothstep(snowEdges.x * 0.5 + bandWarp, snowEdges.x + bandWarp, vH) * uBiomeClimate;   // SPLAT climate snow gated OFF with the anchor biomes (user 2026-06-16 'the unexpected snowy area was anchorpoints'); elevation snow stays via snowHi
-        // POLAR/ICE-BIOME SNOW (user 2026-06-10 'put the snow texture on the snow'): the ICE biome
-        // whitens cold lowland (biomeColor gate 1-smoothstep(0.10,0.18,tempEff)) at ANY elevation, but
-        // wSnow was elevation-gated only -- polar snowfields were splatting the GRASS layer. Match the
-        // effective-temperature ice gate (raw temp minus the elevation/latitude lapse the biome uses).
-        float lat2 = asin(clamp(nWorld.y, -1.0, 1.0));   // T-4: nWorld is already normalize(vWorld)
-        float tempEff2 = clamp(climate.z - clamp(vH / 4500.0, 0.0, 0.55) * uBiomeBandBias
-                                        - 0.18 * (abs(lat2) / 1.5708) * uBiomeBandBias, 0.0, 1.0);
-        float iceClimate = (1.0 - smoothstep(0.10, 0.20, tempEff2)) * step(0.0, vH) * uBiomeClimate;   // SPLAT polar/ice climate snow gated OFF with the anchor biomes (this was the 'unexpected snowy area' = cold-lowland whitening at low elevation that read as snow-then-rock); elevation snow stays via snowHi
-        float wSnow = clamp(snowHi + 0.7 * snowCold + iceClimate, 0.0, 1.0) * (1.0 - 0.6 * wRock);
+        // (SPLAT climate snow + polar/ice climate snow REMOVED with the anchor-point biomes -- both were
+        // *uBiomeClimate (=0) so contributed nothing yet still computed; elevation snow stays via snowHi.)
+        float wSnow = clamp(snowHi, 0.0, 1.0) * (1.0 - 0.6 * wRock);
         float wSand = sandRegion * (1.0 - wRock) * (1.0 - wSnow) * (1.0 - smoothstep(0.30, 0.70, slope));
         float wGrass = max(1.0 - wRock - wSnow - wSand, 0.0);
         vec4 w4 = vec4(wGrass, wRock, wSand, wSnow);   // layers 0..3 = grass,rock,sand,snow
