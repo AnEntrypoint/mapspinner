@@ -1361,52 +1361,11 @@ vec3 terrainAlbedo(float h, float slope, float rockSlope, highp vec3 worldPos, f
 // BIOME PALETTE: each biome a DISTINCT recognizable color, blended by soft temp/humidity
 // thresholds (mirrors wasm/terrain-cli/biome-climate-tune.mjs which CLI-validated 7 distinct
 // classes, entropy 2.59). World-continuous (pure fn of climate -> seam-safe).
-vec3 biomeColor(float temp, float humid) {
-    // PHYSICALLY-ANCHORED ALBEDOS (Real-World Look overhaul): real surface albedos are LOW and fairly
-    // DESATURATED (conifer ~0.08, broadleaf ~0.15, grass ~0.22, dry sand ~0.35, snow ~0.85 the ONLY
-    // bright class). The old palette was too bright + too saturated -> the sickly-yellow pastel
-    // watercolour land (defect #1). Re-anchored to muted linear albedos; ICE stays bright.
-    vec3 ICE     = vec3(0.86, 0.90, 0.96);   // snow/ice -- the only high-albedo class
-    // TUNDRA WAS THE 'FLAT ROCK' (user 2026-06-11, witnessed by A/B: rock gate + texture OFF and the
-    // grey patches remained = MACRO biome color): 0.34/0.36/0.31 is neutral grey, and the grass photo
-    // tinted to it reads exactly as flat rock basins. Recolor to a muted olive-brown that is
-    // unmistakably vegetation -- still duller/colder than MEADOW, no longer rock-grey.
-    vec3 TUNDRA  = vec3(0.27, 0.33, 0.18);
-    // FOREST CLASSES LIFTED (user 2026-06-11 'large rocky patches... flat areas should be snow sand
-    // grass' -- same disease as the TUNDRA grey: 0.03-0.13 luminance is DARKER than the rock photo,
-    // and desaturation + grass-photo tinting turns the near-black greens into flat dark patches that
-    // read as rock). Lifted ~2x with the green channel dominant so they are unmistakably vegetation;
-    // still the darkest land classes, canopy still deepest.
-    vec3 TAIGA   = vec3(0.11, 0.19, 0.10);   // conifer green
-    vec3 FOREST  = vec3(0.10, 0.22, 0.08);   // broadleaf green
-    vec3 DEEPFOR = vec3(0.07, 0.16, 0.07);   // dense canopy (deepest green, no longer near-black)
-    vec3 MEADOW  = vec3(0.28, 0.34, 0.15);   // muted olive grassland
-    vec3 SAVANNA = vec3(0.46, 0.40, 0.22);   // dry gold (desaturated)
-    vec3 STEPPE  = vec3(0.42, 0.39, 0.25);   // pale dry grass (desaturated)
-    vec3 DESERT  = vec3(0.55, 0.45, 0.30);   // sand ochre (desaturated, darker)
-    float cold = 1.0 - smoothstep(0.16, 0.34, temp);
-    float warm = smoothstep(0.42, 0.62, temp);
-    float dry  = 1.0 - smoothstep(0.34, 0.50, humid);
-    // FOREST vs MEADOW split (user: they must look distinct, not one green). A CRISPER humidity
-    // boundary (0.48->0.56, was 0.46->0.66) so meadow (drier-temperate) and forest (wetter) read
-    // as DISTINCT adjacent regions instead of a long ambiguous blend; very-wet deepens to canopy.
-    float wet  = smoothstep(0.40, 0.66, humid);   // WIDENED 0.48-0.56 -> 0.40-0.66 (user 2026-06-14 'hard lines between light and dark grass'): soft meadow<->forest blend, not a crisp line
-    float veryWet = smoothstep(0.62, 0.80, humid);
-    vec3 c = MEADOW;                                          // temperate mid-humidity default
-    c = mix(c, FOREST,  wet);                                 // wet -> forest (crisp boundary)
-    c = mix(c, DEEPFOR, veryWet);                             // very wet -> dense dark canopy
-    c = mix(c, SAVANNA, dry * warm);                          // dry + warm -> savanna
-    c = mix(c, DESERT,  smoothstep(0.60,0.85,1.0-humid) * warm); // very dry + warm -> desert
-    c = mix(c, STEPPE,  dry * (1.0-warm) * (1.0-cold));       // dry temperate -> steppe
-    c = mix(c, TAIGA,   wet * (1.0 - smoothstep(0.34,0.50,temp))); // cool + wet -> taiga
-    c = mix(c, TUNDRA,  cold);                                // cold -> tundra
-    c = mix(c, ICE,     1.0 - smoothstep(0.10, 0.18, temp)); // very cold -> ice
-    // GLOBAL SATURATION PULL toward luminance (Real-World Look): real terrain is less saturated than a
-    // naive palette; pull ~28% toward grey so biomes read natural, not poster-paint. uBiomeSat<1.
-    float bl = dot(c, vec3(0.2126, 0.7152, 0.0722));
-    c = mix(vec3(bl), c, uBiomeSat);
-    return c;
-}
+// biomeColor() (climate temp/humid -> biome material palette) REMOVED with the anchor-point biome system
+// (user 2026-06-18 'get rid of anchorpoint biomes to make the system more performant'). It was called only
+// from the uBiomeClimate-gated FS block (default off -> branch-skipped), so removing it is visually neutral
+// and cuts the dead FS source. The elevation-band material (grass/rock/snow by height+slope+splat) is the
+// land look. (biomeClassColor below is the DEBUGVIEW-only displayMode-9 climate map, unrelated to render cost.)
 // DISCRETE biome class -> a flat distinct color (for the biome-MAP diagnostic displayMode 9 +
 // __biomeAt). Hard argmax of the same climate axes biomeColor blends, so the witness can COUNT
 // contiguous biome regions instead of reading a continuous gradient. Water/ice keyed on h/temp.
@@ -1414,8 +1373,7 @@ vec3 biomeColor(float temp, float humid) {
 #ifdef _DEBUGVIEW_
 vec3 biomeClassColor(float temp, float humid, float h) {
     if (h < 0.0) return vec3(0.10, 0.30, 0.75);                 // OCEAN (blue)
-    if (temp < 0.14) return vec3(0.95, 0.97, 1.00);             // ICE (white)
-    if (temp < 0.30) return vec3(0.55, 0.60, 0.55);            // TUNDRA (grey-green)
+    if (temp < 0.30) return vec3(0.55, 0.60, 0.55);            // TUNDRA (grey-green) -- climate ICE/snow class REMOVED (user 2026-06-18): very-cold maps to tundra, not white; elevation snow only
     // SWAMP: warm + very-wet + low ground (h<120m proxy) -> murky teal key color (distinct class).
     if (temp > 0.50 && humid > 0.66 && h >= 0.0 && h < 120.0) return vec3(0.20, 0.40, 0.30);
     bool warm = temp > 0.52;
@@ -1500,53 +1458,20 @@ vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, flo
     // around mountains'): veg dropped at a clean elevation+slope threshold -> a dark->light grass ring
     // circling every peak. Warp BOTH thresholds with ONE cheap noise (~2-3km) so the dark/light grass
     // boundary fingers irregularly instead of a contour ring. (Reuses the hoisted nwp; one snoise3.)
-    if (uBiomeClimate > 0.5) {   // ANCHOR-POINT BIOME GATE (default OFF, user 2026-06-16): the entire climate temp/humid biome compute (veg gate + domain warp + biomeColor palette + the value-preserving tint) is gated here so it is SKIPPED when off = FS cut + elevation-only material (height-band grass/rock/snow + the splat carry the look).
-    float vegN = snoise3(nwp * 2400.0);
-    float veg = (1.0 - smoothstep(bandEdgesHi.x + vegN * 850.0, bandEdgesHi.y + vegN * 850.0, h))
-              * (1.0 - smoothstep(slopeRock.x, slopeRock.y + vegN * 0.13, rockSlope));
-    // ELEVATION + LATITUDE BIOME BIAS (user 2026-06-02: 'the hypsometric ramp should influence biome
-    // distribution, pulling biomes out of their anchor areas a bit for better distribution'). On top
-    // of the anchor climate temp/humid, bias the EFFECTIVE temperature DOWN with elevation (lapse rate
-    // ~6.5C/km -> normalize ~ h/4000 over the [0,1] temp scale) and a touch with latitude, so biomes
-    // BAND by height+latitude: high ground -> alpine/tundra/ice, lowland keeps its anchor biome. This
-    // spreads biomes into their physically-expected bands so grass/forest isnt one anchor blob. humid
-    // also rises slightly on windward high ground (orographic) for variety. uBiomeBandBias scales it.
-    float lat = asin(clamp(nwp.y, -1.0, 1.0));   // T-4: nwp is already normalize(worldPos)
-    float latCool = 0.18 * (abs(lat) / 1.5708);                  // poles cooler
-    float elevCool = clamp(h / 4500.0, 0.0, 0.55) * uBiomeBandBias;  // lapse rate -> alpine bands
-    // BIOME DOMAIN WARP (user 2026-06-16 'the biome map has wide uninteresting blobs ... apply the elevation
-    // warp to that too' + 'biome distribution band far too wide'): the anchor climate temp/humid is a slow
-    // ~100-200km field = wide biome blobs. Warp it with a higher-freq world-dir noise (decorrelated temp vs
-    // humid) so biome boundaries FINGER/break up like the elevation bandWarp does for the rock/snow edges =
-    // varied biome patches, not big blobs. uBiomeWarp scales it live (window.__biomeWarp; default 1).
-    float bwAmt = uBiomeWarp;
-    // SINGLE-OCTAVE biome warp (2026-06-16, 144fps FS budget): was 2 snoise3/channel (~28km + ~10km) = 4
-    // snoise3/pixel on the FS-bound deck path; dropped the fine ~10km octave (sub-biome-scale, barely visible)
-    // and kept the dominant ~28km fingering at preserved RMS (0.65 ~= sqrt(0.6^2+0.3^2)). Saves 2 snoise3/pixel.
-    float bWarpT = snoise3(nwp * 230.0 + vec3(3.7, 9.1, 1.3)) * 0.65;    // ~28km fingering
-    float bWarpH = snoise3(nwp * 230.0 + vec3(21.3, 4.7, 17.9)) * 0.65;  // decorrelated
-    float tempEff  = clamp(temp - elevCool - latCool * uBiomeBandBias + bWarpT * 0.13 * bwAmt, 0.0, 1.0);
-    float humidEff = clamp(humid + clamp(h / 9000.0, 0.0, 0.12) * uBiomeBandBias + bWarpH * 0.16 * bwAmt, 0.0, 1.0);
-    vec3 biome = biomeColor(tempEff, humidEff);
-    // VALUE-PRESERVING biome tint (user 2026-06-15 'a light-grass ring encircles every mountain where the
-    // grass is dark'): the old `mix(c, biome, veg*0.82)` shifted BRIGHTNESS as veg fell off toward rock --
-    // dark biome-tinted grass on flat ground, light un-tinted grass near rock = a bright ring around peaks.
-    // Tint the HUE toward the biome at c's OWN luminance so the veg gradient changes color, never value ->
-    // no brightness ring. (regions still read distinct by hue.)
-    float cLv = dot(c, vec3(0.299, 0.587, 0.114));
-    float bLv = dot(biome, vec3(0.299, 0.587, 0.114));
-    vec3  biomeV = biome * (cLv / max(bLv, 1e-3));   // biome hue at c's brightness
-    c = mix(c, biomeV, veg * 0.82);
-    }   // end ANCHOR-POINT BIOME GATE
+    // ANCHOR-POINT CLIMATE-BIOME MATERIAL REMOVED (user 2026-06-18 'get rid of anchorpoint biomes to make
+    // the system more performant'). uBiomeClimate defaulted to 0, so this whole climate temp/humid ->
+    // biomeColor tint block was already BRANCH-SKIPPED at runtime -- removing it is VISUALLY NEUTRAL (the
+    // elevation-band material + the splat carry the entire look) and drops the dead FS source from the
+    // compile. The climate temp/humid still drives rivers/canyons/sand/dunes; biomeClassColor displayMode-9
+    // stays as a climate-distribution diagnostic (DEBUGVIEW-only, zero render cost).
     // INTRA-BIOME VALUE MOTTLE (Real-World Look): real terrain is never one flat color per biome --
     // soil/moisture/vegetation patchiness mottles albedo. Reuse the snoise3 already evaluated for
     // cliffRock (same normalize(worldPos)*~1k pattern, no new octave) as a VALUE-only multiplier (NO
     // hue jitter, low 1200 freq -> does NOT reintroduce the per-pixel swamp moire the pipeline removed).
     float mot = snoise3(nwp * 120.0);   // detail-tex-rockface-canyon-10x: *1200->*120 (~10x larger mottle features, user 2026-06-06)
     c *= (1.0 + uVariationAmt * mot);
-    // earlier snow/ice on high ground in cold regions.
-    float coldSnow = (1.0 - smoothstep(0.30, 0.75, temp)) * smoothstep(snowEdges.x * 0.5, snowEdges.x, h) * uBiomeClimate;   // CLIMATE snow gated OFF with the anchor biomes (user 'elevation creates snow already'); elevation snow stays via snowEdges height bands + the splat snowHi
-    c = mix(c, bcSnow, coldSnow * 0.7);
+    // (CLIMATE snow REMOVED with the anchor-point biomes -- it was *uBiomeClimate (=0) so it contributed
+    // nothing yet still computed; elevation snow stays via the snowEdges height bands + the splat snowHi.)
     // BEACH BAND (user 2026-06-11 'all land at the level of the ocean should be beach -- the grass
     // must stop and become sand, which continues under the water'): below uBeachTopM the biome/
     // grass/snow color yields to shore sand (the same bcShore the underwater bed starts from, so the
