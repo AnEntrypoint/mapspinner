@@ -295,6 +295,53 @@ async function cmdShot(args) {
   return r.ok ? 0 : 1
 }
 
+// A/B every scalar FS material/color lever (window.__<name>, read by gl-render _g): set each to an
+// EXTREME value, render on the GPU, and hash the framebuffer screenshot vs the baseline. A lever whose
+// extreme value produces an IDENTICAL frame has NO effect -> a dead lever to remove or fix.
+async function cmdAbFs(args) {
+  if (args.d3d11) process.env.LAB_ANGLE = 'd3d11'
+  ensureOutDir()
+  const tmp = path.join(OUT_DIR, '_abfs.png')
+  const hashFile = () => { const b = fs.readFileSync(tmp); let s = 0; for (let i = 0; i < b.length; i++) s = (s * 16777619 ^ b[i]) >>> 0; return (s >>> 0) + ':' + b.length }
+  // [name, extreme value clearly != default]. If even this changes nothing, the lever is dead.
+  const L = [
+    ['biomeTint', 1.0], ['texBright', 0.3], ['texSat', 3.0], ['texMix', 0], ['hazeMul', 4.0],
+    ['exposure', 3.0], ['lookSat', 3.0], ['lookContrast', 3.0], ['reliefShade', 8.0], ['vertexAO', 3.0],
+    ['aoAmt', 3.0], ['variationAmt', 0.8], ['biomeWarp', 5.0], ['nrmLow', 4.0], ['triSharp', 16],
+    ['texWarp', 2.0], ['texPhoto', 1.0], ['texPhotoNear', 1.0], ['flatNormal', 1.0], ['skyFill', 2.0],
+    ['terminatorGlow', 2.0], ['nightLights', 3.0], ['nightFloor', 1.0], ['termWidth', 2.0], ['texNrmK', 5.0],
+    ['diffWrap', 1.0], ['beachTop', 3000], ['beachWidth', 60], ['bandWarp', 9000], ['texFar0', 60000],
+    ['texFar1', 90000], ['xSoft', 3.0], ['xFinger', 12], ['ordPush', 3.0], ['xFade0', 0], ['xFade1', 80],
+    ['nrmFade0', 0], ['nrmFade1', 90], ['colorVar', 2.0], ['biomeSat', 0],
+  ]
+  const FR = 'const f=()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))); for(let i=0;i<5;i++) await f();'
+  const r = await withHeadless(async (evalIn, screenshot) => {
+    await evalIn(`(async()=>{ const d=window.__diag; if(d&&d.parkAboveGround) await d.parkAboveGround(${num(args.alt, 4)}, null, 0.4); const f=()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))); for(let i=0;i<10;i++) await f(); return 1; })()`)
+    await screenshot(tmp); const base = hashFile()
+    const changed = [], noEffect = []
+    for (const [name, val] of L) {
+      await evalIn(`(async()=>{ window.__${name} = ${JSON.stringify(val)}; ${FR} return 1; })()`)
+      await screenshot(tmp); const h = hashFile()
+      await evalIn(`(async()=>{ try { delete window.__${name}; } catch(e){} ${FR} return 1; })()`);
+      (h !== base ? changed : noEffect).push(name)
+    }
+    // biome-ramp levers (window.__gen.state.biome, read by the C() helper -- colors + height/slope bands)
+    const RAMP = [
+      ['bcRock', [1, 0, 0]], ['bcGrass', [1, 0, 1]], ['bcSnow', [1, 0, 0]], ['bcShore', [1, 0, 0]], ['bcLowland', [0, 0, 1]],
+      ['bandEdgesLo', [0, 50]], ['bandEdgesHi', [50, 120]], ['snowEdges', [0, 200]], ['slopeRock', [0, 0.05]], ['seaDepthM', 100],
+    ]
+    for (const [name, val] of RAMP) {
+      await evalIn(`(async()=>{ window.__gen=window.__gen||{state:{}}; window.__gen.state=window.__gen.state||{}; window.__gen.state.biome=window.__gen.state.biome||{}; window.__gen.state.biome.${name}=${JSON.stringify(val)}; ${FR} return 1; })()`)
+      await screenshot(tmp); const h = hashFile()
+      await evalIn(`(async()=>{ try{ delete window.__gen.state.biome.${name}; }catch(e){} ${FR} return 1; })()`);
+      (h !== base ? changed : noEffect).push('biome.' + name)
+    }
+    return { baseHash: base, changedCount: changed.length, noEffectCount: noEffect.length, noEffect, changed }
+  })
+  console.log(JSON.stringify(r, null, 1))
+  return r.ok ? 0 : 1
+}
+
 async function cmdGlslCheck() {
   const r = await withHeadless(async (evalIn) => {
     const vendor = await evalIn('(()=>{ const c=document.createElement("canvas"); const gl=c.getContext("webgl2"); const e=gl&&gl.getExtension("WEBGL_debug_renderer_info"); return gl&&e?gl.getParameter(e.UNMASKED_RENDERER_WEBGL):(gl?"webgl2-no-dbg":"no-webgl2"); })()')
@@ -367,9 +414,13 @@ function cmdHelp() {
   glsl-check     Headless SwiftShader Chromium: assert terrain.glsl compiles, report the GL backend.
   parity [--n N=64] [--tol m=50]
                  CPU heightAt vs GPU _PROBE_ sampleGroundM divergence sweep (the parity gate).
-  shot [--alt km=4] [--pitch 0..1=0.4] [--d3d11] [--out f.png]
+  shot [--alt km=4] [--pitch 0..1=0.4] [--dir x,y,z] [--d3d11] [--out f.png]
                  Headless RENDER of the terrain over land at an oblique pitch (parkAboveGround: ground
                  fills the frame) -> PNG to inspect. --d3d11 = real AMD/FXC backend (else SwiftShader).
+  ab-fs [--d3d11] [--alt km=4]
+                 A/B every FS material/color/biome lever (window.__* + __gen.state.biome): perturb each,
+                 render, hash the framebuffer vs baseline -> reports any lever with NO pixel effect (dead).
+                 Needs LAND in frame (run warm; changedCount high = good frame).
   help
 
 Backend: CPU heights = pure node (no GPU). GLSL = headless Chromium --use-angle=swiftshader
@@ -385,7 +436,7 @@ import { pathToFileURL } from 'node:url'
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = parseArgs(process.argv.slice(2))
   const cmd = args._[0] || 'help'
-  const table = { heightmap: cmdHeightmap, build: cmdBuild, 'glsl-check': cmdGlslCheck, parity: cmdParity, shot: cmdShot, help: cmdHelp }
+  const table = { heightmap: cmdHeightmap, build: cmdBuild, 'glsl-check': cmdGlslCheck, parity: cmdParity, shot: cmdShot, 'ab-fs': cmdAbFs, help: cmdHelp }
   const fn = table[cmd]
   if (!fn) { console.error(`unknown command: ${cmd}`); cmdHelp(); process.exit(2) }
   try { process.exit((await fn(args)) | 0) }
