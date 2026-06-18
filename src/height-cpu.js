@@ -27,9 +27,11 @@ export const HEIGHT_UNIFORM_DEFAULTS = {
   uCarveWide: 0.0, uMtnBandWide: 0.0, uClimateRelief: 0.0, uIsleWide: 0.0,
   uVsCheap: 0.0,
   cliffAmt: 1.0,
-  vtxDetail: 1.0,           // vtxDisplace returns 0 regardless; kept for completeness
   uOctMax: 12, uInciseRidgeOcts: 4, uBroadLowOcts: 8, uPeakOcts: 3,
-  uDetailFbmOcts: 3, uVtxBaseOcts: 6, uVtxErodeOcts: 4,
+  uDetailFbmOcts: 3,
+  // (vtxDetail / uVtxBaseOcts / uVtxErodeOcts dropped 2026-06-18 to restore the
+  //  "mirror gl-render.js" parity contract -- gl-render removed those setters when
+  //  vtxDisplace became a 0.0 stub; they were never read here either.)
 }
 
 export function createHeightSampler(opts = {}) {
