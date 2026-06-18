@@ -15,7 +15,9 @@ export class Quadtree {
     this._camAlt = 0.0;        // true altitude above the sphere (|localCam|-R), same on every face
     this._nadir = [0, 0];      // TRUE camera nadir (face-local x,y) for the far-LOD foreground protect
     this._aim = null;          // AIM ground point (face-local x,y), 2nd foreground-protect center (or null)
-    this._leaves = [];
+    this._aimArr = [0, 0];     // reused per-frame backing for _aim (no per-frame [aimX,aimY] alloc)
+    this._leaves = [];         // PERSISTENT leaf-object POOL (see updateQuadtree): reused across frames,
+    this._n = 0;               //   filled by index up to _n then truncated -> zero steady-state allocation
     this._cull = null;         // optional hierarchical-cull context (see nodeOutsideFrustum); null = no pruning
   }
 
@@ -125,7 +127,14 @@ export class Quadtree {
       this._recurse(level + 1, 2 * tx,     2 * ty + 1, ox,      oy + hl, hl);
       this._recurse(level + 1, 2 * tx + 1, 2 * ty + 1, ox + hl, oy + hl, hl);
     } else {
-      this._leaves.push({ level, tx, ty, ox, oy, l });
+      // POOLED leaf emit: reuse the object already at this slot (from a prior frame) and overwrite its
+      // fields; only allocate when the leaf count grows past the pool's high-water mark. The orchestrator
+      // copies leaf fields out immediately (planet-orchestrator.js:842 pushes a fresh tagged object) and
+      // never retains these refs, so reuse across frames is safe.
+      const i = this._n++;
+      let o = this._leaves[i];
+      if (o === undefined) o = this._leaves[i] = { level: 0, tx: 0, ty: 0, ox: 0, oy: 0, l: 0 };
+      o.level = level; o.tx = tx; o.ty = ty; o.ox = ox; o.oy = oy; o.l = l;
     }
   }
 
@@ -149,10 +158,13 @@ export class Quadtree {
       : Math.sqrt(camX * camX + camY * camY + camZ * camZ) - this.size;
     this._nadir[0] = (nadirX !== undefined) ? nadirX : camX;
     this._nadir[1] = (nadirY !== undefined) ? nadirY : camY;
-    this._aim = (aimX !== undefined && aimY !== undefined) ? [aimX, aimY] : null;
-    this._leaves.length = 0;
+    // reuse _aimArr (no per-frame allocation); preserve the null = "no aim" semantics _recurse tests.
+    if (aimX !== undefined && aimY !== undefined) { this._aimArr[0] = aimX; this._aimArr[1] = aimY; this._aim = this._aimArr; }
+    else this._aim = null;
+    this._n = 0;
     this._cull = (cull != null) ? cull : null;   // per-frame frustum-cull context, or null (cull off)
     this._recurse(0, 0, 0, -this.size, -this.size, 2.0 * this.size);
+    this._leaves.length = this._n;   // expose exactly the filled prefix; tail (rare peak shrink) is dropped
     return this._leaves;
   }
 }
