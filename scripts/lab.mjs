@@ -267,7 +267,7 @@ async function withHeadless(fn) {
 async function cmdGlslCheck() {
   const r = await withHeadless(async (evalIn) => {
     const vendor = await evalIn('(()=>{ const c=document.createElement("canvas"); const gl=c.getContext("webgl2"); const e=gl&&gl.getExtension("WEBGL_debug_renderer_info"); return gl&&e?gl.getParameter(e.UNMASKED_RENDERER_WEBGL):(gl?"webgl2-no-dbg":"no-webgl2"); })()')
-    const probe = await evalIn('(typeof window.__diag!=="undefined" && window.__diag.sampleGroundM)? window.__diag.sampleGroundM([0,1,0]) : (window.__planet? "diag-missing" : "no-planet")')
+    const probe = await evalIn('(window.__planetOrch && window.__planetOrch.render && window.__planetOrch.render.sampleGroundM)? window.__planetOrch.render.sampleGroundM([0,1,0]) : "no-probe"')
     const pageErr = await evalIn('window.__pageErr || null')
     return { compiled: pageErr === null, vendor, probe, pageErr }
   })
@@ -277,8 +277,6 @@ async function cmdGlslCheck() {
 
 async function cmdParity(args) {
   const n = Math.max(1, Math.round(num(args.n, 64)))
-  const radius = num(args.radius, 6360000)
-  const sampler = createHeightSampler({ radius })
   // deterministic spiral of directions (no Math.random for reproducibility)
   const dirs = []
   for (let i = 0; i < n; i++) {
@@ -288,19 +286,27 @@ async function cmdParity(args) {
     dirs.push([r * Math.cos(th), y, r * Math.sin(th)])
   }
   const r = await withHeadless(async (evalIn) => {
-    const gpu = await evalIn(`(${JSON.stringify(dirs)}).map(d => (window.__diag && window.__diag.sampleGroundM) ? window.__diag.sampleGroundM(d) : null)`)
+    // CPU sampler at the PAGE's actual radius -> sampleGroundM and heightAt are the same scale, no normalising
+    const pageR = Number(await evalIn('window.__WEBGL2_TERRAIN_R_M || 63600')) || 63600
+    const sampler = createHeightSampler({ radius: pageR })
+    const sg = 'window.__planetOrch && window.__planetOrch.render && window.__planetOrch.render.sampleGroundM'
+    // WARM the collision probe: its program is LAZY-compiled on the first sampleGroundM and returns
+    // null until ready (another slow SwiftShader cold-compile). Poll until a finite sample comes back.
+    const warm = await waitFor(async () => {
+      const v = await evalIn(`(()=>{ const o=window.__planetOrch, p=o&&o.render&&o.render.sampleGroundM; if(!p) return null; const h=p([0,1,0]); return (h!=null && isFinite(h))? h : null; })()`).catch(() => null)
+      return v != null
+    }, Number(process.env.LAB_PROBE_TIMEOUT_MS) || 4 * 60 * 1000, 2000).then(() => true).catch(() => false)
+    if (!warm) return { samples: 0, note: 'sampleGroundM probe never warmed (lazy program compile too slow on SwiftShader; try --use-angle=d3d11 / a GPU chrome, or raise LAB_PROBE_TIMEOUT_MS)' }
+    const gpu = await evalIn(`(${sg}) ? (${JSON.stringify(dirs)}).map(d => window.__planetOrch.render.sampleGroundM(d)) : null`)
+    if (gpu == null) return { samples: 0, note: 'sampleGroundM probe unavailable (orch.render not ready)' }
     let maxAbs = 0, sumAbs = 0, cnt = 0
-    const rs = (await evalIn('window.__reliefScale!=null?window.__reliefScale:(window.__WEBGL2_TERRAIN_R_M? window.__WEBGL2_TERRAIN_R_M/6360000 : 1)')) || 1
     for (let i = 0; i < dirs.length; i++) {
       if (gpu[i] == null || !isFinite(gpu[i])) continue
-      // GPU sampleGroundM returns metres at the page's render radius; CPU at our radius. Compare SHAPE
-      // by normalising both to Earth-scale (divide by reliefScale) -- scale-invariant height field.
-      const cpu = sampler.heightAt(dirs[i]) / (radius / 6360000)
-      const g = gpu[i] / rs
-      const d = Math.abs(cpu - g)
+      const cpu = sampler.heightAt(dirs[i])          // CPU sampler is at the PAGE radius -> direct compare
+      const d = Math.abs(cpu - gpu[i])
       maxAbs = Math.max(maxAbs, d); sumAbs += d; cnt++
     }
-    return { samples: cnt, maxAbsM: +maxAbs.toFixed(2), meanAbsM: +(sumAbs / Math.max(1, cnt)).toFixed(2) }
+    return { pageRadiusM: pageR, samples: cnt, maxAbsM: +maxAbs.toFixed(3), meanAbsM: +(sumAbs / Math.max(1, cnt)).toFixed(3) }
   })
   const tolM = num(args.tol, 50)
   const pass = r.ok && r.samples > 0 && r.maxAbsM <= tolM
