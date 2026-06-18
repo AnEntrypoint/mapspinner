@@ -394,6 +394,13 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
   // pool NOT held by _pipelineQuads overwrites nothing live (the pipeline is mid-draw on it, the static
   // cache holds it). Ping-pong -> zero steady-state allocation for the quad set.
   const _quadsPoolA = [], _quadsPoolB = [];
+  // HOISTED frustum-cull context (opt-remaining-cut-queue D2): the per-rebuild new Float64Array(24) +
+  // cullCtx object literal is now one persistent scratch, refilled in place. R/maxElev are fixed per
+  // planet; ex/ey/ez + planes are set per rebuild, ux..cz per face. cullCtx is consumed synchronously
+  // inside updateQuadtree/_recurse and never retained past the frame, so reuse across rebuilds is safe.
+  const _cullCtxScratch = { planes: new Float64Array(24), ex: 0, ey: 0, ez: 0,
+                            ux: 0, uy: 0, uz: 0, vx: 0, vy: 0, vz: 0, cx: 0, cy: 0, cz: 0,
+                            R, maxElev: R * CULL_ELEV_FRAC };
   let frameStart = 0;
 
   // ---- per-frame quadtree drive --------------------------------------------------
@@ -711,11 +718,9 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
       const lookDot = (fwd[0] * camWorldPos[0] + fwd[1] * camWorldPos[1] + fwd[2] * camWorldPos[2]) / (fl * camDist);
       const hcOn = (typeof window !== 'undefined' && window.__hcull != null) ? !!window.__hcull : (lookDot > -0.95);
       if (hcOn) {
-        const planes = new Float64Array(24);
-        extractFrustumPlanes(vpr, planes);
-        cullCtx = { planes, ex: camWorldPos[0], ey: camWorldPos[1], ez: camWorldPos[2],
-                    ux: 0, uy: 0, uz: 0, vx: 0, vy: 0, vz: 0, cx: 0, cy: 0, cz: 0,
-                    R, maxElev: R * CULL_ELEV_FRAC };   // SCALE-INVARIANT cull margin (12km at Earth R)
+        extractFrustumPlanes(vpr, _cullCtxScratch.planes);   // refill the hoisted scratch in place
+        _cullCtxScratch.ex = camWorldPos[0]; _cullCtxScratch.ey = camWorldPos[1]; _cullCtxScratch.ez = camWorldPos[2];
+        cullCtx = _cullCtxScratch;   // R/maxElev fixed at init; ux..cz set per-face below (SCALE-INVARIANT margin)
       }
     }
     // BEHIND-LIMB CULL (the dominant bottleneck fix). The baseline measured ~80% of all
