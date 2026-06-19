@@ -209,12 +209,22 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
   const splitFactor = opts.splitFactor ?? TD.splitFactor;
   const gridMeshSize = opts.gridMeshSize || 11;   // 16->11 FPS lever (triangle-throughput bound, not ALU; GRID 8 jagged biome crossovers, see gl-render.js GRID)
 
-  gl.getExtension('EXT_color_buffer_float');   // RGBA32F atlas render targets
+  // EXT_color_buffer_float is REQUIRED: the HPF field + elevation render targets use RG16F/RGBA32F
+  // float color attachments (gl.RG16F texStorage below, plus gl-render's float FBOs). On a WebGL2
+  // device that lacks this extension (some low-end Android / older Intel), the float texture alloc
+  // silently fails -> blank terrain. Detect it up front and throw a clear typed Error BEFORE the
+  // first RG16F alloc so a consumer's try/catch (e.g. spoint TerrainBackdrop) degrades to flat
+  // terrain instead of rendering nothing.
+  const _colorBufferFloatExt = gl.getExtension('EXT_color_buffer_float');
+  if (!_colorBufferFloatExt) {
+    throw new Error('mapspinner: EXT_color_buffer_float required for terrain rendering');
+  }
   // OES_texture_float_linear lets the driver LINEAR-filter the RGBA32F HPF/elevation textures. When
   // ABSENT, a LINEAR-flagged float texture SILENTLY falls back to NEAREST -> per-texel square steps
-  // ("elevations look square"). The terrain shader now does MANUAL bilinear in hpfSample so the field
-  // is smooth regardless, but expose whether hardware float-linear was granted so the live page can
-  // witness the original root (false = the single-tap path was silently NEAREST).
+  // ("elevations look square"). The terrain shader does MANUAL bilinear in hpfSample so the field is
+  // smooth regardless (NOT a hard requirement, unlike EXT_color_buffer_float above), but expose
+  // whether hardware float-linear was granted via window.__floatLinearOK so the live page can witness
+  // the original root (false = the single-tap path was silently NEAREST, manual bilinear in effect).
   const _floatLinearExt = gl.getExtension('OES_texture_float_linear');
   if (typeof window !== 'undefined') window.__floatLinearOK = !!_floatLinearExt;
 
