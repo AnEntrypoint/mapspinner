@@ -490,6 +490,16 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
     // altitudes. Default-off so a bare SDK consumer renders that same flat look without the demo's
     // pin. A consumer wanting altitude-adaptive density passes opts.altSplitRamp:true and leaves
     // window.__splitFactor unset.
+    // DENSITY TARGET (ff-planet-density-target, 2026-06-19): the tessellation acceptance metric is
+    // ~20-40 px per TRIANGLE (a denser-only-where-it-shows band that sits inside the historical 4-50
+    // px-per-poly-EDGE diagnostic, window.__diag.pxPerPoly / window.__glGrid). The measured deck plateau
+    // PEAK 1.4 below already lands the median at ~22px (browser-18: sf1.4 median 22px, deeper INTO the
+    // band than sf2.0's 11px sub-pixel tail), and the altitude knots (KN[]) coarsen toward distance. These
+    // are MEASURED values (octave/split A/Bs cited inline); the 20-40 target is the acceptance gate they
+    // were tuned against, NOT a fresh blind re-tune -- pushing splitFactor without a live px/poly sweep
+    // regresses (sf2.0 over-tessellated to sub-pixel; sf1.0 under-tessellated past the band). The new
+    // altitude octave clamp (gl-render _clampOcts) cuts per-vertex ALU at distance WITHOUT changing this
+    // vertex density, so it is orthogonal to the px/triangle target.
     if (opts.altSplitRamp && (typeof window === 'undefined' || window.__splitFactor == null)) {
       const PEAK = 1.4;   // 2.0 -> 1.4 (user 2026-06-04 destructive FPS run, browser-18 measured): at the
       // 6km closeup the frame is 96.6% VS+raster-bound (fullMs 36.3, vsRaster 35.1, fs 1.2 = dead lever).

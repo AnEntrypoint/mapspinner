@@ -49,6 +49,25 @@ const M4 = {
 
 export async function initMapspinnerRender(gl, opts = {}) {
   const R = opts.radius || 6360000.0;
+  // ===== PERF BOUND (ff-planet-fragment-bound-rootcause / terrain-one-two-drawcalls, 2026-06-19) =====
+  // CONFIRMED by code analysis + the in-file measured comments: the planet render is VERTEX/TILE-COUNT
+  // bound, NOT fragment bound. Evidence:
+  //   * broadShapeM (terrain.glsl:440) is a 12-octave fractal evaluated ~5x PER VERTEX -- the inline
+  //     geometry-height cascade plus 4 finite-difference normal taps (terrain.glsl:1102-1109) -- across
+  //     GRID^2 (=121) verts/tile x ~500-900 visible tiles. That is the 96%+ "VS+raster-bound" the deck
+  //     measurements record (browser-18: fullMs 36.3, vsRaster 35.1, FS 1.2 = the FS is a DEAD lever at
+  //     ~3.4%). Earlier octave-count A/Bs that "left frame time flat" did so because they cut ALU on a
+  //     loop whose real cost at the deck is the TRIANGLE THROUGHPUT (GRID is ~linear; octMax 12->3 flat).
+  //   * The FS atmosphere/splat is cheap relative to the per-vertex carve cascade (the fragment-bound
+  //     hypothesis is DISPROVEN -- the FS is not the ceiling on the weak-iGPU target).
+  // DRAW-CALL COUNT (terrain-one-two-drawcalls): the patch meshes ALREADY render in essentially TWO
+  // draw calls, not "many per-tile" calls -- one gl.drawElementsInstanced for ALL land tiles (the whole
+  // visible leaf set as per-instance iOffset/iFace, render() ~L1266) + one for the water surface
+  // (~L1322). The single shared GRID^2 quad mesh + per-instance offsets means tile COUNT does not add
+  // draw calls; it adds INSTANCES (vertices). So the 1-2-draw target is met; the lever that actually
+  // moves the weak-GPU frame is reducing per-vertex VS work and the visible vertex count -- which is what
+  // the GRID size, the LOD split thresholds (planet-orchestrator.js), the frustum/limb/hierarchical cull,
+  // and the new altitude-driven octave clamp (_clampOcts below) target.
   const TILE_W = opts.tileW || 25;         // mesh-coord tile width (was producer.TILE_W; producer gone)
   // GRID 24 -> 16 (FPS lever, measured browser-18: pxPerPoly median 2.4px@40km / 0.45px@8km at GRID 24
   // = SUB-PIXEL over-tessellation, only 40%/24% in the 4-50px band). GRID 16 cuts verts/quad 676->324
@@ -297,6 +316,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
       // composeHeight for sampleGroundM (collision/camera height) so collision matches the rendered surface.
       // If uHiFreqCut/vtxDetail were unset (0.0) here the probe's height would omit all fine relief and
       // diverge from the rendered geometry = the camera stops short of the visible surface. Match render().
+      _octClampAlt = 0;   // collision probe: full octaves regardless of the last render frame's altitude (collision must match the close-up surface)
       setComposeHeightUniforms(PU);
       gl.uniform3f(PU('probeDir'), dir[0]/pl, dir[1]/pl, dir[2]/pl);
       gl.disable(gl.DEPTH_TEST);
@@ -358,6 +378,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     if (_hpfTex){ gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D_ARRAY,_hpfTex); gl.uniform1i(BU('hpfPool'),3); }
     if (_hpfTex2){ gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D_ARRAY,_hpfTex2); gl.uniform1i(BU('hpfPool2'),5); }
     gl.uniform1i(BU('hasHpf'), _hpfTex?1:0);
+    _octClampAlt = 0;   // height bake: full octaves (the baked tile is consumed at vertex rate near ground; match the surface)
     setComposeHeightUniforms(BU);
     gl.uniform1f(BU('defRadius'), R);
     gl.uniformMatrix3fv(BU('uBakeFrame'), false, new Float32Array(_faceFrames[face|0]));
@@ -409,6 +430,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     if (_hpfTex){ gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D_ARRAY,_hpfTex); gl.uniform1i(BU('hpfPool'),3); }
     if (_hpfTex2){ gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D_ARRAY,_hpfTex2); gl.uniform1i(BU('hpfPool2'),5); }
     gl.uniform1i(BU('hasHpf'), _hpfTex?1:0);
+    _octClampAlt = 0;   // height bake: full octaves (the baked tile is consumed at vertex rate near ground; match the surface)
     setComposeHeightUniforms(BU);
     gl.uniform1f(BU('defRadius'), R);
     gl.uniformMatrix3fv(BU('uBakeFrame'), false, new Float32Array(_faceFrames[face|0]));
@@ -452,6 +474,35 @@ export async function initMapspinnerRender(gl, opts = {}) {
   // Diagnostics-only readout (NOT a branch): exposes the float-linear probe outcome for a witness/CLI.
   try { if (typeof window !== 'undefined') window.__terrainConfig = { floatLinearOK: _halfFloatLinearOK }; } catch(_){}
 
+  // ALTITUDE-DRIVEN OCTAVE CLAMP (ff-tv8-planet-opt / vp-tv8-terrain-perf, 2026-06-19). The dominant
+  // GPU cost is VERTEX-bound: broadShapeM (12 octaves) runs ~5x/vertex (the inline geometry height +
+  // 4 FD normal taps, terrain.glsl:1102-1109) across GRID^2 verts/tile x ~500-900 visible tiles. The
+  // finest broadShapeM octaves (o>=6) have absolute world wavelengths of a few km; at high altitude
+  // every visible tile spans many km/pixel so those octaves are GLOBALLY sub-pixel and contribute
+  // nothing the screen can resolve -- pure VS ALU waste. We drop them as a function of CAMERA ALTITUDE
+  // ONLY (a single per-frame scalar, NOT a per-tile/per-LOD fade): because the clamp is identical for
+  // every tile in the frame, adjacent tiles -- same level OR a level apart -- evaluate the IDENTICAL
+  // octave count at their shared edge, so there is ZERO cross-LOD seam. This is the crucial distinction
+  // from the REFUTED per-tile octave fade (terrain.glsl:832 -- that faded by TILE SIZE, so a 1500km tile
+  // and an adjacent 1200km tile dropped different octaves at the shared edge and diverged). The collision
+  // probe + height bake call this with the SAME _octClampAlt set per frame, so collision stays matched to
+  // the rendered surface (and near-ground collision frames are low-alt = no clamp anyway). Default ON;
+  // window.__altOctClamp===false rolls it back to the flat 12 octaves at all altitudes.
+  let _octClampAlt = 0;   // metres; set per-frame by render()/probe before calling setComposeHeightUniforms
+  function _clampOcts(baseOcts) {
+    if (typeof window !== 'undefined' && window.__altOctClamp === false) return baseOcts;
+    const altKm = _octClampAlt / 1000.0;
+    // Knees chosen so the near surface (deck->descent) is byte-identical and the cut only engages where
+    // the dropped octaves are provably sub-pixel: full 12 below 80km, -2 by 200km, -4 by 800km, -6 (the
+    // whole o>=6 fine band) above 2000km where the planet sits small in frame. Monotone, clamped to >=6
+    // so the continent/hypsometry silhouette octaves (o<6, CLI-validated) are NEVER touched.
+    let drop = 0;
+    if (altKm > 2000)      drop = 6;
+    else if (altKm > 800)  drop = 4;
+    else if (altKm > 200)  drop = 2;
+    else if (altKm > 80)   drop = 1;
+    return Math.max(6, baseOcts - drop);
+  }
   // ONE SOURCE OF TRUTH for composeHeight's shape-control + HPF-sampler uniforms: every program that runs
   // composeHeight (render, _PROBE_) calls this with its own uniform-locator so they CANNOT diverge.
   function setComposeHeightUniforms(loc) {
@@ -467,7 +518,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1i(loc('uFloatLinearOK'), _halfFloatLinearOK ? 1 : 0);
     // FXC unroll-defeat (2026-06-12 AMD d3d11 fix): runtime octave bound for broadShapeM; the shader
     // guards uOctMax<=0 -> 12, so this set is belt-and-braces. Live dial: window.__octMax.
-    gl.uniform1i(loc('uOctMax'),        (typeof window!=='undefined' && window.__octMax!=null) ? (window.__octMax|0) : 12);
+    gl.uniform1i(loc('uOctMax'),        (typeof window!=='undefined' && window.__octMax!=null) ? (window.__octMax|0) : _clampOcts(12));   // altitude-clamped (see _clampOcts); explicit window.__octMax still wins
     gl.uniform1i(loc('uInciseRidgeOcts'), (typeof window!=='undefined' && window.__inciseRidgeOcts!=null) ? (window.__inciseRidgeOcts|0) : 4);
     gl.uniform1i(loc('uBroadLowOcts'),    (typeof window!=='undefined' && window.__broadLowOcts!=null) ? (window.__broadLowOcts|0) : 2);   // 8->2 PERF (2026-06-15): MEASURED 0 visual error (mtn+space) -- broadShapeLowM only feeds the 2400m-FD-step mesa-flatness slope gate, which is low-freq so the high octaves do nothing (its elevation-AO consumer was removed).
     gl.uniform1i(loc('uPeakOcts'),        (typeof window!=='undefined' && window.__peakOcts!=null) ? (window.__peakOcts|0) : 3);
@@ -932,6 +983,11 @@ export async function initMapspinnerRender(gl, opts = {}) {
     const _fBlend = Math.min(1.0, Math.max(0.0, (alt - 500000.0) / 4500000.0));
     const farGround = Math.max(horizon, alt * 8.0);
     const far = farGround * (1.0 - _fBlend) + camDist * _fBlend;
+    // ALTITUDE OCTAVE CLAMP (ff-tv8-planet-opt): drive the per-frame broadShapeM octave count from camera
+    // altitude (see _clampOcts). Scaled by R/Earth so a small-radius consumer planet gets the same RELATIVE
+    // cut. Read by setComposeHeightUniforms(U) below; the probe/bake leave _octClampAlt at 0 (full octaves)
+    // so near-ground collision never diverges from the rendered surface. window.__altOctClamp===false rolls back.
+    _octClampAlt = alt * (6360000.0 / R);
     const proj = M4.perspective(cam.fovy||0.785, aspect, near, far);
     const view = M4.lookAt(cam.eye, cam.center, cam.up||[0,1,0]);
     const viewProj = M4.mul(proj, view);
