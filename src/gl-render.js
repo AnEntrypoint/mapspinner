@@ -404,7 +404,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
   // when window.__thc is on. A 2D-array pool holds one BAKE_RES^2 R32F layer per live tile; a leaf
   // gets a layer (baked once) on first sight, LRU-evicted when the pool is full. Default OFF -> the
   // live render is unchanged (composeHeight), so this is safe to ship behind the toggle.
-  const THC_POOL_LAYERS = 512;
+  const THC_POOL_LAYERS = 256;
   let heightPool=null, poolFbo=null;
   const _tcMap = new Map();                                   // tileKey -> layer
   const _tcLayerKey = new Array(THC_POOL_LAYERS).fill(null);  // layer -> tileKey (evict bookkeeping)
@@ -559,7 +559,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
   for (let v = 0; v < 256; v++) LIN8[v] = Math.pow(v / 255, 2.2);
   async function loadSurfaceTextures() {
     const MATS = ['grass', 'rock', 'sand', 'snow'];   // layer order: matches terrain.glsl splat
-    const SZ = 1024;
+    const SZ = 512;
     const img = (u) => new Promise((res, rej) => { const i = new Image(); i.crossOrigin = 'anonymous'; i.onload = () => res(i); i.onerror = () => rej(new Error('load ' + u)); i.src = u; });   // crossOrigin: textures fetched cross-origin (e.g. a consumer loading the SDK from unpkg) must be CORS-clean or the drawImage+getImageData de-shade below taints the canvas + throws SecurityError -> textures silently fail (flat untextured terrain). unpkg serves Access-Control-Allow-Origin:*.
     const cv = document.createElement('canvas'); cv.width = SZ; cv.height = SZ;
     const cx = cv.getContext('2d', { willReadFrequently: true });
@@ -654,7 +654,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     function mkArray(data, internal) {
       const t = gl.createTexture();
       gl.bindTexture(gl.TEXTURE_2D_ARRAY, t);
-      gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 11, internal, SZ, SZ, MATS.length);   // 11 = full 1024 mip chain
+      gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 10, internal, SZ, SZ, MATS.length);   // 11 = full 1024 mip chain
       gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, 0, SZ, SZ, MATS.length, gl.RGBA, gl.UNSIGNED_BYTE, data);
       gl.generateMipmap(gl.TEXTURE_2D_ARRAY);
       gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
