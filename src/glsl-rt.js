@@ -96,6 +96,47 @@ export const mat3mul = (m, v) => [
 export const float = (x) => +x
 export const int = (x) => Math.trunc(x)
 
+// ---- scalarized hot leaves (snoise3/shash3). These are BIT-IDENTICAL hand-written
+// equivalents of the transpiled array-allocating bodies (gen-height.mjs emits calls to
+// these instead of inlining the GLSL), using the EXACT same float ops in the EXACT same
+// order/associativity so heightAt() output is unchanged. See terrain.glsl shash3/snoise3.
+export function shash3(p) {
+  // p = fract(p*0.3183099 + vec3(0.1,0.2,0.3))   (componentwise)
+  let px = p[0] * 0.3183099 + 0.1
+  let py = p[1] * 0.3183099 + 0.2
+  let pz = p[2] * 0.3183099 + 0.3
+  px = px - Math.floor(px); py = py - Math.floor(py); pz = pz - Math.floor(pz)
+  // p += dot(p, p.yzx + 19.19)   (yzx = [py,pz,px]); dot accumulates i=0,1,2 in order
+  const d = px * (py + 19.19) + py * (pz + 19.19) + pz * (px + 19.19)
+  px += d; py += d; pz += d
+  const r = (px + py) * pz + (py + pz) * px
+  return r - Math.floor(r)
+}
+export function snoise3(P) {
+  const ix = Math.floor(P[0]), iy = Math.floor(P[1]), iz = Math.floor(P[2])
+  const fx = P[0] - Math.floor(P[0]), fy = P[1] - Math.floor(P[1]), fz = P[2] - Math.floor(P[2])
+  // u = f*f*(3-2*f)
+  const ux = fx * fx * (3.0 - 2.0 * fx)
+  const uy = fy * fy * (3.0 - 2.0 * fy)
+  const uz = fz * fz * (3.0 - 2.0 * fz)
+  const n000 = shash3([ix, iy, iz])
+  const n100 = shash3([ix + 1, iy, iz])
+  const n010 = shash3([ix, iy + 1, iz])
+  const n110 = shash3([ix + 1, iy + 1, iz])
+  const n001 = shash3([ix, iy, iz + 1])
+  const n101 = shash3([ix + 1, iy, iz + 1])
+  const n011 = shash3([ix, iy + 1, iz + 1])
+  const n111 = shash3([ix + 1, iy + 1, iz + 1])
+  // mix(a,b,t) = a + (b-a)*t
+  const x00 = n000 + (n100 - n000) * ux
+  const x10 = n010 + (n110 - n010) * ux
+  const x01 = n001 + (n101 - n001) * ux
+  const x11 = n011 + (n111 - n011) * ux
+  const y0 = x00 + (x10 - x00) * uy
+  const y1 = x01 + (x11 - x01) * uy
+  return (y0 + (y1 - y0) * uz) * 2.0 - 1.0
+}
+
 // ---- uint helpers (GLSL uint/uvec bit-ops) for vhash (micro-relief lattice hash).
 // JS uint32 via >>>0 + Math.imul for wrap-around multiply (matches GLSL uint mul).
 export const u = (x) => x >>> 0
