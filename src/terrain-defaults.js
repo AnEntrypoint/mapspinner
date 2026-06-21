@@ -17,64 +17,64 @@
 
 export const TERRAIN_DEFAULTS = {
   // ---- LOD ----
-  splitFactor: 0.30,        // blessed mesh density (was demo-pinned 0.28 then gen/tweak 0.30; 0.30 wins post-double-rAF)
+  splitFactor: 0.30,        // blessed mesh density
 
   // ---- SHAPE (composeHeight; mirrored in SHAPE_UNIFORM_DEFAULTS for the CPU height path) ----
-  landBias: -800.0,         // hypsometry bias (m); demo baked -800 (was SDK 0)
-  detailOverlay: 50.0,      // perlin-everywhere relief term; demo baked 50 (was SDK 6)
-  hiFreqCut: 0.95,          // fine-octave amplitude; demo baked 0.95 (was SDK 0.25)
-  canyonDepth: 1.0,         // canyon-depth multiplier; demo baked 0 -> shader floors to 1.0 (was SDK 2.0)
-  cliffAmt: 3.0,            // cliff/mesa terrace strength; demo baked 3.0 (was SDK 1.0)
-  beachShelf: 0.0,          // land coastal shelf (m); 0 -> shader uses 600m guard (matches SDK)
-  nrmStepM: 0.0,            // lit-normal FD step (m); 0 is the "use built-in 300m" sentinel (terrain.glsl:1043/1090)
-  mtnBandWide: 0.1,         // mountain-belt width anchor step; demo baked 0.1 (was SDK 0)
-  climateRelief: 0.65,      // climate-relief width; demo baked 0.65 (was SDK 0)
-  isleWide: 1.0,            // island-zone width; demo baked 1.0 (was SDK 0)
-  carveWide: 0.0,           // carve-climate width; matches SDK 0
+  landBias: 0.0,            // hypsometry bias (m)
+  detailOverlay: 53.0,      // perlin-everywhere relief term
+  hiFreqCut: 1.0,           // fine-octave amplitude
+  canyonDepth: 40.0,        // canyon-depth multiplier
+  cliffAmt: 5.0,            // cliff/mesa terrace strength
+  beachShelf: 0.0,          // land coastal shelf (m); 0 -> shader uses 600m guard
+  nrmStepM: 700.0,          // lit-normal FD step (m)
+  mtnBandWide: 1.0,         // mountain-belt width anchor step
+  climateRelief: 1.0,       // climate-relief width
+  isleWide: 0.55,           // island-zone width
+  carveWide: 0.0,           // carve-climate width
 
   // ---- LOOK / LIGHTING ----
-  exposure: 0.75,
-  reliefShade: 1.8,
-  skyFill: 0.45,
-  variationAmt: 0.04,
-  hazeMul: 0.65,
-  diffWrap: 0.5,
-  vertexAO: 1.0,
-  aoAmt: 1.0,
-  biomeWarp: 1.8,
-  nightFloor: 0.4,
-  termWidth: 0.05,
-  terminatorGlow: 1.0,
-  nightLights: 1.2,
-  lookSat: 1.15,
+  exposure: 0.85,
+  reliefShade: 2.5,
+  skyFill: 0.5,
+  variationAmt: 0.3,
+  hazeMul: 0.15,
+  diffWrap: 0.45,
+  vertexAO: 0.0,
+  aoAmt: 0.0,
+  biomeWarp: 1.1,
+  nightFloor: 0.18,
+  termWidth: 0.45,
+  terminatorGlow: 0.6,
+  nightLights: 0.8,
+  lookSat: 0.7,
   lookContrast: 1.12,
   flatNormal: 0.0,          // diagnostic only
 
   // ---- TEXTURE / SPLAT ----
-  texMix: 1.0,
-  texNrmK: 1.6,
-  nrmLow: 0.5,
-  triSharp: 10.0,
-  texSat: 2.0,
-  texBright: 0.8,
-  biomeTint: 0.3,
-  texWarp: 0.22,
-  xSoft: 0.5,
-  xFinger: 2.5,
+  texMix: 0.65,
+  texNrmK: 0.7,
+  nrmLow: 1.9,
+  triSharp: 1.0,
+  texSat: 0.8,
+  texBright: 0.64,
+  biomeTint: 0.56,
+  texWarp: 0.32,
+  xSoft: 0.3,
+  xFinger: 1.6,
   ordPush: 0.4,
   texPhoto: 0.0,
   texPhotoNear: 0.0,
-  xFade0: 15000.0,
-  xFade1: 40000.0,
+  xFade0: 100.0,
+  xFade1: 340.0,
   texFar0: 0.0,
-  texFar1: 12000.0,
-  nrmFade0: 45000.0,
-  nrmFade1: 100000.0,
+  texFar1: 700.0,
+  nrmFade0: 100000.0,
+  nrmFade1: 2000000.0,
 
   // ---- BEACH / COAST ----
-  beachTop: 210.0,
-  beachWidth: 5.0,
-  bandWarp: 1800.0,
+  beachTop: 290.0,
+  beachWidth: 20.0,
+  bandWarp: 2000.0,
 
   // ---- BIOME RAMP (read by gl-render C() from __gen.state.biome, else here) ----
   bcDeepSea:  [0.04, 0.10, 0.28],
@@ -95,10 +95,6 @@ export const TERRAIN_DEFAULTS = {
   uOceanShallow: [0.07, 0.22, 0.26],
   uOceanK:       [0.009, 0.004, 0.0018],
 
-  // ---- NORMAL / GEOMETRY ----
-  pvNormal: 1,
-  fsNormal: 0,
-  elevEdgeInset: 0.5,
 };
 
 // SHAPE levers re-keyed by GLSL uniform name for the height-cpu.js CPU mirror. canyonDepth maps to

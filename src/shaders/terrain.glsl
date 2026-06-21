@@ -1,4 +1,4 @@
-// mapspinner WebGL2 terrain render shader.
+﻿// mapspinner WebGL2 terrain render shader.
 // VS: spherical deformation + direct per-vertex sphere projection.
 // FS: sample normal + albedo, sun-lit Lambert with ambient floor.
 // The JS prepends #version + precision and compiles _VERTEX_ / _FRAGMENT_ separately.
@@ -114,636 +114,155 @@ highp vec4 hpfSample(vec3 dir) {   // W7: R=seaBias is metres (~1600) -> highp s
     return vec4(se.x, se.y, th.x, th.y);
 }
 
-// 3D value noise of a world-space point (continuous everywhere on the sphere). SHARED by the VS
-// (broadShapeM continuous-field shape) AND the FS (riverMask drainage network), so it must live
-// in the common preamble -- NOT inside #ifdef _VERTEX_, else the FS sees no snoise3 and the
-// fragment program fails to link ('snoise3: no matching overloaded function'), aborting renderer init.
-// W7 highp ISLAND: snoise3/shash3 lattice inputs reach freq*dir ~1.4e4 (fine octaves) and rely on
-// integer floor()/fract() cell precision -- fp16 (~3 digits) would collapse every cell to mush. ALL
-// noise primitives + their P/p args are highp; the [-1,1] RESULT narrows back to the mediump default.
-highp float shash3(highp vec3 p){ p=fract(p*0.3183099+vec3(0.1,0.2,0.3)); p+=dot(p,p.yzx+19.19); return fract((p.x+p.y)*p.z + (p.y+p.z)*p.x); }
-float snoise3(highp vec3 P){ highp vec3 i=floor(P),f=fract(P); highp vec3 u=f*f*(3.0-2.0*f);
-  float n000=shash3(i),n100=shash3(i+vec3(1,0,0)),n010=shash3(i+vec3(0,1,0)),n110=shash3(i+vec3(1,1,0));
-  float n001=shash3(i+vec3(0,0,1)),n101=shash3(i+vec3(1,0,1)),n011=shash3(i+vec3(0,1,1)),n111=shash3(i+vec3(1,1,1));
-  float x00=mix(n000,n100,u.x),x10=mix(n010,n110,u.x),x01=mix(n001,n101,u.x),x11=mix(n011,n111,u.x);
-  return mix(mix(x00,x10,u.y),mix(x01,x11,u.y),u.z)*2.0-1.0; }   // [-1,1]
-
-// ANALYTIC-DERIVATIVE value noise (IQ): returns vec4(value[-1,1], d/dPx, d/dPy, d/dPz). The exact
-// gradient of the SAME trilinear+smoothstep field as snoise3 above, so the geometry it shapes and the
-// normal it lights are the one field with NO finite-difference step to alias the fine octaves -- this
-// is the core of the one-comprehensive-system design (mem tv8-one-system-design-analytic-deriv-fbm):
-// the lit normal becomes exact at every scale, killing the deck flat-clay (the 200m/2000m FD steps
-// averaged the fine octaves out). du = derivative of the smoothstep weight 6f(1-f).
-// (snoise3D analytic-derivative noise DELETED 2026-06-11 dead-code sweep: its sole consumer broadShapeMD was removed earlier.)
-
-// ---- CONTENT CARVE FIELDS (SHARED VS+FS preamble). These cut lakes/rivers/canyons into the
-// elevation (VS uses the depth) AND gate the water/rock colour (FS uses the wet/depth mask), so the
-// colour sits EXACTLY in the carved depression at every LOD -- they MUST be visible to BOTH stages
-// (defining them inside #ifdef _VERTEX_ made the FS fail to link: 'no matching overloaded function',
-// the same class as the historical snoise3-in-VS-only bug). Pure fn of world dir -> seam-safe +
-// LOD-invariant. Each has an EROSION profile: a wide graded shoulder/valley/bench that blends into
-// terrain plus a deeper core, and returns a wet/depth mask the FS colours.
-const float LAKE_CARVE_DEPTH = 220.0;   // 90->220 metres of bowl depth (user 2026-06-14 'lakes super shallow+flat'): deeper basins
-float lakeBasinField(vec3 dir){ return 0.5 + 0.5 * snoise3(dir * 55.0 + vec3(4.0, 9.0, 1.0)); }
-float lakeCarveM(vec3 dir, out float wet){
-    float basin = lakeBasinField(dir);
-    float shoulder = smoothstep(0.30, 0.74, basin);     // gentle outwash apron (blends far into terrain)
-    float bowl     = smoothstep(0.50, 0.80, basin);     // deeper basin starts earlier
-    wet = smoothstep(0.50, 0.70, basin);                // softer shoreline transition
-    return -LAKE_CARVE_DEPTH * (0.65 * shoulder + 0.35 * bowl);   // more apron, gentler banks
+// ---- PROLAND NOISE PRIMITIVES (ported from nervtech.org noise.wgsl) ----
+// PCG integer hash -> [-1,1]. Uses the exact same algorithm as the Proland WGSL hash(p: vec3i).
+// W7 highp: lattice coords reach freq*dir ~1.4e4 -> ALL noise args are highp.
+highp float pcg_hash3(highp ivec3 p) {
+    int n = p.x * 1597 + p.y * 3571 + p.z * 7919;
+    uint state = uint(n) * 747796405u + 2891336453u;
+    state = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    state = (state >> 22u) ^ state;
+    return -1.0 + 2.0 * float(state) / 4294967295.0;
 }
-float lakeCarveM(vec3 dir){ float w; return lakeCarveM(dir, w); }
-// River and canyon are the SAME incision algorithm (a 4-octave ridged 1-abs(snoise3) network),
-// differing only in base frequency, phase, depth, and threshold band. One shared field helper.
-// `d` is already the sampling coordinate (normalized dir, optionally phase-shifted by the caller).
-//
-// AXIS-BIAS + ORGANIC FIX (user: 'canyons draw H/V lines, nothing in between; less predictable').
-// snoise3 is VALUE noise on an integer lattice, so ridged 1-abs(snoise3) crests align to the x/y/z
-// axes -> horizontal/vertical channel lines. Two fixes, both keeping it a pure world-dir field:
-//   ROTATE the sample domain per octave by a fixed CONSTANT 3D rotation (precomputed mat3, no
-//   per-call trig/normalize, no extra noise taps -- cheap) so each octave's lattice axes point
-//   differently -> the summed ridged crests run in EVERY direction, not just the x/y/z lattice H/V.
-//   The matrix rows are a fixed tilted basis (~no axis alignment); det ~= 1 so it doesn't drift scale.
-const mat3 OCT_ROT = mat3( 0.80, 0.36, -0.48,   -0.48, 0.86, -0.18,    0.36, 0.36, 0.86);
-// FXC UNROLL-DEFEAT runtime-bounded loops (2026-06-12): uniform int guards prevent FXC from
-// fully unrolling these loops (which triggers mis-translation on AMD D3D11). Each guard falls
-// back to the original octave count when the uniform is 0 or unset (e.g. probe program).
-uniform int uOctMax;            // broadShapeM octave count (12); runtime-bound to defeat FXC unrolling
-uniform int uInciseRidgeOcts;   // inciseRidgeField octave count (4); runtime-bound to defeat FXC unrolling
-uniform int uBroadLowOcts;      // broadShapeLowM octave count (8); runtime-bound to defeat FXC unrolling
-uniform int uPeakOcts;          // broadShapeM peak crest octave count (3); runtime-bound to defeat FXC unrolling
-// (uVtxBaseOcts/uVtxErodeOcts removed 2026-06-18 -- vtxDisplace is a 0.0 stub, these were dead.)
-uniform int uDetailFbmOcts;     // detailFbm octave count (3); runtime-bound to defeat FXC unrolling
-uniform int uFSDetailOcts;      // FS detail overlay octave count (3); runtime-bound to defeat FXC unrolling
-float inciseRidgeField(vec3 d, float baseFreq, float freqMul){
-    vec3 p = d;
-    float freq = baseFreq, amp = 1.0, sum = 0.0, norm = 0.0;
-    int irOcts = (uInciseRidgeOcts > 0) ? uInciseRidgeOcts : 4;
-    for (int o = 0; o < irOcts; o++){
-        sum += amp * (1.0 - abs(snoise3(p * freq)));
-        norm += amp; freq *= freqMul; amp *= 0.5; p = OCT_ROT * p;   // rotate domain each octave
+// Quintic value noise matching Proland (METHOD_INTEGER_HASH + INTERP_QUINTIC).
+float snoise3(highp vec3 P) {
+    highp ivec3 i = ivec3(floor(P));
+    highp vec3 f = fract(P);
+    highp vec3 u = f*f*f*(f*(f*6.0-15.0)+10.0);
+    float n000 = pcg_hash3(i);
+    float n100 = pcg_hash3(i+ivec3(1,0,0));
+    float n010 = pcg_hash3(i+ivec3(0,1,0));
+    float n110 = pcg_hash3(i+ivec3(1,1,0));
+    float n001 = pcg_hash3(i+ivec3(0,0,1));
+    float n101 = pcg_hash3(i+ivec3(1,0,1));
+    float n011 = pcg_hash3(i+ivec3(0,1,1));
+    float n111 = pcg_hash3(i+ivec3(1,1,1));
+    float x00=mix(n000,n100,u.x), x10=mix(n010,n110,u.x);
+    float x01=mix(n001,n101,u.x), x11=mix(n011,n111,u.x);
+    return mix(mix(x00,x10,u.y), mix(x01,x11,u.y), u.z);   // [-1,1]
+}
+// Standard FBM.
+float value_fbm(highp vec3 x, float gain, int numOctaves) {
+    float v=0.0, a=1.0, norm=0.0;
+    highp vec3 p=x;
+    for(int i=0;i<numOctaves;i++){ v+=a*snoise3(p); norm+=a; a*=gain; p*=2.0; }
+    return v/norm;
+}
+float value_fbm_scaled(highp vec3 x, float gain, int numOctaves, float lo, float hi) {
+    return lo + (hi-lo) * (value_fbm(x,gain,numOctaves)*0.5+0.5);
+}
+// Per-octave domain rotation (breaks lattice axis alignment in ridged FBM).
+highp vec3 rotate_domain(highp vec3 pos, float angle) {
+    float c=cos(angle), s=sin(angle);
+    return vec3(c*pos.x-s*pos.z, pos.y, s*pos.x+c*pos.z);
+}
+// Ridged FBM with per-octave rotation (value_ridged_fbm_rot_scaled from noise.wgsl).
+float value_ridged_fbm_rot(highp vec3 x_in, float gain, int numOctaves, float offset, float exponent) {
+    float v=0.0, w=1.0, norm=0.0, a=1.0;
+    highp vec3 p=x_in;
+    for(int i=0;i<numOctaves;i++){
+        float signal = offset - abs(snoise3(p));
+        signal = pow(max(signal,0.0), exponent);
+        v += signal * w * a;
+        norm += a;
+        w = clamp(signal, 0.0, 1.0);
+        a *= gain;
+        p = rotate_domain(p*2.0, float(i)*0.5236);
     }
-    return sum / norm;                                         // ->1 on the channel network
+    return v / max(norm, 1e-5);
 }
-const float RIVER_INCISE_DEPTH = 280.0;   // 120->280 metres at the channel thalweg (user 2026-06-14 'rivers/channels super shallow+flat'): deeper incision
-float riverRidgeField(vec3 dir){ return inciseRidgeField(dir, 96.0, 2.03); }   // freq DOUBLED-x4 24->96 (user 2026-06-15 'river field frequency is about 4x too low'): denser river network
-float riverCarveM(vec3 dir, out float wet){
-    float ridge = riverRidgeField(dir);
-    // (2026-06-15: 'widen the valley' did not help -- reverted; depth carries visibility.)
-    // DEFINED NETWORK, not everywhere (user 2026-06-16 'the river field is also not affecting elevation'):
-    // valley onset 0.30 fired over ~the whole map (riverRidgeField mean ~0.55) so the river VALLEY sank the
-    // land uniformly = no contrast = flat. Raise the onset so only the ridge network incises, leaving the
-    // off-network land as a high bank = a real river VALLEY the coarse mesh reads.
-    float valley  = smoothstep(0.55, 0.92, ridge);             // eroded valley sides (network only -> banks stay high)
-    float thalweg = smoothstep(0.74, 0.96, ridge);             // deep channel core
-    wet = smoothstep(0.80, 0.95, ridge);                       // flowing-water line
-    return -RIVER_INCISE_DEPTH * (0.7 * valley + 0.3 * thalweg);   // more valley, gentler banking
+float value_ridged_fbm_rot_scaled(highp vec3 x, float gain, int numOctaves, float offset, float exponent, float lo, float hi) {
+    return lo + (hi-lo) * (value_ridged_fbm_rot(x,gain,numOctaves,offset,exponent)*0.5+0.5);
 }
-float riverCarveM(vec3 dir){ float w; return riverCarveM(dir, w); }
-const float CANYON_INCISE_DEPTH = 700.0;  // metres of carve magnitude. The DEPTH is now capped by a RELATIVE floor (composeHeightC ~L737: incision <= ~150m*canyonDepthMul below the local rim) rather than this constant, so this value sets the canyon WIDTH/wall-fill (how wide the gorge reaches its capped floor), NOT the depth: 350 over-narrowed the floor (user 2026-06-16 'narrower not shallower'), 700 restores a wider gorge that still bottoms out at the gentle ~300m relative floor. LIVE depth via window.__canyonDepth (scales the relative floor).
-uniform float canyonDepthMul;              // LIVE canyon-depth lever (window.__canyonDepth; 1.0 default)
-uniform float uVsCheap;                     // VS profiling: >0.5 skips all carves in composeHeight (window.__vsCheap; gpuTimer carve-cost A/B)
-// W5: uNrmGain deleted (only fed the removed VS slopeGain).
-uniform float uVertexAO;                   // per-vertex shading/AO strength lever (window.__vertexAO; 1.0 default)
-// SEPARATE WATER SURFACE (user 2026-06-11 'the ocean should be a separate surface'): the same
-// program draws TWO instanced passes -- terrain (uIsWater=0, true seabed geometry, land shading)
-// then water (uIsWater=1, the same leaves pinned to sea level, animated ocean shading, alpha-
-// blended over the seabed). One program + a uniform flag = no second cold compile, no duplicated
-// per-frame uniform churn, and the branch is uniform-coherent (free on the GPU).
-uniform float uIsWater;                    // 0 = terrain pass, 1 = water-surface pass
-uniform float uUnderwater;                 // 0 = camera above water, 1 = camera below sea level
-uniform float uBeachTopM;                  // beach ceiling (m): below this, grass/snow yield to sand (window.__beachTop; 30 default)
-uniform float uBeachShelfM;                // land coastal-shelf top (m): h<this is eased (h*h/S) so the coast rises gently from the waterline = wide beach (window.__beachShelf; 300 default). GEOMETRY (composeHeight+vH).
-uniform float uLandBias;                    // metres added to h (cbias+bShape) BEFORE the sea/land split -> raises the hypsometry = MORE LAND vs sea (window.__landBias). composeHeight + VS mirror + probe all add it (parity).
-uniform float uHiFreqCut;                  // hi-freq elevation-noise attenuation, applied to ALL hi-freq sources:
-                                           // broadShapeM/MD fine octaves (o>=6) + vtxDisplace micro-relief
-                                           // (window.__hiFreqCut; default 0.25 = the user's 4x reduction, 2026-06-06)
-// ANCHOR-STEP A/B TOGGLES (per-area stairstep root-hunt, workflow wrxo0rr7a). Each defaults to 0.0 =
-// CURRENT behaviour; set window.__<name>=1 to WIDEN that anchor-keyed smoothstep band so the 0->1 swing
-// spreads over more ground (the narrow-band-on-slow-anchor mechanism that snaps relief+normal "here and
-// there" along anchor contours). The user binary-searches these live at the affected spot; the one that
-// dissolves the step = the root. Once found, the winning widen is baked in unconditionally + toggle removed.
-uniform float uMtnBandWide;                // widen mtn=smoothstep(16.8,18.6,elevAmp) -> (14.5,19.5) [TOP SUSPECT: unlocks 2600m belt massif across a thin contour]
-uniform float uClimateRelief;              // widen wetLowFlat(0.66,0.9,humid) + coldFlat(0.18,0.34,temp) reliefMul gates
-uniform float uIsleWide;                    // widen isleZone seaBias gates (50,350)+(900,1600) -> (30,600)+(600,2200)
-uniform float uCarveWide;                   // widen the river/canyon/lake/dune CLIMATE gates so carve depth fades in over a wide span
-float canyonRidgeField(vec3 dir){ return inciseRidgeField(dir + vec3(13.7, -4.2, 8.9), 90.0, 2.07); }  // baseFreq HALVED 180->90 (user 2026-06-16 'twice as much canyons at half the frequency'): lower freq = WIDER, bigger, smoother canyons (each ~2x wider = the coarse mesh resolves the walls gently); the 'twice as much' coverage comes from the widened carve profile (canyonCarveM wall onset lowered). Shared VS carve + FS mask -> congruent.
-// CANYON cross-section now reads as a CANYON, not a V-notch: STEEP WALLS + a FLAT FLOOR.
-//   wall = a sharp smoothstep band -> the carve drops fast over a narrow ridge interval (the cliff
-//          walls), instead of the old gentle bench+gorge blend that made shallow V-troughs.
-//   floor = clamped: once past the wall the depth saturates to the flat gorge bottom (a river runs
-//          there, not an ever-deepening point). bench keeps a soft eroded rim above the wall lip.
-// Pure world-dir (LOD-invariant, seam-safe). depth out = 0 rim -> 1 floor (drives FS strata + AO).
-float canyonCarveM(vec3 dir, out float depth){
-    float ridge = canyonRidgeField(dir);
-    // WIDENED bands (user 2026-06-02 deepen+widen): the old .78/.86/.905/.93 intervals were a very
-    // narrow ridge slice -> thin hairline gorges. Widen so the canyon reads as a BROAD gorge: a wide
-    // eroded rim shoulder, a steep but visible wall, and a wide flat floor that the gorge bottoms out on.
-    // GENTLER WALLS (user 2026-06-14 'make canyon slopes more gentle, easier for the rough grid to
-    // represent'): widen every band so the same depth descends over a wider ridge interval = lower
-    // gradient -> the coarse LOD grid samples the wall without aliasing the cliff.
-    // (2026-06-15: the 'widen the approach' attempt REGRESSED -- gentler walls read as MORE flat, user 'still
-    // no elevation'. Reverted to the defined gorge; visibility comes from DEPTH (the -120 floor below) instead.)
-    // BROAD VALLEY BASIN + inner gorge (user 2026-06-15 'canyons not visible on elevation' -- ROOT is mesh LOD:
-    // a narrow gorge falls between coarse vertices so the mesh stays flat. Give each canyon a WIDE basin the
-    // coarse mesh resolves into a visible valley DIP, with the steep gorge nested inside it for close-range
-    // detail). basin = a broad gentle depression spanning the whole approach (ridge 0.12..0.85); gorge =
-    // the steep inner wall/floor. Both descend to the floor; the basin makes the elevation read at altitude.
-    // SHARP DEEP GORGE (user 2026-06-16 'canyons not in elevation, we USED to see them in this
-    // tessellation, the field canyon is LARGER than the quads'). The 0.55*basin variant (smoothstep
-    // 0.12..0.85) spread the carve across almost the WHOLE ridge wavelength -> the entire region sank
-    // together -> NO local rim-vs-floor contrast on the coarse mesh -> read as gentle rolling, not a
-    // canyon (the FS canyon-field still drew the sharp ridge line, so 'canyon in field, flat in
-    // elevation'). Revert to the concentrated steep-walled gorge so the carve matches the sharp field
-    // line: rim stays high, the gorge drops fast = the mesh shows canyon contrast even at altitude.
-    // BROAD MESH-RESOLVABLE GORGE (user 2026-06-16, diagnostic-proven). The sharp gorge (ridge>0.58)
-    // was NARROWER than a coarse-LOD mesh cell at altitude -> the canyon fell BETWEEN vertices = flat
-    // rendered geometry, while the FS field + the collision probe (both sample the field continuously)
-    // still showed it = 'canyons in the field/probe but not in the elevation'. A diagnostic unconditional
-    // dip keyed on smoothstep(0.45,0.75,ridge) DID render as visible gorges on the same mesh, so widen the
-    // carve to that band: a defined rim->wall->floor descent over ridge 0.45..0.85 so mesh vertices land
-    // on the walls AND the floor = real canyon CONTRAST at altitude (not the over-broad 0.12 basin that
-    // sank the whole region uniformly, nor the over-narrow 0.58 gorge that fell between vertices).
-    // GENTLER WALLS (user 2026-06-16 'we see canyons now, their slopes are too hard'): widen the wall +
-    // floor smoothstep bands so the rim->floor descent is spread over a WIDER ridge range = a softer
-    // world-space slope, while the canyon still reaches full depth at the centre (ridge near 1) and stays
-    // mesh-resolvable. (Not back to the 0.12 basin that sank whole regions = no contrast/invisible.)
-    // WIDER COVERAGE + SMOOTHER (user 2026-06-16 'twice as much canyons at half the frequency' + 'slopes must
-    // be smoother'): lower the wall onset so the carve covers ~2x the area (more canyon) and the rim->floor
-    // descent spreads over a wider ridge range = a gentler slope. Pairs with the halved canyonRidgeField freq.
-    // DEFINED NETWORK, not everywhere (user 2026-06-16 'the canyon field is mostly red, better distribution
-    // of canyons, and they dont seem to affect elevation'): onset 0.15 made the profile fire over ~the whole
-    // map (canyonRidgeField mean ~0.55) so the field read solid red AND there was NO rim-vs-floor CONTRAST
-    // (everything sank together = flat). Raise the onset so only the higher-ridge network carves, leaving the
-    // off-network land as a HIGH RIM = real canyon contrast. Paired with the halved freq (90) the network is
-    // still wide enough for the coarse mesh to resolve.
-    float wall  = smoothstep(0.52, 0.84, ridge);               // canyon wall: only the ridge network carves (rims stay high = contrast)
-    float floorF= smoothstep(0.66, 0.93, ridge);               // gentle approach to the gorge floor
-    depth = max(wall, floorF);
-    float profile = max(wall, floorF);                          // wide, soft-walled, broad-coverage gorge
-    float dmul = canyonDepthMul > 0.0 ? canyonDepthMul : 1.0;   // 0 = uniform unset (e.g. probe prog)
-    float carve = -CANYON_INCISE_DEPTH * dmul * profile;
-    // FINE TRIBUTARY GULLIES (user 2026-06-02: 'at 2m our canyons are <2m'). The main canyon network
-    // (freq 380 ~100km) is sparse + broad, so close up the ground has no canyon-scale erosion. Add a
-    // FRACTAL CONTINUATION: 2 finer ridged incision octaves (~10km + ~2km wavelength) carving shallower
-    // gullies/ravines (~55m + ~16m deep) so arid terrain shows branching erosion channels at the 10-
-    // 100m scale the low-altitude camera sees. Pure world-dir (LOD-invariant); the mesh resolves them
-    // at maxLevel 16 (~7m cells). Each gully octave = a thinned ridged field, depth scaled to its wl.
-    vec3 dn = dir;   // T-1: canyonCarveM is called with unit dir0 (VS) -- normalize was redundant
-    float g1 = inciseRidgeField(dn + vec3(5.1, 8.3, -2.7), 219.0, 2.11);   // ~40km tributaries (was 875->438)
-    float g2 = inciseRidgeField(dn + vec3(-7.4, 1.9, 6.2), 875.0, 2.05);  // ~10km gullies (was 3500->1750)
-    float g3 = inciseRidgeField(dn + vec3(2.2, -4.1, 8.8), 1750.0, 2.02); // ~1.2km branching ravines (deck scale)
-    // HIGH-FREQ fractal depth (user 2026-06-11 'leave the low frequency canyons deep, only reduce the
-    // high frequency fractals'). DEEPENED + sharpened 2026-06-14 (user: mountains need visible canyons):
-    // the main 100km gorge network keeps full CANYON_INCISE_DEPTH; the tributary octaves incise deeper
-    // with narrower walls so ravines read at the deck. g3 subdivides the bigger gullies at maxLevel.
-    // TRIBUTARIES DECOUPLED from dmul (user 2026-06-17 'canyon depth raises the entire landscape instead of
-    // differentiating canyons'): the gullies fire BROADLY, so scaling them by the depth lever roughened the
-    // WHOLE landscape when deepening canyons. Fixed light depth = canyon-depth now deepens the MAIN distinct
-    // gorges (the floor below) only; the tributaries stay as light close-up fractal texture.
-    carve +=  -55.0 * smoothstep(0.50, 0.92, g1);   // ~10km tributaries (light, fixed)
-    carve +=  -28.0 * smoothstep(0.55, 0.93, g2);   // ~2.5km gullies (light, fixed)
-    carve +=  -14.0 * smoothstep(0.58, 0.94, g3);   // ~1.2km branching ravines (light, fixed)
-    return carve;
+// Proland terrain constants (from upsample.wgsl noiseDesc + terrainDesc).
+// Layer types: 0=FBM, 1=ridged FBM.
+const int LTYPE_FBM = 0;
+const int LTYPE_RIDGED = 1;
+struct ProlandLayer { int ltype; int numOct; float gain; float ridgeOffset; float ridgeExp; float warpStr; float hmin; float hmax; };
+// noiseDesc: the outer rotated base layer (ridged, 23 octaves).
+const ProlandLayer noiseLayerBase = ProlandLayer(LTYPE_RIDGED, 23, 0.5, 1.064, 1.665, 3.6, 0.0, 1.0);
+// terrainDesc layers: layer0 ridged 10oct, layer1 FBM 18oct, layer2 ridged 18oct.
+const ProlandLayer noiseLayer0 = ProlandLayer(LTYPE_RIDGED, 10, 0.5, 1.064, 1.005, 1.6, 0.0, 1.0);
+const ProlandLayer noiseLayer1 = ProlandLayer(LTYPE_FBM,    18, 0.5, 1.064, 1.665, 2.6, -2.0, 2.0);
+const ProlandLayer noiseLayer2 = ProlandLayer(LTYPE_RIDGED, 18, 0.5, 1.064, 1.1,   0.9, -2.0, 2.0);
+float eval_layer(highp vec3 pos, ProlandLayer L) {
+    float raw;
+    if (L.ltype == LTYPE_FBM) {
+        raw = value_fbm(pos, L.gain, L.numOct);
+    } else {
+        raw = value_ridged_fbm_rot(pos, L.gain, L.numOct, L.ridgeOffset, L.ridgeExp);
+    }
+    return L.hmin + (L.hmax - L.hmin) * (raw*0.5+0.5);
 }
-float canyonCarveM(vec3 dir){ float dd; return canyonCarveM(dir, dd); }
-
-// CLIFFS AS REAL MESA LANDFORMS (user 2026-06-02: 'cliffs still patches of dots', 'we dont have
-// realistic cliffs yet'). The height-QUANTIZATION terrace produced thin scattered contour risers =
-// dots, NOT escarpments. REDESIGN: a cliff is a coherent raised PLATEAU (mesa) with a sharp RIM.
-//   mesaField(d) -> a smooth low-frequency field; where it exceeds a threshold the land is a mesa
-//   TOP, raised by a fixed height; the THRESHOLD CROSSING is a narrow band = the near-vertical cliff
-//   RIM, a CONNECTED line around the whole mesa (not speckle). Stacking two octaves gives mesas +
-//   buttes (smaller mesas on top). Pure world-dir, LOD-invariant, seam-safe. Returns metres to ADD;
-//   cliffOut ->1 on the rim band (drives FS strata + steep material) so cliffs are lit + textured.
-const float MESA_HEIGHT = 650.0; // metres a mesa top stands above the floor. 1000->650 (user 2026-06-16 'carving the land in a hard way, smoother'): less towering + paired with the ~3.4x wider rim band = a gentle escarpment, not a hard wall.
-uniform float cliffAmt;           // LIVE cliff-strength lever (window.__cliffAmt; 1.0 default)
-highp float broadShapeLowM(vec3 dir);   // W7: forward decl (metres -> highp); atlas-backed slope helper for the region slope gate
-// COHERENT BADLANDS REGION MASK: a LOW-FREQUENCY world-dir noise (freq 11 ~ continental patches)
-// thresholded to a minority fraction -> WHERE mesa country occurs. Mesas exist only inside a region
-// so cliffs cluster into badlands, never speckle the whole planet.
-float badlandsRegion(vec3 d){
-    float r = snoise3(d * 11.0 + vec3(31.7, -12.3, 5.1));   // [-1,1], coherent ~continental patches
-    return smoothstep(0.30, 0.55, r);                       // top fraction -> 1 inside badlands
+// sample_fractal_terrain: 3-layer domain-warp terrain (warpLevel=3, one warp layer).
+float sample_fractal_terrain(highp vec3 pCoords) {
+    highp vec3 warpOff = pCoords * noiseLayer0.warpStr * eval_layer(pCoords, noiseLayer0);
+    highp vec3 warped  = pCoords + warpOff;
+    float h0 = eval_layer(pCoords,  noiseLayer0);
+    float h1 = eval_layer(warped,   noiseLayer1);
+    float h2 = eval_layer(warped,   noiseLayer2);
+    return (h0 + h1 + h2) / 3.0;
 }
-// Smooth mesa potential in [0,1]: a couple of mid-frequency octaves (freq ~55/130 -> mesas ~80km /
-// ~35km across). Domain-warped so mesa outlines are organic (not blobby circles).
-float mesaField(vec3 d){
-    vec3 w = d; w.xy += 0.10 * vec2(snoise3(d*40.0+5.0), snoise3(d*40.0+11.0));   // 3->2 warp taps (max-speed sweep): z-warp dropped, outlines stay organic
-    float a = snoise3(w * 55.0 + vec3(3.1, 7.7, 1.3));     // big mesas
-    float b = snoise3(w * 130.0 + vec3(9.4, 2.2, 6.6));    // buttes on top
-    return 0.5 + 0.5 * (0.7 * a + 0.3 * b);                // [0,1]
-}
-highp float cliffTerraceM(vec3 dir, highp float h, out float cliffOut){   // W7: h is metres (highp); cliffOut mask stays mediump
-    cliffOut = 0.0;
-    if (h <= 0.0) return 0.0;
-    vec3 d = normalize(dir);
-    // REGION GATE: mesas only inside a coherent badlands region (no planet-wide speckle).
-    float region = badlandsRegion(d);
-    if (region <= 0.0) return 0.0;
-    // EXCLUDE steep mountains (a mesa is a flat-topped raised block, not a peak). Macro slope from
-    // broadShapeLowM over a fixed 1.2km step -> fade mesas out where the broad land is already steep.
-    const float e = 2400.0;   // FPS/quality: 1200->2400 macro-slope FD step (2026-06-15). A wider step better captures the MACRO slope for the mesa flatness gate (less aliasing) and pairs with fewer broadShapeLowM octaves; the gate position is visually unchanged (badlands-only, gated).
-    vec3 ux = normalize(cross(abs(d.y) < 0.99 ? vec3(0.0,1.0,0.0) : vec3(1.0,0.0,0.0), d));
-    highp float h0 = broadShapeLowM(d);                          // W7: metres, highp
-    highp float gx = (broadShapeLowM(normalize(d + ux * (e/defRadius))) - h0) / e;
-    float flatness = 1.0 - smoothstep(0.05, 0.16, abs(gx));
-    float gate = region * flatness;
-    if (gate <= 0.0) return 0.0;
-    // MESA STEP: raise the land where mesaField crosses THR over a NARROW band TH -> the band is the
-    // cliff RIM (a connected contour around the mesa), the inside is the raised flat-ish top. Two
-    // levels (top + a higher butte tier) so cliffs stack like real mesa country.
-    float m = mesaField(d);
-    const float THR = 0.56, TH = 0.24;             // rim centre + half-width. 0.07->0.24 (user 2026-06-16 'something else is carving the land in a hard way, slopes must be smoother'): the mesa rise was spread over a NARROW mesaField band = a near-vertical escarpment; widen the band ~3.4x so the same rise climbs over a much wider span = a SMOOTH slope, not a hard step.
-    float top  = smoothstep(THR - TH, THR + TH, m);              // 0 floor -> 1 mesa top
-    float butte= smoothstep(0.74 - TH, 0.74 + TH, m);            // higher butte tier
-    float rise = (0.7 * top + 0.3 * butte) * MESA_HEIGHT;        // metres raised
-    // rim mask: ->1 INSIDE either transition band (where the step is climbing = the steep face).
-    float rim = max(top * (1.0 - top), butte * (1.0 - butte)) * 4.0;   // bell, peak 1 mid-rim
-    cliffOut = clamp(rim, 0.0, 1.0) * gate;
-    float camt = cliffAmt > 0.0 ? cliffAmt : 1.0;  // 0 = uniform unset (e.g. probe prog)
-    return rise * camt * gate;                     // metres added (mesa top raised; rim = the cliff)
+const float PI = 3.14159265;
+// Proland terrain height: implements compute_terrain_height() from upsample.wgsl.
+// dir0 = unit world direction; noiseScale/rootSize tune the frequency (use 1.0/defRadius defaults).
+highp float prolandTerrainH(vec3 dir0) {
+    highp vec3 worldPt  = normalize(dir0) * 700000.0;
+    highp vec3 pCoords  = worldPt / defRadius;
+    float angle   = value_fbm_scaled(pCoords * 0.01, 1.0, 3, -PI, PI) * 0.4;
+    highp vec3 rotPt = rotate_domain(pCoords * 0.5, angle);
+    float base_h  = eval_layer(rotPt, noiseLayerBase);
+    float ratio   = value_fbm_scaled(dir0 * 40.0, 0.8, 3, 0.0, 1.0);
+    float h       = sample_fractal_terrain(pCoords);
+    h = (base_h + h * ratio * 0.9) / 1.3;
+    float pmix  = value_fbm_scaled(pCoords*0.53+vec3(123.0,456.0,789.0), 1.0, 3, 0.0, 1.0)*0.5+0.5;
+    float power = mix(0.95, 1.3, pmix);
+    h = pow(max(h, 0.0), power);
+    return h;
 }
 
-// DUNE FIELD (arid/desert anchors, ref: keaukraine/webgl-dunes). A rolling sand surface = large
-// smooth low-frequency dunes with ASYMMETRIC crests (windward shallow, lee steep) + superimposed
-// fine wind ripples. Pure world-dir field (LOD-invariant). Returns metres of dune relief (>=0,
-// added on top of land) and `crest` in [0,1] (1 at a dune ridge -> the FS lightens sand there).
-const float DUNE_AMP = 120.0;     // metres of big-dune relief
-float duneFieldM(vec3 dir, out float crest){
-    vec3 d = normalize(dir);   // UNIT dir keeps freq*d bounded -> no planet-scale fp32 lattice break.
-    // BIG DUNES ~3km: low-freq smooth noise, asymmetric crest (pow sharpens the lee face).
-    float big = snoise3(d * 2000.0 + vec3(2.0, 7.0, 5.0)) * 0.5 + 0.5;  // [0,1]
-    float dune = pow(big, 1.6);                                          // windward-shallow/lee-steep
-    // MEDIUM dunes ~1km riding on the big ones. (The old ~150-220m wind RIPPLES were REMOVED: at
-    // that wavelength the mesh vertices undersample them -> shimmer/moire 'UV issue' + a wild FD
-    // normal, with no resolvable benefit. The rolling big+medium dunes are the dune read.)
-    float med = snoise3(d * 6000.0) * 0.5 + 0.5;
-    crest = smoothstep(0.55, 0.92, big);
-    return DUNE_AMP * dune + 40.0 * (med * dune);
-}
-
-// TERRAIN HEIGHT FIELD: one continuous world-dir fBm -- a finer LOD is a denser SAMPLE of the same
-// field (LOD-invariant, seam-safe by construction).
-// CHEAP 8-octave variant for the VS lit-normal finite difference (silhouette+macro slope only).
-highp float broadShapeLowM(vec3 dir){   // W7: metres (~13000) + freq (~49152) accumulators are highp islands
-  if (hasHpf == 0) return 0.0;
-  vec3 d = normalize(dir);
-  highp float amp = 6500.0, freq = 0.75, sum = 0.0;
-  int blOcts = (uBroadLowOcts > 0) ? uBroadLowOcts : 8;
-  for (int o=0; o<blOcts; o++){ sum += amp * snoise3(d*freq); amp *= (o < 6 ? 0.66 : 0.82); freq *= 2.0; }
-  return sum - 500.0;
-}
-// ---- SHARED micro-relief helpers (MOVED to the common preamble, THC-Normal W1, so composeHeight()
-// in the VS/PROBE region can call them). vtxDetail = the micro-relief A/B global; vnoise2
-// is the 2D value-noise vtxDisplace octaves sample; ruggedFromElevAmp + faceWarp map anchor->amplitude
-// and face-local metres->warped metres. All pure, dependency-light (defRadius + smoothstep only).
-// (vtxDetail removed 2026-06-18 -- vtxDisplace is a 0.0 stub, this micro-relief lever was dead.)
-// W7 highp ISLAND: vnoise2 args are face-local metres / wavelength = fp(~6.4e6)/wl(~1m) -> ~6e6, far
-// past fp16. The vtxDisplace micro-relief lattice needs full precision or the ground bump quantizes.
-// W10 PRECISION: the old fract(p*443.897) hash overflowed fp32 integer-exactness at fine octaves
-// (wl~10m -> p~6.4e5, *443.897 -> 2.84e8 >> 2^24=1.67e7), so fract() lost low bits and the corner
-// hashes QUANTIZED to a few discrete values -> per-cell height plateaus = faint ~0.48m terracing on
-// flat ground. Fix: hash the INTEGER lattice cell with a uint bit-mix (no large float, no fract).
-// Pure function of the world-consistent integer cell index -> adjacent LODs and cube faces agree
-// EXACTLY (no new seam). Amplitude/range UNCHANGED: still a uniform [0,1] per-cell value, same field
-// statistics; this removes the quantization, it does not smooth. (p is the exact integer lattice
-// index <2^24, so ivec2(p) is exact.)
+// SHARED vhash/vnoise2/faceWarp helpers still needed for the VS normal taps.
 highp float vhash(highp vec2 p){
-  uvec2 q = uvec2(ivec2(p));                 // two's-complement bits of the exact integer cell index
-  uint h = q.x * 1597334677u + q.y * 3812015801u;   // decorrelate the two axes
-  h ^= h >> 16; h *= 2654435769u; h ^= h >> 15; h *= 2246822519u; h ^= h >> 13;   // bit avalanche
-  return float(h) * (1.0 / 4294967296.0);    // [0,1)
+  uvec2 q = uvec2(ivec2(p));
+  uint h = q.x * 1597334677u + q.y * 3812015801u;
+  h ^= h >> 16; h *= 2654435769u; h ^= h >> 15; h *= 2246822519u; h ^= h >> 13;
+  return float(h) * (1.0 / 4294967296.0);
 }
-// QUINTIC C2 interp (Perlin u=6t^5-15t^4+10t^3), NOT the C1 cubic smoothstep (3t^2-2t^3). The cubic's
-// SECOND derivative is discontinuous at every lattice cell edge -> the noise SLOPE kinks at each ~wl cell
-// boundary; on a gentle mountain flank (where the kink is not swamped by relief) that ~2.7m/10m slope spike
-// every ~320m (vtxDisplace wl0) reads as a LOCAL stairstep in both elevation and the central-diff normal
-// (user 2026-06-09 'only a few very local spots'). Quintic is C2 -> slope continuous across cells, NO kink,
-// and amplitude UNCHANGED (this does not smooth the terrain, it removes the discontinuity in its derivative).
 float vnoise2(highp vec2 p){ highp vec2 i=floor(p),f=fract(p); vec2 u=f*f*f*(f*(f*6.0-15.0)+10.0);
   float a=vhash(i),b=vhash(i+vec2(1,0)),c=vhash(i+vec2(0,1)),d=vhash(i+vec2(1,1));
-  return mix(mix(a,b,u.x),mix(c,d,u.x),u.y)*2.0-1.0; }   // [-1,1]
-// (vnoise2D DELETED 2026-06-11 dead-code sweep: no callers since the VS gradient block was removed.)
-// anchor elevAmp -> rugged multiplier (BAKED elevAmp range ~14.5-18.9).
-float ruggedFromElevAmp(float elevAmp){ return mix(0.5, 1.8, smoothstep(15.0, 18.6, elevAmp)); }
-// TANGENT-ADJUSTED cube->sphere warp: face-local metres -> warped metres (near-uniform cell area).
-// Edge s=+-1 -> tan(+-pi/4)=+-1 (identity) => cross-face shared edges meet exactly (seam-safe).
-highp vec2 faceWarp(highp vec2 p){ return defRadius * tan((p / defRadius) * 0.7853981634); }   // W7: ~6.4e6 m result, highp
-// PERLIN-EVERYWHERE lever -- shared by the composeHeight elevation term (VS/PROBE) and the FS albedo
-// overlay, so it must be declared in ALL stages (outside the VS/PROBE guard below).
-uniform float uDetailOverlay;   // amplitude lever (user-tuned 6; 0 = off; __detailOverlay)
-uniform float uGrid;             // interior cells per tile edge (GRID=16); for mesh-based vertex normals
-uniform float uNrmStepM;        // lit-normal FD step in metres (150); uniform-fed to defeat FXC constant folding
-uniform float uReliefScale;     // SCALE-INVARIANT planet (2026-06-17): relief height scale = R/6360000. The fractal relief is tuned in absolute metres at the 6360km design radius; scaling it by R/6360km makes the GEOMETRY proportional to whatever radius a consumer (e.g. spoint) passes, so ANY radius renders identically while the camera/LOD math uses the real value. 1.0 at the design radius = exact no-op. The FS material gates keep reading the UNSCALED inline vH (reference metres) so snow/band/biome lines fire at the same heights.
+  return mix(mix(a,b,u.x),mix(c,d,u.x),u.y)*2.0-1.0; }
+highp vec2 faceWarp(highp vec2 p){ return defRadius * tan((p / defRadius) * 0.7853981634); }
+uniform float uReliefScale;
+uniform float uGrid;
+uniform float uNrmStepM;
+uniform float uLandBias;
+uniform float uBeachShelfM;
+
 #if defined(_VERTEX_) || defined(_PROBE_) || defined(_HEIGHTBAKE_)
-highp float broadShapeM(vec3 dir, float reliefMul, float ridgeMul){   // W7: returns metres (~13000) -> highp
-  if (hasHpf == 0) return 0.0;
-  float mtnAmp = 1.0;   // mountain-amplitude (was a window.__mtnAmp uniform; inlined at neutral 1.0)
-  vec3 d = normalize(dir);
-  highp float amp = 6500.0, freq = 0.75, sum = 0.0;   // W7 highp ISLAND: amp/freq(~49152)/sum(~13000) overflow fp16
-  int octMax = (uOctMax > 0) ? uOctMax : 12;   // runtime bound (FXC unroll-defeat); 12 when unset
-  for (int o=0; o<octMax; o++){   // W9: 14->12 octaves, drop the finest 2 (wavelengths <2km) UNCONDITIONALLY
-    // FINE-OCTAVE 5x FREQ (user 2026-06-06: the high-freq normals-affecting GROUND bump should be 5x
-    // SMALLER). The o>=6 fine octaves ARE that bump (they drive the VS lit normal via the broadShapeMD
-    // gradient bEx/bEy; vtxDisplace + rock dN are separate, confirmed by live __vtxDetail toggle). Sample
-    // the fine band at 5x frequency so the bump grain is 5x finer; the o<6 base octaves (silhouette +
-    // hypsometry, CLI-validated) keep freq untouched. MUST match broadShapeMD exactly (geometry+normal).
-    highp float sf = (o >= 6) ? freq * 0.667 : freq;   // W7: freq island. fine/ridge band 3x WIDER (user 2026-06-10 'mountains noise still narrow, 3x wider'): *2.0 -> *0.667 = the visible o>=6 ridge texture (13-104km) widens 3x
-    float nn = snoise3(d*sf);
-    if (o >= 6) {
-      float r = (1.0 - abs(nn)) * 2.0 - 1.0;     // rounded ridged crests for mountain belts
-      nn = mix(nn, r, ridgeMul * 0.8);
-      nn *= reliefMul;                            // per-biome amplitude on regional+fine octaves
-      nn *= 1.36;                                 // FINE-OCTAVE INTENSITY -- 4x (user 2026-06-09 '4x our high
-                                                  // frequency perlin noise intensity'): 0.34 -> 1.36, net
-                                                  // 1.36 * uHiFreqCut 0.5 = 0.68 (was 0.17). The o>=6 fine
-                                                  // octaves are the high-freq normals-affecting ground bump
-                                                  // (user-confirmed 2026-06-06). uHiFreqCut(0.5) stays the
-                                                  // live trim dial. Silhouette octaves o<6 untouched.
-      nn *= uHiFreqCut;                           // hi-freq cut, default WIDENED 0.25->0.5 (see gl-render):
-      // apply the SAME fine-octave attenuation that broadShapeMD uses, so the COLLISION/probe height
-      // (sampleGroundM runs this scalar broadShapeM) matches the RENDERED geometry (broadShapeMD). Before
-      // this, only broadShapeMD cut the fine band -> the collision height diverged from the surface by the
-      // fine-octave amount. uHiFreqCut default 0.25 = the user's 4x reduction of all hi-freq elevation noise.
-    }
-    sum += amp * nn;
-    amp *= (o < 6 ? 0.66 : 0.80); freq *= 2.0;   // macro decay 0.66; fine-octave decay 0.74->0.80 (widen, 2026-06-08)
-  }
-  // PEAK-LIFT, MOUNTAIN-BELT GATED: lift the high end so ridges become tall peaks; plains flat.
-  highp float hi = max(sum - 500.0, 0.0);            // W7: metres
-  float peak = smoothstep(1200.0, 5000.0, hi);
-  float liftK = 0.06 + 0.16 * clamp(reliefMul, 0.0, 1.7);   // 2x LESS elevated (user 2026-06-10: halved 0.12+0.32 -> 0.06+0.16)
-  sum += hi * peak * liftK;
-  // MOUNTAIN-BELT MASSIF: a low-freq range-scale envelope lifts the belt interior as a coherent
-  // landmass; the ridged mid octaves above supply the rugged peaks ON TOP of the raised base.
-  float belt = clamp((reliefMul - 0.45) / 1.25, 0.0, 1.0);
-  if (belt > 0.0 && hi > 0.0) {
-    // (massif envelope freqs restored to 4.0/7.0 -- they set continental belt PLACEMENT, not the visible
-    // ridge spacing; the 3x-wider knob is the o>=6 fine band above, not this envelope.)
-    float e0 = snoise3(d * 2.0 + vec3(11.0, 3.0, 7.0)) * 0.5 + 0.5;
-    float e1 = snoise3(d * 3.5 + vec3(2.0, 9.0, 4.0)) * 0.5 + 0.5;
-    float modu = 0.7 + 0.3 * clamp(e0 * 0.7 + e1 * 0.3, 0.0, 1.0);
-    float landGate = smoothstep(0.0, 800.0, hi);
-    float base = belt * landGate * modu;
-    sum += base * 5200.0 * mtnAmp;               // 2x LESS elevated (user 2026-06-10: halved 10400 -> 5200)
-    // STEEP RUGGED PEAKS: a high-base-freq (~30km) ridged stack concentrated into steep crests.
-    if (base > 0.01) {
-      // pf 100 REVERTED to 200 (user 2026-06-11 'most of the terrain is flat now'): the halved peak
-      // frequency flattened the 4x mountains planet-wide. The 'slopes everywhere' diagnosis it served
-      // conflated the braided TEXTURE patches (rockSlope breakup noise, since deleted) with real slope;
-      // with the braids, the dark raw-photo far field, and the UDN normal-frame bug all fixed, the
-      // original steep terrain stands.
-      highp float pf = 50.0; float pa = 1.0, ps = 0.0, pn = 0.0;   // W7: pf feeds the noise lattice -> highp. pf 100->50 (user 2026-06-14: halve the mountain frequency = 2x wider peak massifs)
-      int pkOcts = (uPeakOcts > 0) ? uPeakOcts : 3;
-      for (int o = 0; o < pkOcts; o++) {
-        ps += pa * (1.0 - abs(snoise3(d * pf + vec3(3.3, 7.7, 1.1))));
-        pn += pa; pa *= 0.65; pf *= 2.13;
-      }
-      float crest = ps / pn;
-      sum += base * pow(crest, 4.5) * 8400.0 * mtnAmp;   // pow 4.5: sharp steep peaks that engage the rock-face slope gate (3.5 rounded them flat -- user 2026-06-14 regression revert)
-    }
-  }
-  // SOFT ELEVATION CEILING (mob-w8-ceiling 2026-06-08: 'peaks come to points, no flat plateau'). Even at
-  // CK=6500/CMAX=13000 the tanh(x/(CMAX-CK)) knee was tight enough that the high band still rolled over onto
-  // a soft plateau and needed a *1.15 post-scale crutch. WIDEN THE KNEE: divide the excess by a fixed 8000m
-  // so the tanh stays in its near-linear region far longer -- peaks keep climbing to points instead of
-  // asymptoting to a ceiling -- and lift CMAX to 15000 so the asymptote sits well above any real peak. With
-  // the wider knee the high band no longer collapses, so the *1.15 scale-up crutch is DROPPED.
-  {
-    highp float e = sum - 500.0;                     // W7: metres
-    // GLOBAL ELEVATION SCALE 0.85 (user 2026-06-13).
-    // 723m, relief only ~4km -> mountains invisible/clamped-looking, NOT a top clip). 0.65 expands the
-    // range so mountains stand out: p50 ~1370m, p99 ~8920m, MAX ~11600m, relief ~7.5km. Scales the WHOLE
-    // relief uniformly (base octaves + belt massif + peaks) on the excess-over-900. Max 11.6km still well
-    // under the ceiling (CK 6500 / CMAX 42000, knee /26000) so no clip.
-    e *= 0.85;
-    // CEILING RAISED + KNEE WIDENED for the 4x mountaintops (user 2026-06-09: 'must not hit the ceiling
-    // anywhere, run under the normal max + elevate the maximum'). MEASURED 4x-hf+4x-mtn pre-ceiling max
-    // = 28550m (p99.9 21457m); CMAX 42000 sits 1.47x above it = no peak ever approaches the asymptote, and
-    // the knee /26000 keeps tanh near-LINEAR through the whole real range (at the 22050m excess top,
-    // tanh(0.85)=0.69 -> peaks come to POINTS, never the flat plateau the tight knee caused).
-    float CK = 6500.0, CMAX = 42000.0;
-    if (e > CK) { highp float x = e - CK; e = CK + (CMAX - CK) * tanh(x / 26000.0); }
-    return e;
-  }
-}
-// FD-GRADIENT VARIANT (FPS lever, measured: browser-9 low-alt VS=53ms/95% of frame). The lit-normal
-// finite-difference in the VS samples broadShapeM at +/- a 2km world step; octaves whose wavelength is
-// BELOW the FD step (~the finest 4 of the 14, wavelength < ~2km) cannot be resolved by a 2km FD -- they
-// only add sub-step noise that smooths/aliases out. So this variant runs 10 (not 14) macro+mid octaves
-// and a 3-octave (not 5) steep-peak stack, keeping the FULL massif/peak-lift/ceiling AMPLITUDE so the FD
-// slope still tracks the real mountain geometry (the broadShapeLowM regression was dropping that
-// amplitude, not the sub-step octaves). It is a GLOBALLY-FIXED world-dir function => LOD-invariant, no
-// tile-edge seam (the refuted per-tile/LOD octave fade diverged at shared edges; this does not). Used
-// ONLY for the two FD taps; the displaced HEIGHT still uses the full broadShapeM (full detail on the
-// geometry, slightly-coarsened slope on the lit normal -- the FS dFdx normal carries the fine relief).
-// ANALYTIC-DERIVATIVE broadShapeM: returns vec4(height, dHeight/dDir in WORLD-DIR space). Same field
-// as broadShapeM, but every octave also accumulates its exact gradient via snoise3D, and the smooth
-// post-terms (gamma compression, peak-lift, tanh ceiling) scale the gradient by their scalar
-// derivative (chain rule). The FS builds the lit normal from this gradient instead of a finite
-// difference -> exact relief shading at EVERY scale, no fine-octave aliasing (the deck flat-clay fix).
-// The massif/steep-peak ridged terms contribute their dominant gradient; sub-tap detail rides the
-// octave gradient. Returns the SAME height as broadShapeM (verified by construction).
-// broadShapeFD (the reduced-octave FD-tap variant) REMOVED 2026-06-05: the analytic-derivative
-// broadShapeMD replaced the 3-tap finite-difference lit-normal entirely, so the reduced-octave FD
-// helper is dead. One comprehensive gradient source, net-smaller shader (one-system cleanup).
-highp float broadShape(vec3 dir){ return broadShapeM(dir, 1.0, 0.0); }   // W7: metres -> highp
-highp float broadShape(vec3 dir, float tileM){ return broadShape(dir); }
-
-// PER-VERTEX micro-relief (rolling-ground bump). MOVED into the shared VS/PROBE region
-// (THC-Normal W1) so geometry (VS), collision (PROBE) and the height-bake all call the SAME field --
-// no parallel re-derivation. fp = face-local warped metres (continuous across tiles), tileM = quad
-// size for the Nyquist octave fade, rugged = anchor-driven amplitude. Pure value (no gradient).
-// vtxDisplace REMOVED (user 2026-06-17 'we put vertex micro detail on 0 ... wasted calculation on those'):
-// vtxDetail defaulted to 0, so this ALWAYS early-returned 0 before any octave ran -- the fine-relief + the
-// mountain-erosion octave loops were dead code. Stubbed to 0.0 so vDisp is identically 0 at every call site
-// (the look is unchanged; relief is carried by broadShapeM's o>=6 octaves + the detail overlay). The
-// vtxDetail / uVtxBaseOcts / uVtxErodeOcts uniforms are now inert (left as harmless dead decls; setters
-// pruned next pass). NOTE: this is CODE CLEANUP, not a speed win -- the early-return meant it already cost
-// nothing; the real VS cost is broadShapeM (see the fps note).
-float vtxDisplace(highp vec2 fp, float tileM, float rugged){ return 0.0; }
-
-// PERLIN-EVERYWHERE detail fbm (user 2026-06-10): ONE 3-octave value fbm shared by the FS albedo
-// overlay and the composeHeight elevation term below (same field -> the brightness variation and the
-// relief variation correlate, reading as one landform). World-dir keyed, seam-safe.
-highp float detailFbm(vec3 dir) {
-    float ov = 0.0, oa = 0.0;
-    float fq = 75.0, am = 1.0;
-    int dfOcts = (uDetailFbmOcts > 0) ? uDetailFbmOcts : 3;
-    for (int o = 0; o < dfOcts; o++) {
-        ov += am * snoise3(dir * fq + vec3(float(o) * 7.3));
-        oa += am;
-        fq *= 5.0; am *= 0.75;
-    }
-    return ov / oa;
-}
-
-// THC-Normal W1: the SINGLE composite height field. Lifts the inline vH accumulation out of the VS
-// main() (was terrain.glsl ~801-902) into ONE value-only scalar so geometry (VS) and collision (PROBE)
-// are derived from the EXACT same composition -- aligned by
-// construction, no parallel mirror to drift. Returns the signed elevation h (metres) for dir0; the
-// caller adds nothing (cbias is folded in here). dir0 = world dir of the sample (faceWarp'd),
-// faceLocal = face-local warped metres (for vtxDisplace), tileM = quad size (Nyquist fade).
-// vs-param-cache (2026-06-15): the HPF-FIELD-derived params (cbias/rugged/reliefMul/ridgeMul) are a pure
-// fn of the continental HPF field (~50km/texel) -> ~CONSTANT over the +/-~300m lit-normal tap radius.
-// Compute them ONCE per vertex (computeHCache) and reuse across the 4 normal taps via the single
-// composeHeightC call-site (preserves the FXC single-instance normal invariant). The taps then skip
-// hpfSample + the climate/isle smoothstep derivation, re-evaluating only the per-tap-VARYING fields
-// (broadShapeM + carves). composeHeight() below self-derives the cache for _PROBE_/bake single calls.
-struct HCache { highp vec4 hpf0; float rugged; float reliefMul; float ridgeMul; };
-HCache computeHCache(vec3 dir0){
-  highp vec4 hpf0 = hpfSample(dir0);          // (seaBias=r, elevAmp=g, temp=b, humid=a)
-  highp float cbias = hpf0.r;                 // W7: seaBias metres
-  float rugged = ruggedFromElevAmp(hpf0.g);
-  float bTemp = hpf0.b, bHum = hpf0.a, bAmp = hpf0.g;
-  float mtn = smoothstep(mix(16.8, 14.5, uMtnBandWide), mix(18.6, 19.5, uMtnBandWide), bAmp);
-  float wetLowFlat = smoothstep(mix(0.66, 0.50, uClimateRelief), mix(0.9, 1.0, uClimateRelief), bHum) * (1.0 - mtn);
-  float coldFlat = (1.0 - smoothstep(mix(0.18, 0.05, uClimateRelief), mix(0.34, 0.45, uClimateRelief), bTemp));
-  float reliefMul = clamp(0.45 + 1.25 * mtn - 0.30 * wetLowFlat - 0.25 * coldFlat, 0.40, 1.7);
-  float ridgeMul  = clamp(mtn * 1.1, 0.0, 1.0);
-  float isleZone = smoothstep(mix(50.0, 30.0, uIsleWide), mix(350.0, 600.0, uIsleWide), cbias)
-                 * (1.0 - smoothstep(mix(900.0, 600.0, uIsleWide), mix(1600.0, 2200.0, uIsleWide), cbias));
-  if (isleZone > 0.0) {
-    float isleType = snoise3(dir0 * 9.0);
-    float volcanic = smoothstep(0.25, 0.7, isleType);
-    float atoll    = smoothstep(0.25, 0.7, -isleType);
-    reliefMul = mix(reliefMul, mix(reliefMul, 1.6, volcanic) * (1.0 - 0.7 * atoll), isleZone);
-    ridgeMul  = mix(ridgeMul, max(ridgeMul, 0.9 * volcanic), isleZone);
-  }
-  return HCache(hpf0, rugged, reliefMul, ridgeMul);
-}
-highp float composeHeightC(vec3 dir0, highp vec2 faceLocal, float tileM, HCache C, bool skipCarves){   // W7: faceLocal metres + returned h -> highp islands. skipCarves: FD NORMAL taps pass true (lit normal = broad+detail shape only) -- ONE call-site/runtime param = one FXC instance (taps agree); the i==0 centre + probe pass false so POSITION+collision keep the carves.
-  highp vec4 hpf0 = C.hpf0;              // (seaBias=r, elevAmp=g, temp=b, humid=a)
-  highp float cbias = hpf0.r;           // W7: seaBias metres
-  float rugged = C.rugged;
-  float vDisp = vtxDisplace(faceLocal, tileM, rugged);
-  float reliefMul = C.reliefMul;
-  float ridgeMul  = C.ridgeMul;
-  highp float bShape = broadShapeM(dir0, reliefMul, ridgeMul);  // W7: metres
-  highp float h = cbias + bShape + uLandBias;                    // W7: composite elevation metres (~13000); +uLandBias raises hypsometry = more land
-  // REALISTIC BATHYMETRY (user 2026-06-11 'the depth under the water doesnt seem right -- the
-  // landscape should continue underwater realistically'): raw cbias+bShape plunges at land-relief
-  // gradients, so the seabed hit kilometre depths within sight of the beach. Real margins have a
-  // wide gently-sloped CONTINENTAL SHELF (0..~120m over tens of km), then a steeper continental
-  // SLOPE down to the abyssal plain (which keeps its raw depth). Monotone remap of h, pure fn of
-  // the field -> seam-safe, LOD-invariant, and the collision probe shares it by construction.
-  if (h < 0.0) {
-      // C1 WATERLINE (user 2026-06-14 'geometry crease + shading/rock hard line where land meets beach'):
-      // the land shelf is FLAT at the waterline (slope 0) but the seabed used slope 0.24 from h=0 -> a
-      // slope discontinuity = a crease (+ the shading brightness line + rock where steep) right at the
-      // shore. Ease ONLY a NARROW band of depth (NOT the 28km land beach width -- that shallowed the
-      // whole ocean into 'almost-land everywhere', user 2026-06-14) with the flat-at-waterline curve so
-      // both sides meet the waterline at slope 0 (no crease); beyond SEABED_EASE the true bathymetry
-      // resumes so the ocean goes DEEP.
-      // NO OFFSHORE 'RING OF LAND' (user 2026-06-17): the smooth continental cbias descends MONOTONICALLY
-      // offshore, but bShape can rebound the seabed back to near sea level ~10-15km out (node transect:
-      // cbias -591m bumped to raw -0.4m), forming a shallow ring/collar around coasts. Cap the underwater
-      // elevation at cbias + COAST_RING_CEIL -- bShape relief is allowed only that far above the smooth
-      // continental floor, so the IMMEDIATE shore (cbias still near the coastline value -> high cap) keeps
-      // its gentle beach (no coastal cliff), while the deeper-cbias offshore rebounds are pushed back under
-      // (no ring). Tune COAST_RING_CEIL by eye (lower = ring suppressed harder + flatter near-coast shelf).
-      const highp float COAST_RING_CEIL = 500.0;
-      h = min(h, cbias + COAST_RING_CEIL);
-      const highp float SEABED_EASE = 25.0;   // metres of depth flattened at the shore (decoupled from the land beach)
-      highp float d0 = -h;
-      highp float d = (d0 < SEABED_EASE) ? (d0 * d0 / SEABED_EASE) * (2.0 - d0 / SEABED_EASE) : d0;
-      // NO 'SECOND BEACH' (user 2026-06-14 'shallow ring of water around land / making a second beach'):
-      // the wide flat shelf read as a shallow underwater beach ring. Shelf cut to a tiny 25m-raw lip then
-      // a STEEP 1.9 plunge so the water drops to real depth immediately off the actual beach -- no shelf.
-      // (former: narrow shelf 500->150m raw, steeper shelf 0.24->0.6, steeper continental slope 1.19->1.5 so the
-      // seabed plunges to deep water just offshore (less flat shallow shelf) and the deep bathymetry
-      // carries 1.5x the bShape relief = more dramatic underwater terrain to explore.
-      h = -(min(d, 70.0) * 0.45 + max(d - 70.0, 0.0) * 0.85);   // GENTLE CONTINENTAL SLOPE (user 2026-06-16 'fix the cliff-like dropoff all around the land'): the old *1.9 plunge dropped the seabed steeply just offshore = an underwater cliff visible through the clear water all around every coast. Widen the gentle near-shore shelf 25->70m and halve the plunge 1.9->0.85 so the bed eases down (no cliff); deep water still descends, just not vertically.
-      h = max(h, -11000.0);   // cap depth at Mariana Trench (~11km)
-  } else {
-      // LAND COASTAL SHELF (user 2026-06-14: 'beaches not wide enough'): the underwater shelf above
-      // gives a gentle seabed; mirror it on the LAND side so the coast rises GENTLY from the waterline
-      // = a wide beach. h*h/S is flat at the waterline (derivative 0) and identity at h=S, so high land
-      // is unchanged (no drowning) and only the low coastal band is stretched horizontally. Pure fn of
-      // the field -> seam-safe + the collision probe shares it. GUARD: a stale/unset uniform (0) would
-      // disable the shelf -> default 600 so it always applies. window.__beachShelf dials S live.
-      highp float bShelf = uBeachShelfM > 1.0 ? uBeachShelfM : 600.0;
-      // C1-CONTINUOUS shelf (user 2026-06-14 'hard shading line where landscape meets beach'): the old
-      // h*h/S met the identity at h=S with SLOPE 2 (vs 1) -> a derivative kink -> the slope-keyed shading
-      // (rock/AO/material) SNAPPED into a hard line at the shelf top. f = (h*h/S)*(2 - h/S) keeps f(0)=0,
-      // f'(0)=0 (flat at the waterline = wide beach) AND f(S)=S, f'(S)=1 (smooth join to natural land).
-      if (h < bShelf) h = (h * h / bShelf) * (2.0 - h / bShelf);
-  }
-  // displacement now continues UNDERWATER (the old land-only gate served the flat-clamped ocean,
-  // gone since 026d530): the seabed carries the same micro-relief as land = realistic continuation.
-  // SEABED RELIEF BOOST (user 2026-06-14 'more relief' to explore): amplify the micro-relief with DEPTH
-  // (1x at the shore -> 2.2x by 600m down) so the deep seabed is rugged/interesting, while shallow water
-  // stays calm so the boost never lifts the bed toward sea level (no 'almost-land').
-  h += vDisp * mix(1.0, 2.2, clamp((h + 50.0) / -550.0, 0.0, 1.0));
-  // PERLIN-EVERYWHERE ELEVATION (user 2026-06-10 'it must also affect elevation'): the same detailFbm
-  // the FS albedo overlay shows, as real relief (~30m per lever unit -> ~180m at the user-tuned 6).
-  // Shore-gated (fades in over the first 250m of land) so the coastline and the flat water planes are
-  // untouched and no noise islets pop offshore. The VS FD lit-normal picks it up automatically.
-  h += detailFbm(dir0) * uDetailOverlay * 30.0 * step(0.0, h);
-  // VS-PROFILING GATE (2026-06-14): uVsCheap>0.5 returns BEFORE all the carves (valley/lake/river/
-  // canyon/cliff/dune) so gpuTimer can A/B the per-vertex CARVE cost (the doctrine's suspected
-  // dominant term). Transient profiling toggle (window.__vsCheap); 0 = full path (default).
-  if (uVsCheap > 0.5) return h;
-  if (skipCarves) return h;   // NORMAL-TAP carve skip (2026-06-16, ~2ms APU): taps pass true -> lit normal = broad+detail-overlay shape only (carve gradient sub-resolved at the ~300m nrmStep); centre/probe pass false so the canyon DEPTH stays in the mesh + collision.
-  // FLAT-AREA VALLEY NETWORKS + LAKES (user 2026-06-13): incised valley systems in low-relief
-  // plains. Replaces the old noise bumps with a ridge-field valley network for connected
-  // linear depressions and lakes that fill the valley bottoms. Fades to zero by reliefMul ~0.5.
-  float flatGate = max(0.0, 1.0 - reliefMul * 2.0);
-  float valleyV = 1.0 - inciseRidgeField(dir0, 31.0, 2.0);
-  float valleyVal = smoothstep(0.25, 0.80, valleyV) * flatGate * uDetailOverlay * 24.0;
-  h -= valleyVal;
-  // LAKE CARVE + flat-water plane
-  float lakeWetV; float lakeCarveRaw = lakeCarveM(dir0, lakeWetV);
-  // Flat-area lakes: lower humidity gate so plains valleys fill with lakes
-  float lakeGateLo = mix(0.60, 0.50, uCarveWide) - 0.12 * flatGate;
-  float lakeGate = smoothstep(lakeGateLo, mix(0.85, 0.95, uCarveWide), hpf0.a) * step(0.0, h);
-  float lakeCarveV = lakeCarveRaw * lakeGate;
-  h += lakeCarveV;
-  float lakeWet = lakeWetV * lakeGate;
-  if (lakeWet > 0.0) { float waterLevel = max(h, 0.0) - 25.0; h = mix(h, waterLevel, lakeWet); vDisp *= (1.0 - lakeWet); }
-  // RIVER + CANYON incision (clamped so coastal gorges never punch fake inland seas)
-  float riverWet   = smoothstep(mix(0.30, 0.20, uCarveWide), mix(0.55, 0.65, uCarveWide), hpf0.a) * smoothstep(mix(0.20, 0.12, uCarveWide), mix(0.34, 0.46, uCarveWide), hpf0.b);
-  float riverWetMask; float riverCarveV = riverCarveM(dir0, riverWetMask) * riverWet * step(0.0, h);
-  float canyonDepMask; float canyonCarveV = canyonCarveM(dir0, canyonDepMask) * smoothstep(0.0, 250.0, h);   // COASTAL FADE (user 2026-06-16 'at the edge of the land it drops off sharply into the ocean'): fade the canyon carve in over the first 250m of land elevation instead of a hard step(0,h), so low coastal land is NOT cut to the -60m floor at the shore = no sharp sea cliff; canyons stay an INLAND feature.
-  highp float inciseTot = riverCarveV + canyonCarveV;        // <=0 downcut (kept for the FS strata masks below)
-  // FXC-ROBUST FLOORED CARVE (user 2026-06-16 'no canyon' -- witnessed on a FRESH cache-disabled load +
-  // WIREFRAME on the user's own ANGLE AMD/d3d11 stack: the rendered mesh is FLAT at a +5 gorge the collision
-  // probe carves through the SAME composeHeightC). The old nested clamp `inciseTot = max(inciseTot, min(5-h,0))`
-  // was mis-compiled by FXC in the VERTEX program (the carve was dropped) but NOT in the PROBE program nor a
-  // plain end-of-function dip -> 'canyon in field/probe, flat in elevation'. A plain BRANCH is not reorderable
-  // the same way: carve only real land (h>5) and floor the result at +5m (dry visible valley); leave the
-  // near-shore band (h<=5) untouched so there is no +5 coastal step.
-  // CANYON FLOOR REDESIGN (user 2026-06-17 'canyons arent showing on elevation at all, many debug runs'):
-  // the OLD floor max(-60, h-60*dmul) clamped EVERY deep carve to a uniform ~120m dip -- so the deep
-  // CANYON_INCISE_DEPTH(700)*dmul carve AND the shallow tributaries BOTH flattened to the same shallow floor
-  // = the canyon network sank the whole region uniformly with NO walls/shape = 'field shows canyons, elevation
-  // is flat'. FIX: floor MUCH deeper (450m*dmul, ~900m at the default 2.0) and DRY (>=5m, never an inland sea),
-  // so the carve keeps its PROFILE: canyon centres reach the deep floor with shaped rim->wall descent, and the
-  // shallower tributaries keep their own depth = real, visible, differentiated canyons. window.__canyonDepth
-  // scales the floor depth.
-  if (h > 5.0) { h = max(h + inciseTot, max(5.0, h - 450.0 * (canyonDepthMul > 0.0 ? canyonDepthMul : 1.0))); }
-  // CLIFF TERRACING (mesa/butte benches) -- after carves so canyon walls + risers compose
-  float cliffFaceMask; float cliffCarveV = cliffTerraceM(dir0, h, cliffFaceMask) * step(0.0, h);
-  h += cliffCarveV;
-  // FLAT RIVER WATER
-  float riverWetLine = riverWetMask * riverWet * step(0.0, h);
-  // DEEPER, GENTLER-APPROACH CHANNEL WATER (user 2026-06-14 'water in canyons very shallow, base flat,
-  // angle of approach to the base far too sharp'): drop the channel bed 20->70m so the water is deep
-  // enough to read, and use riverWetLine^0.6 as the carve weight so the bed eases DOWN over a wider
-  // margin (concave approach) instead of plunging at the wet edge.
-  if (riverWetLine > 0.0) { float rw = pow(riverWetLine, 0.6); float rWaterLevel = h - 70.0; h = mix(h, rWaterLevel, rw); vDisp *= (1.0 - rw); }
-  // DUNES on the low sand desert
-  float duneSand = smoothstep(mix(0.62, 0.50, uCarveWide), mix(0.85, 0.95, uCarveWide), 1.0 - hpf0.a) * smoothstep(mix(0.40, 0.30, uCarveWide), mix(0.58, 0.68, uCarveWide), hpf0.b) * (1.0 - smoothstep(40.0, 160.0, h));
-  float duneCrest; float duneV = duneFieldM(dir0, duneCrest) * duneSand * step(0.0, h);
-  h += duneV;
-  return h;
-}
-// Self-deriving wrapper: probe/bake + any single-call site compute the cache inline (one hpfSample, no waste).
+// Single height function using the Proland algorithm.
 highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){
-  return composeHeightC(dir0, faceLocal, tileM, computeHCache(dir0), false) * (uReliefScale > 0.0 ? uReliefScale : 1.0);   // probe/bake/position: FULL carves. *uReliefScale = scale-invariant relief (geometry+probe scale with the radius; guard -> 1.0 if the uniform is unset so it can never flatten the planet)
+    highp float h = prolandTerrainH(dir0);
+    // Remap [0,1] to signed metres in the same range as the old broadShapeM:
+    // h=0.5 -> sea level (0m), h=1 -> ~8000m, h=0 -> ~-8000m.
+    h = (h - 0.5) * 16000.0 + uLandBias;
+    // Land coastal shelf (mirrors original composeHeight).
+    if (h < 0.0) {
+        const highp float SEABED_EASE = 25.0;
+        highp float d0 = -h;
+        highp float d = (d0 < SEABED_EASE) ? (d0 * d0 / SEABED_EASE) * (2.0 - d0 / SEABED_EASE) : d0;
+        h = -(min(d, 70.0) * 0.45 + max(d - 70.0, 0.0) * 0.85);
+        h = max(h, -11000.0);
+    } else {
+        highp float bShelf = uBeachShelfM > 1.0 ? uBeachShelfM : 600.0;
+        if (h < bShelf) h = (h * h / bShelf) * (2.0 - h / bShelf);
+    }
+    return h * (uReliefScale > 0.0 ? uReliefScale : 1.0);
 }
-#endif   // broadShapeM/broadShape/vtxDisplace/composeHeight + computeHCache/composeHeightC: VS/PROBE (excluded from render FS, FS-1)
+#endif
+
+uniform float uIsWater;                    // 0 = terrain pass, 1 = water-surface pass
+uniform float uUnderwater;                 // 0 = camera above water, 1 = camera below sea level
+uniform float uBeachTopM;                  // beach upper limit metres
 
 #ifdef _VERTEX_
 layout(location=0) in vec3 vertex;   // vertex.xy in [0,1] parametric quad coord
@@ -782,12 +301,7 @@ out vec3 vTexWarp;       // texture domain warp, computed ONCE in the VS (2026-0
 // the geometry, then INTERPOLATED to the FS. The FS no longer re-evaluates the sharp ridged carve
 // fields per-pixel (that was a separate high-freq evaluation that aliased = the biome-localized
 // moire the user reported). One field, sampled at the vertices, smooth in between.
-out float vLakeWet;     // lake open-water mask (carve basin)
-out float vRiverWet;    // river thalweg wet line
-out float vWaterDepth;  // metres the flat inland-water plane sits ABOVE the local terrain floor (>0 = submerged)
-out float vCanyonDep;   // canyon gorge depth [0,1]
-out float vCliffFace;   // cliff/escarpment riser face [0,1] (1 = steep terrace face)
-out float vDuneCrest;   // dune crest [0,1]
+
 out highp vec3 vTexRel; // W7: CAMERA-RELATIVE world position (= vWorld - camWorld) for the texture UV. Built from the
                         // same precise (dir0-defCamDir)*R camera-relative form as gl_Position, so it carries NO
                         // 6.4e6m fp32 cancellation -> the texture UV is as stable as the geometry (kills 'UV jumps
@@ -867,178 +381,13 @@ void main() {
     // (elevation atlas removed -- terrain height is the GPU fractal broadShapeM, no tile sample.)
     // world direction of this vertex (pre-deform) for the continental mask.
     vec3 dir0 = normalize(defLocalToWorld * vec3(faceWarp(vertex.xy * defOffset.z + defOffset.xy), defRadius));  // W7: faceWarp/defRadius highp -> pre-normalize ~6.4e6 stays highp
-    highp vec4 hpf0 = hpfSample(dir0);    // (seaBias=r, elevAmp=g, temp=b, humid=a) -- W7: R seaBias metres
-    highp float cbias = hpf0.r;           // W7: seaBias metres
-    // ANCHOR-DRIVEN morphology: the anchor elevAmp belt decides whether this region is flat
-    // lowland (floodplain/meadow) or rugged mountain -- the anchor map is the primary spreader.
-    float rugged = ruggedFromElevAmp(hpf0.g);
-    // per-vertex micro-relief: unique height per vertex from world-continuous face-local pos
-    // (fixes the flat 2x2 atlas-texel blocks; gives sub-mesh-cell relief). Only on land.
-    highp vec2 faceLocal = faceWarp(vertex.xy * defOffset.z + defOffset.xy);   // W7: warped metres ~6.4e6 -> highp
-    float vDisp = vtxDisplace(faceLocal, defOffset.z, rugged);
-    // CONTINUOUS broad+mid SHAPE (LOD-uniformity fix): one world-dir fBm sampled the SAME at
-    // every LOD -> no per-level shape divergence. PER-BIOME RELIEF: scale the regional+fine octaves
-    // (continent base untouched -> silhouette/hypso/LOD-uniformity preserved) by an anchor-derived
-    // reliefMul + ridgeMul so the SHAPE distinguishes biomes: mountains (high elevAmp) = strong +
-    // ridged; meadow/plains = gentle. All pure fn of world dir -> still seam-safe + LOD-invariant.
-    float bTemp = hpf0.b, bHum = hpf0.a, bAmp = hpf0.g;
-    // MOUNTAIN-BELT GATE on the BAKED elevAmp range (~14.5-18.9): the high tail (~17%) is the
-    // mountain belt; the rest is genuine plains so the mountain biome is a differentiated minority.
-    float mtn = smoothstep(16.8, 18.6, bAmp);                     // mountain-belt weight 0..1
-    float wetLowFlat = smoothstep(0.66, 0.9, bHum) * (1.0 - mtn); // swamp/wetland -> flat
-    float coldFlat = (1.0 - smoothstep(0.18, 0.34, bTemp));       // tundra/ice -> flat
-    float reliefMul = clamp(0.45 + 1.25 * mtn - 0.30 * wetLowFlat - 0.25 * coldFlat, 0.40, 1.7);
-    float ridgeMul  = clamp(mtn * 1.1, 0.0, 1.0);                 // ridged crests only in mountain belts
-    // ISLAND-TYPE VARIETY: small offshore swells get a per-region type (volcanic cone / low atoll)
-    // from a world-dir noise so islands are not all scaled continents. Pure fn of world dir.
-    float isleZone = smoothstep(50.0, 350.0, cbias) * (1.0 - smoothstep(900.0, 1600.0, cbias));
-    if (isleZone > 0.0) {
-      float isleType = snoise3(dir0 * 9.0);
-      float volcanic = smoothstep(0.25, 0.7, isleType);
-      float atoll    = smoothstep(0.25, 0.7, -isleType);
-      reliefMul = mix(reliefMul, mix(reliefMul, 1.6, volcanic) * (1.0 - 0.7 * atoll), isleZone);
-      ridgeMul  = mix(ridgeMul, max(ridgeMul, 0.9 * volcanic), isleZone);
-    }
-    highp float bShape = broadShapeM(dir0, reliefMul, ridgeMul);  // W7: metres
-    // ONE FRACTAL: the continuous world-dir field (bShape) + the continental swell (cbias) carry the
-    // entire silhouette+hypsometry. The old wasm upsample-and-add cascade (zfc.x) was REMOVED -- it
-    // was a SECOND shape source that diverged per-LOD (the detail-inversion root). bShape amplitude
-    // was retuned (A0 6500, off -900) so this single field hits Earth hypso without the cascade.
-    vH = cbias + bShape + uLandBias;   // +uLandBias (mirror composeHeight) -> more land vs sea
-    // shelf/slope bathymetry remap + underwater displacement -- MUST mirror composeHeight exactly
-    // (this is the FS-material running value; composeHeight is the geometry/probe height).
-    if (vH < 0.0) {
-        const highp float COAST_RING_CEIL = 500.0;   // mirror composeHeight: no offshore 'ring of land' (cap seabed at cbias+CEIL so bShape can't rebound to sea level offshore)
-        vH = min(vH, cbias + COAST_RING_CEIL);
-        const highp float SEABED_EASE = 25.0;   // mirror composeHeight: tiny waterline lip, steep plunge (no 'second beach')
-        highp float dSea0 = -vH;
-        highp float dSea = (dSea0 < SEABED_EASE) ? (dSea0 * dSea0 / SEABED_EASE) * (2.0 - dSea0 / SEABED_EASE) : dSea0;
-        vH = -(min(dSea, 70.0) * 0.45 + max(dSea - 70.0, 0.0) * 0.85);   // gentle continental slope (mirror composeHeight): no cliff-like dropoff at the coast
-        vH = max(vH, -11000.0);   // cap depth at Mariana Trench (~11km)
-    } else {
-        highp float bShelf = uBeachShelfM > 1.0 ? uBeachShelfM : 600.0;   // LAND COASTAL SHELF -- mirror composeHeight exactly (wide beach, user 2026-06-14); guard stale/unset uniform
-        if (vH < bShelf) vH = (vH * vH / bShelf) * (2.0 - vH / bShelf);   // C1-continuous (mirror composeHeight) -- removes the beach-top slope kink / hard shading line
+    highp vec4 hpf0 = hpfSample(dir0);    // (seaBias, elevAmp, temp, humid) -- used for vClimate
+    highp vec2 faceLocal = faceWarp(vertex.xy * defOffset.z + defOffset.xy);
 
-    }
-    vH += vDisp * mix(1.0, 2.2, clamp((vH + 50.0) / -550.0, 0.0, 1.0));   // seabed relief boost (mirror composeHeight)
-    vH += detailFbm(dir0) * uDetailOverlay * 30.0 * step(0.0, vH);
-    // FLAT-AREA VALLEY NETWORKS + LAKES (user 2026-06-13): incised valley systems in low-relief
-    // plains -- must mirror composeHeight for FS material consistency.
-    float flatGate = max(0.0, 1.0 - reliefMul * 2.0);
-    float valleyV = 1.0 - inciseRidgeField(dir0, 31.0, 2.0);
-  float valleyVal = smoothstep(0.25, 0.80, valleyV) * flatGate * uDetailOverlay * 24.0;
-    vH -= valleyVal;
-    // LAKE CARVE: carve a real basin into the elevation on WET LAND so lakes are part of the
-    // fractal (no fade-in). Flat-area gate widened so plains valleys fill with lakes.
-    float lakeWetV; float lakeCarveRaw = lakeCarveM(dir0, lakeWetV);
-    float lakeGateLo = 0.60 - 0.12 * flatGate;
-    float lakeGate = smoothstep(lakeGateLo, 0.85, hpf0.a) * step(0.0, vH);
-    float lakeCarveV = lakeCarveRaw * lakeGate;
-    vH += lakeCarveV;
-    // FLAT WATER: inside the wet core the surface must read as flat water (user: 'water should be
-    // flat'), not a noisy bowl floor. Pin vH toward a constant water level (a few m below the local
-    // rim) weighted by the wet mask, and suppress the micro-relief there. The lakeCarve shoulder
-    // already erodes/grades the surrounding terrain into the basin (the 'eroded margin').
-    float lakeWet = lakeWetV * lakeGate;
-    highp float waterPlane = 0.0; highp float floorBefore = 0.0; float haveWater = 0.0;   // W7: waterPlane/floorBefore are metres (~13000); their small DIFFERENCE (vWaterDepth) needs highp to avoid cancellation
-    if (lakeWet > 0.0) {
-        highp float waterLevel = max(vH, 0.0) - 25.0;     // flat plane just below the rim
-        floorBefore = vH;                            // carved bowl floor before flattening
-        vH = mix(vH, waterLevel, lakeWet);
-        waterPlane = waterLevel; haveWater = lakeWet;
-        vDisp *= (1.0 - lakeWet);                    // no micro-bumps on the water surface
-    }
-    // RIVER + CANYON INCISION into the elevation (user: content makes up part of the elevation as
-    // erosion works). Both are pure world-dir carves (LOD-invariant, no fade). River: wet/temperate
-    // land. Canyon: arid + elevated (h>~60m) land, opposite climate to rivers. Gated to land
-    // (step(0,vH)) so they never punch the ocean or create fake seas. The incision is bounded so it
-    // does not drive coastal land below sea level (clamp the post-carve vH floor handled implicitly
-    // by the small depths + land gate; coastline hypso re-witnessed in incision-hypso-landfrac-gate).
-    float riverWet   = smoothstep(0.30, 0.55, hpf0.a) * smoothstep(0.20, 0.34, hpf0.b);   // moist, not frozen
-    float riverWetMask; float riverCarveV = riverCarveM(dir0, riverWetMask) * riverWet * step(0.0, vH);
-    float canyonDepMask; float canyonCarveV = canyonCarveM(dir0, canyonDepMask) * smoothstep(0.0, 250.0, vH);   // COASTAL FADE (mirror composeHeightC): canyon carve fades in over the first 250m of land so the coast doesn't drop sharply to the -60m floor
-    // NO-SUB-SEA-COAST GUARD (user 2026-06-02 deepen+widen): with the deepened canyon (-1400m + gullies)
-    // a gorge on 200m coastal land would punch vH to ~-1200m = fake inland seas. Clamp the TOTAL incision
-    // so post-carve land bottoms out at a small floor (-60m: a gorge may reach near sea level but never
-    // carves a deep basin below it). Bounded against the PRE-carve vH so deep inland canyons keep full
-    // depth while coastal ones are limited by their own available headroom.
-    highp float inciseTot = riverCarveV + canyonCarveV;         // both negative (downcut)
-    if (vH > 5.0) { vH = max(vH + inciseTot, max(-60.0, vH - 60.0 * (canyonDepthMul > 0.0 ? canyonDepthMul : 1.0))); }   // RELATIVE-DEPTH FLOOR (mirror composeHeightC): bottom ~60m*canyonDepthMul below the rim (120m default), lower bound -60m so canyonDepth scales DEPTH not width
-    // CLIFF TERRACING: snap the arid+elevated land into flat benches with steep risers (mesa/butte
-    // cliff country). Gated by the SAME canyonArid mask so cliffs share canyon regions (a coherent
-    // arid badlands look). The snap delta is added to vH; cliffFaceMask (->1 on a riser face) goes to
-    // the FS for strata banding + steep-rock material. Applied AFTER carves so canyon walls + cliff
-    // risers compose. step(0,vH) keeps it on land.
-    float cliffFaceMask; float cliffCarveV = cliffTerraceM(dir0, vH, cliffFaceMask) * step(0.0, vH);
-    vH += cliffCarveV;
-    // FLAT RIVER WATER (user: 'rivers/lakes should NOT be bumpy'): like lakes, the river thalweg
-    // surface must read as flat water, not the bumpy micro-relief floor. Pin vH down to the channel
-    // water level + suppress the micro-displacement on the wet line. riverWetMask is the thalweg mask.
-    float riverWetLine = riverWetMask * riverWet * step(0.0, vH);
-    if (riverWetLine > 0.0) {
-        // MIRROR of composeHeight (deeper 20->70m channel + pow(.,0.6) gentler concave approach)
-        float rw = pow(riverWetLine, 0.6);
-        highp float rWaterLevel = vH - 70.0;         // W7: metres
-        highp float rFloorBefore = vH;
-        vH = mix(vH, rWaterLevel, rw);
-        vDisp *= (1.0 - rw);                          // no micro-bumps on the river surface
-        // record the deeper/stronger of lake|river as the water surface for vWaterDepth
-        if (rw > haveWater) { waterPlane = rWaterLevel; floorBefore = rFloorBefore; haveWater = rw; }
-    }
-    // DUNES on the SAND DESERT (very dry + warm + LOW land): rolling dune relief replaces harsh rock
-    // here (ref: webgl-dunes). Gated opposite to canyons (which want elevated arid plateaus) -- dunes
-    // ride the low desert floor. World-dir field -> LOD-invariant.
-    float duneSand = smoothstep(0.62, 0.85, 1.0 - hpf0.a) * smoothstep(0.40, 0.58, hpf0.b) * (1.0 - smoothstep(40.0, 160.0, vH));
-    float duneCrest; float duneV = duneFieldM(dir0, duneCrest) * duneSand * step(0.0, vH);
-    vH += duneV;
-
-    // PER-VERTEX SEAMLESS NORMAL = (-dz/dx, -dz/dy, 1) in the tile tangent frame. After the
-    // one-fractal collapse the old cascade-atlas finite-difference term is gone (it was identically
-    // zero), so the lit normal is built purely from the micro-relief (dEx), broad-shape (bEx) and
-    // carve (rcEx) gradients below -- those ARE the one field.
-    // Include the per-vertex micro-displacement gradient so the new relief is LIT (not just
-    // geometrically displaced). MOIRE-ON-DESCENT FIX (user 2026-06-01h: fine green speckle/moire at
-    // closeup, GONE with vtxDetail off): the FD step was ONE MESH CELL (defOffset.z/24), which
-    // SHRINKS as tiles get fine on descent -> the micro-relief lit normal captured ever-higher-freq
-    // slope cell-to-cell = shimmer/moire (the same shrinking-step trap the broadShape FD warns of).
-    // Use a FIXED ~600m world step so the micro-relief SHADING reflects a stable slope at every
-    // altitude; the geometry still displaces per-vertex (vH), the normal just stops chasing the cell.
-    // W5: the per-vertex lit-normal gradient block (dEx/dEy from vtxDisplaceD; bEx/bEy/rcEx/rcEy/fEx/fEy
-    // from broadShapeMD + the cbias/carve central-differences) is DELETED -- it only fed the now-deleted
-    // vNrmPV/vMacroSlope assembly. THC's per-pixel Sobel is the sole lit normal. The carve VALUES (h) are
-    // computed above (~906-) and untouched; only their gradient finite-differences are gone.
-    // W5: the entire per-vertex normal/AO assembly (vMacroSlope, vShadeAO crease+micro AO, slopeGain, the
-    // vNrmPV true-gradient sum) is DELETED -- THC is the sole path, so the lit normal is the FS Sobel of
-    // heightPool and the rock-gate slope + per-vertex AO are recomputed in the FS from that Sobel normal.
-    // The gradient taps (dEx/dEy from vtxDisplaceD, bEx/bEy/rcEx/rcEy/fEx/fEy from broadShapeMD) that fed
-    // this block are removed upstream; only the SCALAR height fns (broadShapeM/vtxDisplace) remain, for the
-    // procedural h fallback when a leaf has no cached tile.
-
-    highp float R = defRadius;   // W7: ~6.4e6 m -> highp
-    // ONE HEIGHT FUNCTION: every vertex gets the procedural composeHeight() (broadShapeM + cbias + carves
-    // + vtxDisplace, with lake/river water-plane flattening). vH (FS material/strata, computed above as the
-    // water-flattened running value) stays for the FS; the GEOMETRY height h is the single composeHeight.
-    // WATER GATE (perf sweep 2026-06-11): on the water pass the geometry height is pinned to sea level
-    // (hR=0 below) and the normal is radial (:914), so composeHeight's result is never consumed --
-    // skip the 12-oct eval for ~540 water instances/frame. Uniform-coherent branch, zero fidelity change.
-    // SINGLE-INSTANCE FD TAPS (2026-06-12, THE AMD ROOT -- witnessed by __flatNormal A/B: forcing the
-    // radial normal turned the whole 'rock patch' region back into smooth grass, so vNrm was the broken
-    // carrier). FXC inlines composeHeight per CALL SITE and optimizes each copy differently; the center
-    // and offset taps then disagree by tens of metres on FLAT ground -> fake slope -> rock material +
-    // slope-AO darkness + dead normals (d3d11-only; vulkan compiles one consistent version). Evaluating
-    // ALL THREE taps through ONE runtime-bounded loop forces FXC to emit a SINGLE composeHeight instance,
-    // so whatever approximations it picks cancel exactly in the differences. uNrmStepM>0.0 keeps the
-    // bound non-constant (same defeat class as uOctMax).
-    // VERTEX NORMALS: interior vertices use the mesh-based edge cross product (ordinary
-    // face normals). Tile-edge vertices use the tangent-frame finite difference so both
-    // sides of a seam share the same dir0/tangent frame -> consistent normals, no row artifact.
+    // Height from Proland algorithm
     highp float hN0 = 0.0;
     highp vec3 vN = dir0;
     if (uIsWater < 0.5 && uThc > 0.5) {
-        // THC FAST PATH: height + symmetric central-diff normal from the baked pool. 5 bilinear texture
-        // taps replace 5 full composeHeight evals (the VS-bound cost). The 4 normal taps use the SAME
-        // parametric step as the composeHeight path; the dir at each tap is a cheap faceWarp+normalize
-        // (no field eval). uNrmStepM-scaled step => the same smoothed (low-pass) normal as the slow path.
         hN0 = thcSample(vertex.xy, iLayer);
         highp float nStepM = (uNrmStepM > 0.0) ? uNrmStepM : 300.0;
         highp float duP = clamp(nStepM / max(defOffset.z, 1.0), 1.0 / ((uGrid > 0.0) ? uGrid : 16.0), 0.34);
@@ -1054,138 +403,47 @@ void main() {
                              dPV * (defRadius + hPV) - dMV * (defRadius + hMV)));
         if (dot(vN, dir0) < 0.0) vN = -vN;
     } else if (uIsWater < 0.5) {
-        // DEDUP (2026-06-15 caching rearch): vH (computed inline 832-962) IS composeHeight(dir0,faceLocal,defOffset.z)
-        // -- the identical carve cascade in the identical order. Reuse it for the geometry-height center instead of a
-        // 2nd full eval/vertex. The 4 OFFSET taps below stay their own single composeHeight instance (the FXC
-        // normal-divergence fix is about the taps agreeing with EACH OTHER; the center only feeds scalar h, not the
-        // normal cross-difference 1056-1058, so reusing vH cannot reintroduce the per-callsite normal triad).
-        // DEDUP REVERTED (user 2026-06-15 'canyon/river in the FIELD + probe but NOT in the rendered elevation'
-        // -- JS(probe=composeHeight) != visual(mesh=vH)). The inline vH had DIVERGED from composeHeight, so the
-        // rendered vertex was flat while the probe carved. Use composeHeight DIRECTLY for the rendered geometry
-        // height so render == probe == JS elevation by construction (one extra eval/vertex; correctness > the cache).
-        // hN0 (the GEOMETRY height) is computed INSIDE the FD loop below as the i==0 (zero-offset) tap so
-        // the centre height and the 4 normal taps share ONE composeHeightC instance. FXC (ANGLE d3d11)
-        // was compiling this SEPARATE centre call-site differently from the tap loop + the probe program
-        // -- it dropped the CARVE cascade (river/canyon/valley) from the centre while keeping broadShapeM,
-        // so the rendered vertex got the smooth base shape but NO canyons, while the normal taps + the
-        // collision probe still carved = 'canyons in the field/probe/normals but the elevation is flat'
-        // (user 2026-06-16 'canyons not affecting elevation at all'). One instance => the carve is in the
-        // position exactly as it is in the taps and the probe.
-        // VERTEX NORMAL = CENTRAL DIFFERENCE in PARAMETRIC MESH SPACE over the FULL composeHeight (2026-06-14
-        // jagged-normal fix). Two earlier methods both jagged: (a) interior FORWARD mesh-cell cross product
-        // = each vertex got its forward triangle's FACE normal (faceted) at a vertex-spacing step (noisy);
-        // (b) the tangent-frame FD passed the SAME faceLocal to every tap, so vtxDisplace CANCELLED in the
-        // differences -> the normal ignored the bumps the geometry has -> smooth normal on a bumpy mesh =
-        // facets show through. THIS evaluates the full field (incl vtxDisplace) at +/-du/+/-dv in parametric
-        // space (faceWarp gives BOTH the dir and faceLocal at each offset, so vtxDisplace varies correctly)
-        // and takes a CENTRAL (symmetric) world-space cross product = smooth AND matches the displaced
-        // surface. ONE formula for every vert (no interior/edge split = no discontinuity); seam-safe because
-        // adjacent same-LOD tiles sample the identical world offsets (the field is a pure fn of world pos).
-        // NORMAL SMOOTHING (user 2026-06-14: 'angular normals = no vertex smoothing'): low-pass the
-        // per-vertex normal by taking the central difference over a fixed ~METRIC step (uNrmStepM, ~300m)
-        // instead of ~1 mesh cell. A cell-sized step samples the high-freq erosion/canyon relief so the
-        // normal swings sharply vertex-to-vertex = angular; a fixed larger step averages it = adjacent
-        // verts vary smoothly = smooth shading, at any GRID. duP = stepM / tile-span (defOffset.z), clamped
-        // so it never drops below the mesh cell (would re-alias) nor exceeds ~1/3 the tile.
         highp float nStepM = (uNrmStepM > 0.0) ? uNrmStepM : 300.0;
         highp float duP = clamp(nStepM / max(defOffset.z, 1.0), 1.0 / ((uGrid > 0.0) ? uGrid : 16.0), 0.34);
         highp float hPU = 0.0, hMU = 0.0, hPV = 0.0, hMV = 0.0;
         highp vec3 dPU = dir0, dMU = dir0, dPV = dir0, dMV = dir0;
-        int fdIters = (uGrid >= 0.0) ? 5 : 1;   // i==0 CENTRE (geometry height) + 4 offset taps, ALL through ONE composeHeightC instance (FXC per-callsite fix; runtime-bounded, see uOctMax)
-        // vs-param-cache: HPF-derived params are ~constant over the +/-duP (~300m) tap radius -> compute
-        // ONCE at the vertex centre and reuse for the centre + all 4 taps; each then evaluates only
-        // broadShapeM + carves (the per-tap-varying fields). ONE composeHeightC call-site = one FXC
-        // instance for BOTH the geometry height (i==0, zero offset == the centre) AND the normal taps, so
-        // the carve cascade is identical in the position and the normal -- FXC can no longer drop it from
-        // the centre alone ('canyons in normals/probe, flat geometry').
-        HCache nCache = computeHCache(dir0);
-        for (int i = 1; i < fdIters; i++) {   // i=1..4 OFFSET taps ONLY (normal); the CENTRE geometry height now reuses the inline vH (dedup) -> one fewer full-carve composeHeightC/vertex
+        int fdIters = (uGrid >= 0.0) ? 5 : 1;
+        for (int i = 1; i < fdIters; i++) {
             highp vec2 off = (i == 1) ? vec2(duP, 0.0) : (i == 2) ? vec2(-duP, 0.0) : (i == 3) ? vec2(0.0, duP) : vec2(0.0, -duP);
             highp vec2 fl = faceWarp((vertex.xy + off) * defOffset.z + defOffset.xy);
             highp vec3 dd = normalize(defLocalToWorld * vec3(fl, defRadius));
-            highp float hh = composeHeightC(dd, fl, defOffset.z, nCache, true) * (uReliefScale > 0.0 ? uReliefScale : 1.0);   // taps = NORMAL only (skipCarves=true). *uReliefScale = scale-invariant relief
+            highp float hh = composeHeight(dd, fl, defOffset.z);
             if (i == 1) { hPU = hh; dPU = dd; } else if (i == 2) { hMU = hh; dMU = dd; }
             else if (i == 3) { hPV = hh; dPV = dd; } else { hMV = hh; dMV = dd; }
         }
-        // DEDUP (opt-vs-height-dedup-amd): the rendered geometry height = the inline vH cascade (895-990),
-        // which IS composeHeightC's carve cascade already computed once for the FS material. Reuse it for the
-        // POSITION instead of a 2nd full-carve composeHeightC i==0 eval (~15-20% VS). FXC-safe now: the
-        // 2026-06-15 'inline-vH diverges -> flat geometry' revert predates the uOctMax runtime-bounded loop
-        // (the single-instance FXC fix); witnessed canyons-in-geometry on real AMD d3d11.
-        // SCALE: vH is the UNSCALED Earth-scale elevation (the FS material keys off it at Earth thresholds);
-        // the POSITION needs it * uReliefScale, exactly as the old composeHeightC center did (= identical value).
-        hN0 = vH * (uReliefScale > 0.0 ? uReliefScale : 1.0);
+        hN0 = composeHeight(dir0, faceLocal, defOffset.z);
         highp vec3 wPU = dPU * (defRadius + hPU), wMU = dMU * (defRadius + hMU);
         highp vec3 wPV = dPV * (defRadius + hPV), wMV = dMV * (defRadius + hMV);
         vN = normalize(cross(wPU - wMU, wPV - wMV));
-        if (dot(vN, dir0) < 0.0) vN = -vN;   // keep it outward (terrain has no overhangs)
+        if (dot(vN, dir0) < 0.0) vN = -vN;
     }
     highp float h = hN0;
-    // OCEAN TOP = A SEPARATE, ELEVATION-BASED SURFACE (user 2026-06-10: 'terrain should extend into
-    // the ocean, the ocean top separate and elevation based'). composeHeight keeps carrying the TRUE
-    // signed bathymetry (vH -> the FS depth tint/Beer-Lambert keys on it), but the RENDERED surface
-    // smooth-clamps to sea level: open water is a flat plane at R (proper waterline + horizon), the
-    // seafloor field lives on UNDER it as the depth signal. The smoothstep ramp (not a hard max)
-    // also fixes 'the terrain curve creates a hard line at the base': the beach profile eases
-    // tangentially into the waterline over the last ~60m instead of meeting it in a crease.
-    // SEPARATE WATER SURFACE (user 2026-06-11): the terrain pass renders the TRUE seabed (the old
-    // smoothstep(-60,60) sea-level clamp is GONE -- sand/rock bathymetry is real geometry now); the
-    // water pass (uIsWater=1, second instanced draw of the same leaves) pins this mesh to sea level
-    // and shades it as the animated ocean, alpha-blended over the seabed (depth test keeps it
-    // behind land).
     highp float hR = (uIsWater > 0.5) ? 0.0 : h;
-    // VERTEX NORMAL: central-difference (computed above) for land; radial for water.
-    vNrm = (uIsWater > 0.5) ? dir0 : vN;
-    // DIRECT per-vertex sphere projection (replaces the old corner-blend deform, which
-    // bilinearly interpolated 4 deformed corners -> FLAT quad interior -> faceted at high GRID).
-    // dir0 is THIS vertex's world direction (faceWarp'd, defLocalToWorld-mapped); place it on the
-    // sphere at radius R+h and project. Every vertex curves -> round at any tessellation.
-    // SKIRT: outer-ring verts (vertex.z==1, xy clamped to the true edge) drop radially below the
-    // surface to form a near-vertical curtain that hides LOD T-junction cracks without painting a
-    // visible flat band (the old overlap ring's artifact). Depth scales with the tile size so the
-    // skirt always reaches below a coarser neighbor's surface. Hidden behind the surface from above.
-    // water pass: NO skirt (user 2026-06-11) -- the surface is an exact sphere at R, so adjacent
-    // LODs agree exactly and there are no T-junction cracks to hide; a skirt would only drape a
-    // visible curtain through the transparent shallows.
-    // SKIRT halved (user 2026-06-14 'we keep seeing skirts' -- visible underwater/through the now-clear
-    // water): 0.12->0.06 tile-scaled + floor 60->30. Still reaches below a coarser neighbor to hide the
-    // LOD T-junction crack (the real discontinuity is tens of m, far under 0.06*tilespan), but the
-    // vertical curtain is half as tall = far less visible when the seabed is seen through clear water.
-    highp float skirt = (vertex.z > 0.5 && uIsWater < 0.5) ? max(defOffset.z * 0.06, 30.0 * (uReliefScale > 0.0 ? uReliefScale : 1.0)) : 0.0;   // W7: metres (tile + radius scaled) -> highp. SCALE-INVARIANT: 30m floor scales with reliefScale (was absolute -> deep skirt walls at small radius)
-    vWorld = dir0 * (R + hR - skirt);   // ABSOLUTE world pos (RENDER height: ocean top flat) -> FS lighting/atmosphere
-    // TEXTURE DOMAIN WARP -- VS-side, DOUBLED BACK (user 2026-06-12): 225/900/3500 -> 450/1800/7000.
-    {
-        highp vec3 w0 = dir0 * 450.0, w1 = dir0 * 1800.0, w2 = dir0 * 7000.0;
-        vTexWarp = vec3(snoise3(w0), snoise3(w0 + vec3(7.3)), snoise3(w0 + vec3(23.9))) * 1.2
-                 + vec3(snoise3(w1), snoise3(w1 + vec3(13.7)), snoise3(w1 + vec3(31.1))) * 0.6
-                 + vec3(snoise3(w2), snoise3(w2 + vec3(5.1)), snoise3(w2 + vec3(17.9))) * 0.3;
-    }
-    // CAMERA-RELATIVE PROJECTION (vertex-jitter fix): forming dir0*(R+h) at ~6.4e6m rounds to ~0.5m in
-    // fp32 -> vertices quantize and JITTER as the camera moves (the same fp32 cancellation gl-render.js
-    // documents for the cull, which the per-vertex draw path did NOT avoid). Build the SMALL camera-
-    // relative position directly -- (dir0-defCamDir)*R is the lateral offset computed from a unit-vector
-    // difference (precise, no 6.4e6 intermediate), plus the small radial terms -- and project with
-    // defViewProjNoEye (no folded translate(-eye)). Result magnitude ~horizon scale, fp32-precise.
-    highp vec3 vRel = (dir0 - defCamDir) * R + dir0 * (hR - skirt) - defCamDir * defCamAlt;   // W7 highp ISLAND: camera-relative projection (render height; planet-scale fp32 cancellation fix kept intact)
+    highp float skirt = (vertex.z > 0.5 && uIsWater < 0.5) ? max(defOffset.z * 0.06, 30.0 * (uReliefScale > 0.0 ? uReliefScale : 1.0)) : 0.0;
+
+    vH    = hN0;
+    vNrm  = (uIsWater > 0.5) ? dir0 : vN;
+    vWorld = dir0 * (defRadius + hR - skirt);
+
+    highp vec3 vRel = (dir0 - defCamDir) * defRadius + dir0 * (hR - skirt) - defCamDir * defCamAlt;
     gl_Position = defViewProjNoEye * vec4(vRel, 1.0);
-    vTexRel = vRel;   // camera-relative pos for the precise texture UV (same fp32-cancellation-free coord as the geometry)
-    // UNIFIED carve masks -> FS (interpolated; the FS no longer re-evaluates the sharp carve fields
-    // per-pixel). riverWetMask/canyonDepMask/duneCrest are the out-params captured above; lakeWetV
-    // from the lake-carve block. Gated by the SAME climate masks the geometry used.
-    vLakeWet   = lakeWetV * lakeGate;
-    vRiverWet  = riverWetMask * riverWet * step(0.0, vH);
-    // SUBMERGED DEPTH (user 2026-06-01i: 'carves dont line up with the water'). The inland-water
-    // COLOR must land ONLY where the surface is actually at/below the flat water plane, not over the
-    // whole carve mask (which includes the graded erosion shoulder ABOVE the waterline). vWaterDepth
-    // = metres the water plane sits above the pre-flatten carved floor, >0 ONLY inside the true open
-    // water; the FS gates ALL inland-water shading on this so blue == the flat water, banks stay land.
-    vWaterDepth = max(waterPlane - floorBefore, 0.0) * step(0.001, haveWater);
-    vCanyonDep = canyonDepMask * step(0.0, vH);
-    vCliffFace = cliffFaceMask * step(0.0, vH);
-    vDuneCrest = duneCrest * duneSand;
-    vGrid = vertex.xy;   // parametric mesh-cell coord for the wireframe overlay
-    vLevel = defOffset.w;   // quad LOD level -> FS patches view
-    vClimate   = hpf0;   // (seaBias, elevAmp, temp, humid) -> FS reads this, not the HPF texture
+    vTexRel = vRel;
+
+    if (uIsWater < 0.5) {
+        highp vec3 w0 = dir0 * 450.0;
+        vTexWarp = vec3(snoise3(w0), snoise3(w0 + vec3(7.3)), snoise3(w0 + vec3(23.9))) * 1.2;
+    } else {
+        vTexWarp = vec3(0.0);
+    }
+
+    vGrid    = vertex.xy;
+    vLevel   = defOffset.w;
+    vClimate = hpf0;
 }
 #endif
 
@@ -1194,12 +452,7 @@ in highp vec3 vWorld;   // W7: MUST match the VS highp vWorld (world pos ~6.4e6 
 in vec3 vTexWarp;       // VS-computed texture domain warp (halved freqs); applied once in the splat block
 in highp float vH;      // W7: match VS highp vH (signed metres)
 in highp vec3 vNrm;     // W8: world-space analytic normal from the VS (matches VS highp out). Sole lit normal.
-in float vLakeWet;    // carve masks computed in the VS, interpolated (no per-pixel re-eval -> no moire)
-in float vRiverWet;
-in float vWaterDepth; // metres of submerged water (>0 = real open inland water at the flat plane)
-in float vCanyonDep;
-in float vCliffFace;
-in float vDuneCrest;
+
 in float vLevel;          // quad LOD level (patches view)
 in vec2  vGrid;            // per-quad parametric mesh coord (wireframe overlay)
 in highp vec3 vTexRel;     // W7: camera-relative world pos for the precise (jitter-free) texture UV
@@ -1402,7 +655,9 @@ float riverMask(vec3 worldPos, float h, float temp, float humid, float px) {
     // worldPos/terrainR (= dir*(1+h/R), elevation-shifted) -> a different field/position/resolution
     // than the VS riverCarveM. Call the IDENTICAL riverRidgeField the VS carve uses, at
     // normalize(worldPos) (== radial dir), so the FS river network coincides with the carved geometry.
-    float ridge = riverRidgeField(normalize(worldPos));   // 0..1, ->1 on the channel network
+    // Inline river ridge field: ridged FBM at a river-network frequency, output remapped 0..1.
+    highp vec3 rdir = normalize(worldPos);
+    float ridge = value_ridged_fbm_rot(rdir * 280.0, 0.55, 6, 1.0, 1.5) * 0.5 + 0.5;  // 0..1, ->1 on channel network
     // thin the network to a line. MEASURED ridge distribution (diag-river.mjs nodejs-2037):
     // p90=0.858 p97=0.903 max=0.985; areaFrac>0.90 = 3.4%, >0.88 = 6%. Center the line band at
     // ~0.90 (lo 0.88 -> hi 0.935) for ~4-6% believable drainage density -- the old 0.92->0.985
@@ -1433,7 +688,9 @@ float canyonMask(vec3 worldPos, float h, float temp, float humid, float px, out 
     // SHIFTED off the VS sample) -> a different field/position/resolution than the VS carve. Now call
     // the IDENTICAL canyonRidgeField the VS canyonCarveM uses, at normalize(worldPos) (== the radial
     // dir), so the FS network coincides EXACTLY with the carved geometry. Same field, no elevation shift.
-    float ridge = canyonRidgeField(normalize(worldPos));
+    // Inline canyon ridge field: same ridged FBM but different phase/frequency so it doesn't coincide with rivers.
+    highp vec3 cdir = normalize(worldPos);
+    float ridge = value_ridged_fbm_rot(cdir * 310.0 + vec3(47.3, 81.1, 23.7), 0.55, 6, 1.0, 1.5) * 0.5 + 0.5;
     float wid = clamp(px * 0.0006, 0.0, 0.03);                 // narrower than rivers
     float line = smoothstep(0.875 - wid, 0.94, ridge);        // ~river-density threshold so they appear
     depth = smoothstep(0.875, 0.95, ridge);                   // deeper toward the channel centre
@@ -1512,10 +769,7 @@ vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, flo
     // appearance; the 2-tap bedding-warp strata fallback is gone (-2 snoise3, ~35 LOC).
     // DUNES: warm sand on the desert floor, keyed off the interpolated dune-crest mask (vDuneCrest =
     // crest * duneSand gate from the VS). Crest sun-bleached lighter, trough ochre.
-    vec3 sandLo = vec3(0.78, 0.64, 0.40);   // trough ochre sand
-    vec3 sandHi = vec3(0.90, 0.82, 0.62);   // sun-bleached crest sand
-    vec3 sandCol = mix(sandLo, sandHi, smoothstep(0.0, 0.6, vDuneCrest));
-    c = mix(c, sandCol, smoothstep(0.0, 0.25, vDuneCrest) * (1.0 - smoothstep(0.30, 0.50, slope)) * 0.9);
+    // Dune crest removed with old carve system; vDuneCrest is now always 0.
     // PERLIN-EVERYWHERE OVERLAY (user 2026-06-10 'pale + featureless in some areas -- add perlin
     // everywhere and overlay the other noises'): 3-octave value fbm over ALL materials (biome, rock,
     // snow, sand) so no area is ever a flat color. World-dir keyed (no camera scroll -- the lesson of
@@ -1525,7 +779,7 @@ vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, flo
         highp vec3 od = nwp;
         float ov = 0.0, oa = 0.0;
         float fq = 75.0, am = 1.0;                 // octaves: ~84km / 17km / 3.4km features (halved to match VS detailFbm)
-        int fdOcts = (uFSDetailOcts > 0) ? uFSDetailOcts : 3;
+        int fdOcts = 3;
         for (int o = 0; o < fdOcts; o++) {
             float wl = 40000000.0 * uReliefScale / fq;   // feature wavelength (m) ~ 2*pi*R/fq. *uReliefScale = SCALE-INVARIANT: the octave is angular so its WORLD wavelength scales with R; the 40000000 Earth-circumference ref must scale too or the Nyquist sub-pixel fade engages at the wrong relative distance at the small-radius scale (2026-06-18 real-size).
             float nyq = 1.0 - smoothstep(wl * 0.03, wl * 0.12, pxWorld);   // fade before sub-pixel
@@ -1538,7 +792,7 @@ vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, flo
         // albedo term was *= 1 +/- 0.54, painting slope-INDEPENDENT dark braids over every material
         // that read as misplaced shading / rock bands). 0.09 -> 0.02: lever 6 now gives +/-12% value
         // variation (anti-featureless, as asked) while the +/-180m ELEVATION term keeps the full lever.
-        c *= 1.0 + uDetailOverlay * 0.02 * (ov / max(oa, 1e-3));
+        c *= 1.0 + 0.02 * (ov / max(oa, 1e-3));
     }
     return c;
 }
@@ -1846,7 +1100,7 @@ void main() {
         // SAND REGIONS SUPPRESS ROCK (user 2026-06-10 'rock being used instead of sand'): in
         // deserts/dunes/beaches sand drapes moderate slopes; rock only wins on genuinely steep faces
         // there (gate shifted toward 0.5-0.7 inside sand regions instead of slopeRock 0.28-0.55).
-        float sandRegion = clamp(max(max(dryHot, beach), smoothstep(0.0, 0.25, vDuneCrest)), 0.0, 1.0);
+        float sandRegion = clamp(max(dryHot, beach), 0.0, 1.0);
         // SPLAT ROCK GATE DECOUPLED from the macro slopeRock (user 2026-06-11 'a lot of grass turning
         // into rocky patches again'): the user-calibrated global soft blend slopeRock [-0.6,1] puts
         // ~37% ROCK LAYER weight on perfectly flat ground, and the displacement-sharpened top-2
@@ -2047,18 +1301,6 @@ void main() {
         float rv = riverMask(vWorld, vH, climate.z, climate.w, pxWorld);
         fragColor = vec4(mix(vec3(0.15), vec3(0.1,0.4,0.9), rv), 1.0); return;
     }
-    // DIAG displayMode 8: RIVER GATING -- the ACTUAL integrated river the geometry+lit path uses (user
-    // 2026-06-02: 'river gating is empty'). The old version re-evaluated riverMask per-pixel AND a dead
-    // lake-suppression gated on humid>0.62 (most land is ~0.39) so it read ~0 = empty. Now it shows the
-    // VS-integrated varyings directly: BLUE = vRiverWet (the flowing-water line the geometry carved +
-    // the lit path composites), GREEN = vLakeWet (lake water), so it matches what actually renders. The
-    // raw per-pixel network is still in mode 7.
-    if (displayMode == 8) {
-        vec3 col = vec3(0.12);
-        col = mix(col, vec3(0.10, 0.45, 0.95), clamp(vRiverWet, 0.0, 1.0));   // river line (integrated)
-        col = mix(col, vec3(0.15, 0.85, 0.55), clamp(vLakeWet, 0.0, 1.0));    // lake water
-        fragColor = vec4(col, 1.0); return;
-    }
     // DIAG displayMode 9: DISCRETE BIOME MAP -> each fragment flat-colored by its classified
     // biome (ocean/ice/tundra/desert/savanna/rainforest/taiga/forest/meadow). Lets a witness
     // COUNT contiguous biome regions + confirm logical placement (deserts in subtropics, ice at
@@ -2073,25 +1315,9 @@ void main() {
     // DIAG displayMode 10: CANYON field -> red where the gorge network fires (arid elevated only),
     // grey ridge field elsewhere. Lets a witness SEE the canyon network density independent of
     // landing the nadir exactly on a thin gorge line.
-    if (displayMode == 10) {
-        // SHOW THE ACTUAL CARVE (user 2026-06-16 'the canyon field debug view must show the canyons we're
-        // ACTUALLY carving'): use vCanyonDep -- the VS-integrated carve-depth varying (canyonDepMask, the
-        // exact profile the geometry incised), NOT a per-pixel re-eval of canyonMask which used different
-        // thresholds/gating than the VS carve and so drew canyons the geometry never cut. Same approach as
-        // displayMode 8 (river) which shows the integrated varying 'so it matches what actually renders'.
-        float cd = clamp(vCanyonDep, 0.0, 1.0);
-        vec3 col = mix(vec3(0.15), mix(vec3(0.75,0.40,0.15), vec3(0.9,0.15,0.05), cd), smoothstep(0.02, 0.25, cd));
-        fragColor = vec4(col, 1.0); return;
-    }
     // DIAG displayMode 11: CLIFF validation view -> RED = cliff/escarpment riser faces (vCliffFace),
     // GREEN = canyon walls (vCanyonDep on steep slope), so the user can SEE where cliffs are placed
     // independent of lighting/strata. Grey elsewhere. The witness for the cliff terrace placement.
-    if (displayMode == 11) {
-        float cliffR = vCliffFace;
-        float canyonG = vCanyonDep * smoothstep(0.30, 0.55, slope);
-        fragColor = vec4(mix(vec3(0.12), vec3(1.0, 0.2, 0.1), cliffR)
-                       + vec3(0.0, 0.8, 0.2) * canyonG, 1.0); return;
-    }
     // DIAG displayMode 12: PATCHES -> each LOD LEVEL a DISTINCT colour (user: validate the dense LOD
     // is always centered under the camera). Hue cycles by level via a golden-ratio rotation so any two
     // adjacent levels are far apart in hue; the finest (highest-level) patches under the camera read as
@@ -2176,20 +1402,6 @@ void main() {
     skyIrrBalanced *= uSkyFill * vec3(0.85, 0.92, 1.10);
     // Lambert BRDF (albedo/PI) under sun + (balanced) sky irradiance. Keep an ambient
     // FLOOR so night/shadow faces are never pure black (PRD lit-terrain-dark-black).
-    // CURVATURE / SLOPE AMBIENT-OCCLUSION (canyon floors + cliff bases): incised/concave fragments
-    // see less sky, so darken the AMBIENT (sky + floor) there for contact-shadow depth. Keyed on the
-    // interpolated canyon gorge depth (vCanyonDep ->1 in the gorge core) so floors darken while rims
-    // stay bright. Direct SUN is NOT occluded (avoids double-darkening already-shaded faces). uAoAmt
-    // lever. Pure fn of the carve varying -> no extra sampling, seam-safe.
-    // OBJECT-SPACE AO (2026-06-05): augment the gorge-depth term with a cheap analytic sky-occlusion
-    // estimate so cliff BASES and steep concave faces -- not just canyon floors -- pick up contact
-    // shadow. A true N-sweep horizon-angle integral over the fractal (karim.naaji.fr/lsao) is the
-    // research-best but per-pixel fractal sweeps would re-add the close-up VS/FS cost the pipeline is
-    // sensitive to; instead approximate the sky-view factor from data already in hand: (a) the gorge
-    // depth varying (deep incision -> walls occlude sky), and (b) surface STEEPNESS (a near-vertical
-    // face sees only a hemisphere's edge of sky -> ~half occlusion at slope->1). Both darken AMBIENT
-    // only (never the direct sun, avoiding double-shade). uAoAmt lever. Pure fn of varyings+normal ->
-    // no extra sampling, seam-safe, zero FPS cost vs the old single-term version.
     // SLOPE/CURVATURE AO REMOVED 2026-06-15 (user 'get rid of the AO code, its costing computation'): the
     // slope-keyed sky-occlusion (slopeAO/cliffAO) + the Sobel-slope fsShadeAO are gone; skyAO is a constant 1.0
     // so the sky ambient is uniform. Direct-sun N.L shading still drives all relief contrast.
@@ -2350,39 +1562,6 @@ void main() {
     // lighting (the warm sun-irradiance multiply would otherwise kill the blue, the reason the ocean
     // bypasses it via vH<0). Gating on vWaterDepth (NOT the whole carve mask) makes the water LINE UP
     // with the flat carved surface -- the graded erosion banks above the waterline stay dry land.
-    if (vH >= 0.0 && vWaterDepth > 0.0) {
-        // submergence 0..1 over ~0..160m (40->160, user 2026-06-14 'water super shallow+flat'): the color
-        // saturated at 40m so every deeper lake/river read one flat tone; stretch it so depth shows as a
-        // shallow-edge -> deep-center gradient (thin transparent rim, deep dark center).
-        float sub = clamp(vWaterDepth / 160.0, 0.0, 1.0);
-        // wave-perturbed water normal (small inland ripple), same tangent frame as the ground.
-        highp vec3 wOriginL = floor(camWorld / 1024.0) * 1024.0;   // W7: ~6.4e6 m snapped anchor -> highp
-        highp vec2 wpL = vec2(dot(vWorld - wOriginL, ux), dot(vWorld - wOriginL, uy));   // W7: highp camera-relative wave coord
-        vec2 slopeL = oceanWaveSlope(wpL, oceanTime) * 0.5;            // calmer than open ocean
-        highp float wDistL = length(camWorld - vWorld);              // W7: camera->fragment cancellation -> highp
-        slopeL *= clamp(1.0 - wDistL / 4000.0, 0.0, 1.0);             // fade ripple at distance (anti-alias)
-        vec3 wnL = normalize(uz - ux * slopeL.x - uy * slopeL.y);
-        vec3 viewL = normalize(camWorld - vWorld);
-        float f0L = 0.02;
-        float fresL = f0L + (1.0 - f0L) * pow(clamp(1.0 - max(dot(wnL, viewL), 0.0), 0.0, 1.0), 5.0);
-        vec3 hlL = normalize(sunDir + viewL);
-        float specL = pow(max(dot(wnL, hlL), 0.0), 220.0);
-        float ndlL = max(dot(wnL, sunDir), 0.0);
-        // depth tint: a touch greener than the ocean (freshwater/sediment), shallow -> deep.
-        vec3 shallowL = vec3(0.10, 0.30, 0.36);
-        vec3 deepL    = vec3(0.02, 0.10, 0.20);
-        // congruent with the ocean: per-channel Beer-Lambert by true submerged depth (freshwater
-        // slightly murkier), so lakes/rivers and the ocean read as one water system.
-        vec3 TL = exp(-uOceanK * vWaterDepth * 1.6);
-        vec3 waterBaseL = mix(deepL, shallowL, TL);
-        vec3 skyColL = vec3(0.30, 0.42, 0.55);
-        vec3 waterLitL = waterBaseL * (0.25 + 0.75 * ndlL);
-        vec3 inlandWater = mix(waterLitL, skyColL, fresL * 0.85) + vec3(1.0, 0.95, 0.85) * specL * ndlL;
-        inlandWater += waterBaseL * 0.05;                             // ambient floor (never black)
-        // blend over the lit ground: full water in deep parts, terrain shows through at the shoreline.
-        float waterCover = sub;                                      // 0 at waterline -> 1 deep
-        color = mix(color, inlandWater, waterCover);
-    }
     // WIREFRAME OVERLAY (uWireframe=1): draw the per-quad mesh-cell grid lines so the LOD
     // tessellation is visible. Uses the parametric vGrid coord (0..1 per tile, GRID cells) with an
     // fwidth-based anti-aliased line at each cell boundary -> crisp wireframe at any distance,
