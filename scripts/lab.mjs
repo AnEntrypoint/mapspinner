@@ -458,10 +458,12 @@ async function cmdParityPatch(args) {
     samples.push({ x, z, dir: localToDir(x, z) })
   }
   const skip = !!args.skip
+  const detail = (args.detail != null) ? num(args.detail, 50) : null   // override uDetailOverlay on BOTH GPU render + CPU sampler
   const reliefScale = R / 6360000
   const r = await withHeadless(async (evalIn) => {
-    const sampler = createHeightSampler({ radius: R })
+    const sampler = createHeightSampler({ radius: R, uniforms: detail != null ? { uDetailOverlay: detail } : undefined })
     if (skip) await evalIn('(()=>{ window.__probeSkipCarves = 1; return 1; })()')
+    if (detail != null) await evalIn(`(()=>{ window.__detailOverlay = ${detail}; return 1; })()`)
     const cpuH = skip
       ? (dir) => { const d = (function(v){const l=Math.hypot(v[0],v[1],v[2])||1;return [v[0]/l,v[1]/l,v[2]/l]})(dir); return sampler._fns.composeHeightC(d, [0,0], 100, sampler._fns.computeHCache(d), true) * reliefScale }
       : (dir) => sampler.heightAt(dir)
