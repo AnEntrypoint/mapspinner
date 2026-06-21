@@ -16,7 +16,10 @@
   "type": "module",
   "scripts": {
     "gen": "node scripts/gen-height.mjs",
-    "test": "node scripts/gen-height.mjs && node --test \"src/**/*.test.js\"",
+    "gen:check": "node scripts/gen-height.mjs && git diff --exit-code -- src/height-gen.js",
+    "prepublishOnly": "node scripts/gen-height.mjs",
+    "prepack": "node scripts/gen-height.mjs",
+    "test": "node scripts/gen-height.mjs && git diff --exit-code -- src/height-gen.js && node --test \"src/**/*.test.js\"",
     "dev": "PORT=8080 node server.js",
     "lab": "node scripts/lab.mjs",
     "lab:heightmap": "node scripts/lab.mjs heightmap",
