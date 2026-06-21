@@ -318,6 +318,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
       // diverge from the rendered geometry = the camera stops short of the visible surface. Match render().
       _octClampAlt = 0;   // collision probe: full octaves regardless of the last render frame's altitude (collision must match the close-up surface)
       setComposeHeightUniforms(PU);
+      gl.uniform1i(PU('uProbeSkipCarves'), (typeof window!=='undefined' && window.__probeSkipCarves) ? 1 : 0);   // DIAG parity bisect
       gl.uniform3f(PU('probeDir'), dir[0]/pl, dir[1]/pl, dir[2]/pl);
       gl.disable(gl.DEPTH_TEST);
       gl.drawArrays(gl.POINTS, 0, 1);

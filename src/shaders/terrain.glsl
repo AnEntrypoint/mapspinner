@@ -2440,6 +2440,7 @@ void main() {
 // mirror). Paired with a 1-point VS in gl-render.js; writes height (metres) to R32F.
 #ifdef _PROBE_
 uniform vec3 probeDir;     // world direction under the camera (normalized)
+uniform int uProbeSkipCarves;   // DIAG: 1 -> composeHeightC(skipCarves=true) so a CPU<->GPU parity bisect can isolate carve vs broad-shape divergence
 out vec4 probeOut;
 void main(){
     vec3 dir0 = normalize(probeDir);
@@ -2458,7 +2459,9 @@ void main(){
     highp vec2 faceLocal = (uv * 2.0 - 1.0) * defRadius;             // W7: warped face-local metres ~6.4e6 -> highp (matches VS:667)
     // tileM is INERT in vtxDisplace (terrain.glsl:495-501 has no tileM term; PURE per-patch-step fix) so
     // composeHeight is bit-identical for any tileM -> the hardcoded value below is NOT a divergence (verified).
-    highp float h = composeHeight(dir0, faceLocal, 64.0);            // W7: metres (tileM inert; collision == rendered surface)
+    highp float h = (uProbeSkipCarves > 0)
+      ? composeHeightC(dir0, faceLocal, 64.0, computeHCache(dir0), true) * (uReliefScale > 0.0 ? uReliefScale : 1.0)   // DIAG bisect: broad-shape only
+      : composeHeight(dir0, faceLocal, 64.0);            // W7: metres (tileM inert; collision == rendered surface)
     // RAW height out (2026-06-11): the old smoothstep(-60,60) flat-ocean clamp made the probe a
     // CLAMPED GAUGE -- sampleGroundM could never report real bathymetry (witnessed: a 2000-dir
     // sweep found 'no ocean below -100m' on a planet with km-deep basins), silently corrupting

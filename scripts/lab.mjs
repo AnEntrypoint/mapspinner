@@ -437,10 +437,66 @@ export { parseArgs, dirFromLatLon, sampleField, crc32, encodePNGGray, toGray }
 
 // ---------------------------------------------------------------- main (only when run as the CLI entry)
 import { pathToFileURL } from 'node:url'
+// SETTLED parity over a LOCAL TANGENT PATCH around an anchor dir (matches a consumer's play patch,
+// e.g. spoint). Unlike cmdParity (whole-sphere, 2-tap), this taps the SAME dir for K frames so the
+// 1-frame-stale single-slot probe fully converges -> a tight CPU==GPU oracle at the patch.
+async function cmdParityPatch(args) {
+  const R = num(args.radius, 63600)
+  const A = args.anchor ? String(args.anchor).split(',').map(Number) : [-0.641, 0.2558, 0.7237]
+  const reach = num(args.reach, 320)   // metres half-extent of the local patch
+  const grid = Math.max(2, Math.round(num(args.grid, 7)))
+  const K = Math.max(3, Math.round(num(args.settle, 8)))   // frames to settle each dir
+  const nrm = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0]/l, v[1]/l, v[2]/l] }
+  const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]
+  const up = nrm(A)
+  const ref = Math.abs(up[1]) < 0.99 ? [0,1,0] : [1,0,0]
+  const east = nrm(cross(ref, up)); const north = cross(east, up)
+  const localToDir = (x, z) => nrm([ up[0] + (east[0]*x + north[0]*z)/R, up[1] + (east[1]*x + north[1]*z)/R, up[2] + (east[2]*x + north[2]*z)/R ])
+  const samples = []
+  for (let i = 0; i < grid; i++) for (let j = 0; j < grid; j++) {
+    const x = (i/(grid-1)*2-1)*reach, z = (j/(grid-1)*2-1)*reach
+    samples.push({ x, z, dir: localToDir(x, z) })
+  }
+  const skip = !!args.skip
+  const reliefScale = R / 6360000
+  const r = await withHeadless(async (evalIn) => {
+    const sampler = createHeightSampler({ radius: R })
+    if (skip) await evalIn('(()=>{ window.__probeSkipCarves = 1; return 1; })()')
+    const cpuH = skip
+      ? (dir) => { const d = (function(v){const l=Math.hypot(v[0],v[1],v[2])||1;return [v[0]/l,v[1]/l,v[2]/l]})(dir); return sampler._fns.composeHeightC(d, [0,0], 100, sampler._fns.computeHCache(d), true) * reliefScale }
+      : (dir) => sampler.heightAt(dir)
+    const warm = await waitFor(async () => {
+      const v = await evalIn(`(()=>{ const o=window.__planetOrch, p=o&&o.render&&o.render.sampleGroundM; if(!p) return null; const h=p([0,1,0]); return (h!=null&&isFinite(h))?h:null; })()`).catch(() => null)
+      return v != null
+    }, Number(process.env.LAB_PROBE_TIMEOUT_MS) || 4*60*1000, 2000).then(() => true).catch(() => false)
+    if (!warm) return { samples: 0, note: 'probe never warmed' }
+    const dirs = samples.map(s => s.dir)
+    const gpu = await evalIn(`(async()=>{
+      const p = window.__planetOrch.render.sampleGroundM;
+      const frame = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const out = [];
+      for (const d of ${JSON.stringify(dirs)}) { let h=null; for (let k=0;k<${K};k++){ h=p(d); await frame(); } out.push((h!=null&&isFinite(h))?h:null); }
+      return out;
+    })()`)
+    if (gpu == null) return { samples: 0, note: 'probe unavailable' }
+    const rows = []
+    let maxAbs = 0, sumAbs = 0, cnt = 0
+    for (let i = 0; i < samples.length; i++) {
+      if (gpu[i] == null || !isFinite(gpu[i])) continue
+      const cpu = cpuH(samples[i].dir)
+      const d = Math.abs(cpu - gpu[i]); maxAbs = Math.max(maxAbs, d); sumAbs += d; cnt++
+      rows.push({ x: samples[i].x, z: samples[i].z, cpu: +cpu.toFixed(2), gpu: +gpu[i].toFixed(2), diff: +(gpu[i]-cpu).toFixed(2) })
+    }
+    return { pageRadiusM: R, anchor: A, reachM: reach, settleFrames: K, samples: cnt, maxAbsM: +maxAbs.toFixed(3), meanAbsM: +(sumAbs/Math.max(1,cnt)).toFixed(3), rows }
+  })
+  console.log(JSON.stringify(r, null, 1))
+  return r.ok && r.samples > 0 ? 0 : 1
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = parseArgs(process.argv.slice(2))
   const cmd = args._[0] || 'help'
-  const table = { heightmap: cmdHeightmap, build: cmdBuild, 'glsl-check': cmdGlslCheck, parity: cmdParity, shot: cmdShot, 'ab-fs': cmdAbFs, help: cmdHelp }
+  const table = { heightmap: cmdHeightmap, build: cmdBuild, 'glsl-check': cmdGlslCheck, parity: cmdParity, 'parity-patch': cmdParityPatch, shot: cmdShot, 'ab-fs': cmdAbFs, help: cmdHelp }
   const fn = table[cmd]
   if (!fn) { console.error(`unknown command: ${cmd}`); cmdHelp(); process.exit(2) }
   try { process.exit((await fn(args)) | 0) }
