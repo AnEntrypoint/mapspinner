@@ -121,11 +121,7 @@ highp vec4 hpfSample(vec3 dir) {   // W7: R=seaBias is metres (~1600) -> highp s
 // W7 highp ISLAND: snoise3/shash3 lattice inputs reach freq*dir ~1.4e4 (fine octaves) and rely on
 // integer floor()/fract() cell precision -- fp16 (~3 digits) would collapse every cell to mush. ALL
 // noise primitives + their P/p args are highp; the [-1,1] RESULT narrows back to the mediump default.
-// DETERMINISTIC integer lattice hash (CPU<->GPU bit-identical: uint32 mul/xor/shift wrap exactly the
-// same as JS Math.imul/>>>0, unlike a float fract-hash whose rounding diverges per-GPU). p is always an
-// integer lattice corner (snoise3 passes floor(P)+int offsets); round-to-int guards fp wobble at the
-// exact integer. Murmur3-style finalizer. See glsl-rt.js shash3 for the matching JS.
-highp float shash3(highp vec3 p){ ivec3 ip=ivec3(floor(p+0.5)); uint h=uint(ip.x)*0x27d4eb2du; h^=uint(ip.y)*0x9e3779b1u; h^=uint(ip.z)*0x85ebca6bu; h^=h>>16u; h*=0x7feb352du; h^=h>>15u; h*=0x846ca68bu; h^=h>>16u; return float(h)*(1.0/4294967296.0); }
+highp float shash3(highp vec3 p){ p=fract(p*0.3183099+vec3(0.1,0.2,0.3)); p+=dot(p,p.yzx+19.19); return fract((p.x+p.y)*p.z + (p.y+p.z)*p.x); }
 float snoise3(highp vec3 P){ highp vec3 i=floor(P),f=fract(P); highp vec3 u=f*f*(3.0-2.0*f);
   float n000=shash3(i),n100=shash3(i+vec3(1,0,0)),n010=shash3(i+vec3(0,1,0)),n110=shash3(i+vec3(1,1,0));
   float n001=shash3(i+vec3(0,0,1)),n101=shash3(i+vec3(1,0,1)),n011=shash3(i+vec3(0,1,1)),n111=shash3(i+vec3(1,1,1));
@@ -2444,7 +2440,6 @@ void main() {
 // mirror). Paired with a 1-point VS in gl-render.js; writes height (metres) to R32F.
 #ifdef _PROBE_
 uniform vec3 probeDir;     // world direction under the camera (normalized)
-uniform int uProbeSkipCarves;   // DIAG: 1 -> composeHeightC(skipCarves=true) so a CPU<->GPU parity bisect can isolate carve vs broad-shape divergence
 out vec4 probeOut;
 void main(){
     vec3 dir0 = normalize(probeDir);
@@ -2463,9 +2458,7 @@ void main(){
     highp vec2 faceLocal = (uv * 2.0 - 1.0) * defRadius;             // W7: warped face-local metres ~6.4e6 -> highp (matches VS:667)
     // tileM is INERT in vtxDisplace (terrain.glsl:495-501 has no tileM term; PURE per-patch-step fix) so
     // composeHeight is bit-identical for any tileM -> the hardcoded value below is NOT a divergence (verified).
-    highp float h = (uProbeSkipCarves > 0)
-      ? composeHeightC(dir0, faceLocal, 64.0, computeHCache(dir0), true) * (uReliefScale > 0.0 ? uReliefScale : 1.0)   // DIAG bisect: broad-shape only
-      : composeHeight(dir0, faceLocal, 64.0);            // W7: metres (tileM inert; collision == rendered surface)
+    highp float h = composeHeight(dir0, faceLocal, 64.0);            // W7: metres (tileM inert; collision == rendered surface)
     // RAW height out (2026-06-11): the old smoothstep(-60,60) flat-ocean clamp made the probe a
     // CLAMPED GAUGE -- sampleGroundM could never report real bathymetry (witnessed: a 2000-dir
     // sweep found 'no ocean below -100m' on a planet with km-deep basins), silently corrupting

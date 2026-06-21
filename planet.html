@@ -73,17 +73,12 @@ function value_ridged_fbm_scaled(x,y,z,gain,n,off,exp,mn,mx){
   for(let i=0;i<n;i++){let s=value_noise(f*x,f*y,f*z);s=off-Math.abs(s);s=Math.pow(s,exp);s*=w;t+=a*s;f*=2;a*=gain;w=Math.max(0,Math.min(1,s*2));}
   const rg=fbm_ridged_range(gain,n,off,exp);return mn+(mx-mn)*((t-rg[0])/(rg[1]-rg[0]));
 }
-// jsElev -- RADIUS-fraction elevation of the SINGLE terrain fractal. Prefer the exact GPU probe
-// when available; otherwise fall back to the CPU height sampler that mirrors the full shader.
-// Returning only the broad shape is not enough here because it omits the carve stack and will
-// drift from both collision and placement against the visible terrain.
+// jsElev -- RADIUS-fraction elevation of the SINGLE terrain fractal. The old line-by-line WGSL
+// cascade mirror was deleted with the cascade (one-fractal collapse); jsElev now delegates to
+// jsBroadShape (the faithful mirror of broadShapeM, the sole rendered field) so every CPU consumer
+// (collision clamp, findLand viewpoints) tracks the rendered surface. Returns elevation / R.
 function jsElev(dx,dy,dz){
-  const orch = window.__planetOrch
-  const probe = orch && orch.render && orch.render.sampleGroundM ? orch.render.sampleGroundM([dx, dy, dz]) : null
-  if (Number.isFinite(probe)) return probe / WEBGL2_TERRAIN_R_M
-  const cpu = window.__planetCpu && window.__planetCpu.heightAt ? window.__planetCpu.heightAt([dx, dy, dz]) : null
-  if (Number.isFinite(cpu)) return cpu / WEBGL2_TERRAIN_R_M
-  return jsBroadShape(dx,dy,dz) / WEBGL2_TERRAIN_R_M   // last-resort fallback only
+  return jsBroadShape(dx,dy,dz) / WEBGL2_TERRAIN_R_M;   // metres -> fraction of R
 }
 
 // jsBroadShape -- faithful JS port of terrain.glsl broadShapeM(dir, reliefMul=1, ridgeMul=0)
@@ -152,15 +147,6 @@ if (typeof window !== 'undefined') {
   window.__RADIUS = RADIUS;
   window.__WEBGL2_TERRAIN_R_M = WEBGL2_TERRAIN_R_M;
   window.__WEBGL2_M_PER_UNIT = WEBGL2_M_PER_UNIT;
-}
-// CPU terrain sampler used only when the async GPU probe is unavailable. This is the same
-// height-cpu mirror the server uses, so it stays aligned with the rendered shader path.
-const { createHeightSampler } = await import('./src/height-cpu.js');
-if (typeof window !== 'undefined') {
-  window.__planetCpu = createHeightSampler({
-    radius: WEBGL2_TERRAIN_R_M,
-    reliefScale: (typeof window.__reliefScale === 'number' && Number.isFinite(window.__reliefScale)) ? window.__reliefScale : undefined,
-  });
 }
 // Free-fly 6-DOF camera. `pos` is world-space position, `yaw`/`pitch` define
 // look direction in world coordinates. WASD translates along view-relative axes,

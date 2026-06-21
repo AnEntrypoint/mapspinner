@@ -11,6 +11,31 @@ export function makeHeight(U, hpfSample) {
   const C_CANYON_INCISE_DEPTH = 700.0;
   const C_MESA_HEIGHT = 650.0;
   const C_DUNE_AMP = 120.0;
+  function shash3(p) {
+    p = g.fract(g.add(g.mul(p, 0.3183099), g.vec3(0.1, 0.2, 0.3)));
+    p = g.add(p, g.dot(p, g.add(g.sw(p, 'yzx'), 19.19)));
+    return g.fract((((g.sw(p, 'x') + g.sw(p, 'y')) * g.sw(p, 'z')) + ((g.sw(p, 'y') + g.sw(p, 'z')) * g.sw(p, 'x'))));
+  }
+
+  function snoise3(P) {
+    let i = g.floor(P);
+    let f = g.fract(P);
+    let u = g.mul(g.mul(f, f), g.sub(3.0, g.mul(2.0, f)));
+    let n000 = shash3(i);
+    let n100 = shash3(g.add(i, g.vec3(1, 0, 0)));
+    let n010 = shash3(g.add(i, g.vec3(0, 1, 0)));
+    let n110 = shash3(g.add(i, g.vec3(1, 1, 0)));
+    let n001 = shash3(g.add(i, g.vec3(0, 0, 1)));
+    let n101 = shash3(g.add(i, g.vec3(1, 0, 1)));
+    let n011 = shash3(g.add(i, g.vec3(0, 1, 1)));
+    let n111 = shash3(g.add(i, g.vec3(1, 1, 1)));
+    let x00 = g.mix(n000, n100, g.sw(u, 'x'));
+    let x10 = g.mix(n010, n110, g.sw(u, 'x'));
+    let x01 = g.mix(n001, n101, g.sw(u, 'x'));
+    let x11 = g.mix(n011, n111, g.sw(u, 'x'));
+    return ((g.mix(g.mix(x00, x10, g.sw(u, 'y')), g.mix(x01, x11, g.sw(u, 'y')), g.sw(u, 'z')) * 2.0) - 1.0);
+  }
+
   function inciseRidgeField(d, baseFreq, freqMul) {
     let p = d;
     let freq = baseFreq;
@@ -19,7 +44,7 @@ export function makeHeight(U, hpfSample) {
     let norm = 0.0;
     let irOcts = ((U.uInciseRidgeOcts > 0) ? U.uInciseRidgeOcts : 4);
     for (let o = 0; (o < irOcts); o++) {
-      sum += (amp * (1.0 - g.abs(g.snoise3(g.mul(p, freq)))));
+      sum += (amp * (1.0 - g.abs(snoise3(g.mul(p, freq)))));
       norm += amp;
       freq *= freqMul;
       amp *= 0.5;
@@ -29,7 +54,7 @@ export function makeHeight(U, hpfSample) {
   }
 
   function lakeBasinField(dir) {
-    return (0.5 + (0.5 * g.snoise3(g.add(g.mul(dir, 55.0), g.vec3(4.0, 9.0, 1.0)))));
+    return (0.5 + (0.5 * snoise3(g.add(g.mul(dir, 55.0), g.vec3(4.0, 9.0, 1.0)))));
   }
 
   function lakeCarveM(dir) {
@@ -78,15 +103,15 @@ export function makeHeight(U, hpfSample) {
   }
 
   function badlandsRegion(d) {
-    let r = g.snoise3(g.add(g.mul(d, 11.0), g.vec3(31.7, (-12.3), 5.1)));
+    let r = snoise3(g.add(g.mul(d, 11.0), g.vec3(31.7, (-12.3), 5.1)));
     return g.smoothstep(0.30, 0.55, r);
   }
 
   function mesaField(d) {
     let w = d;
-    w[undefined] = g.add(w[undefined], g.mul(0.10, g.vec2(g.snoise3(g.add(g.mul(d, 40.0), 5.0)), g.snoise3(g.add(g.mul(d, 40.0), 11.0)))));
-    let a = g.snoise3(g.add(g.mul(w, 55.0), g.vec3(3.1, 7.7, 1.3)));
-    let b = g.snoise3(g.add(g.mul(w, 130.0), g.vec3(9.4, 2.2, 6.6)));
+    w[undefined] = g.add(w[undefined], g.mul(0.10, g.vec2(snoise3(g.add(g.mul(d, 40.0), 5.0)), snoise3(g.add(g.mul(d, 40.0), 11.0)))));
+    let a = snoise3(g.add(g.mul(w, 55.0), g.vec3(3.1, 7.7, 1.3)));
+    let b = snoise3(g.add(g.mul(w, 130.0), g.vec3(9.4, 2.2, 6.6)));
     return (0.5 + (0.5 * ((0.7 * a) + (0.3 * b))));
   }
 
@@ -100,7 +125,7 @@ export function makeHeight(U, hpfSample) {
     let sum = 0.0;
     let blOcts = ((U.uBroadLowOcts > 0) ? U.uBroadLowOcts : 8);
     for (let o = 0; (o < blOcts); o++) {
-      sum += (amp * g.snoise3(g.mul(d, freq)));
+      sum += (amp * snoise3(g.mul(d, freq)));
       amp *= ((o < 6) ? 0.66 : 0.82);
       freq *= 2.0;
     }
@@ -142,9 +167,9 @@ export function makeHeight(U, hpfSample) {
   function duneFieldM(dir) {
     let crest = 0;
     let d = g.normalize(dir);
-    let big = ((g.snoise3(g.add(g.mul(d, 2000.0), g.vec3(2.0, 7.0, 5.0))) * 0.5) + 0.5);
+    let big = ((snoise3(g.add(g.mul(d, 2000.0), g.vec3(2.0, 7.0, 5.0))) * 0.5) + 0.5);
     let dune = g.pow(big, 1.6);
-    let med = ((g.snoise3(g.mul(d, 6000.0)) * 0.5) + 0.5);
+    let med = ((snoise3(g.mul(d, 6000.0)) * 0.5) + 0.5);
     crest = g.smoothstep(0.55, 0.92, big);
     return [((C_DUNE_AMP * dune) + (40.0 * (med * dune))), crest];
   }
@@ -169,7 +194,7 @@ export function makeHeight(U, hpfSample) {
     let octMax = ((U.uOctMax > 0) ? U.uOctMax : 12);
     for (let o = 0; (o < octMax); o++) {
       let sf = ((o >= 6) ? (freq * 0.667) : freq);
-      let nn = g.snoise3(g.mul(d, sf));
+      let nn = snoise3(g.mul(d, sf));
       if ((o >= 6)) {
         let r = (((1.0 - g.abs(nn)) * 2.0) - 1.0);
         nn = g.mix(nn, r, (ridgeMul * 0.8));
@@ -187,8 +212,8 @@ export function makeHeight(U, hpfSample) {
     sum += ((hi * peak) * liftK);
     let belt = g.clamp(((reliefMul - 0.45) / 1.25), 0.0, 1.0);
     if (((belt > 0.0) && (hi > 0.0))) {
-      let e0 = ((g.snoise3(g.add(g.mul(d, 2.0), g.vec3(11.0, 3.0, 7.0))) * 0.5) + 0.5);
-      let e1 = ((g.snoise3(g.add(g.mul(d, 3.5), g.vec3(2.0, 9.0, 4.0))) * 0.5) + 0.5);
+      let e0 = ((snoise3(g.add(g.mul(d, 2.0), g.vec3(11.0, 3.0, 7.0))) * 0.5) + 0.5);
+      let e1 = ((snoise3(g.add(g.mul(d, 3.5), g.vec3(2.0, 9.0, 4.0))) * 0.5) + 0.5);
       let modu = (0.7 + (0.3 * g.clamp(((e0 * 0.7) + (e1 * 0.3)), 0.0, 1.0)));
       let landGate = g.smoothstep(0.0, 800.0, hi);
       let base = ((belt * landGate) * modu);
@@ -200,7 +225,7 @@ export function makeHeight(U, hpfSample) {
         let pn = 0.0;
         let pkOcts = ((U.uPeakOcts > 0) ? U.uPeakOcts : 3);
         for (let o = 0; (o < pkOcts); o++) {
-          ps += (pa * (1.0 - g.abs(g.snoise3(g.add(g.mul(d, pf), g.vec3(3.3, 7.7, 1.1))))));
+          ps += (pa * (1.0 - g.abs(snoise3(g.add(g.mul(d, pf), g.vec3(3.3, 7.7, 1.1))))));
           pn += pa;
           pa *= 0.65;
           pf *= 2.13;
@@ -233,7 +258,7 @@ export function makeHeight(U, hpfSample) {
     let am = 1.0;
     let dfOcts = ((U.uDetailFbmOcts > 0) ? U.uDetailFbmOcts : 3);
     for (let o = 0; (o < dfOcts); o++) {
-      ov += (am * g.snoise3(g.add(g.mul(dir, fq), g.vec3((g.float(o) * 7.3)))));
+      ov += (am * snoise3(g.add(g.mul(dir, fq), g.vec3((g.float(o) * 7.3)))));
       oa += am;
       fq *= 5.0;
       am *= 0.75;
@@ -255,7 +280,7 @@ export function makeHeight(U, hpfSample) {
     let ridgeMul = g.clamp((mtn * 1.1), 0.0, 1.0);
     let isleZone = (g.smoothstep(g.mix(50.0, 30.0, U.uIsleWide), g.mix(350.0, 600.0, U.uIsleWide), cbias) * (1.0 - g.smoothstep(g.mix(900.0, 600.0, U.uIsleWide), g.mix(1600.0, 2200.0, U.uIsleWide), cbias)));
     if ((isleZone > 0.0)) {
-      let isleType = g.snoise3(g.mul(dir0, 9.0));
+      let isleType = snoise3(g.mul(dir0, 9.0));
       let volcanic = g.smoothstep(0.25, 0.7, isleType);
       let atoll = g.smoothstep(0.25, 0.7, (-isleType));
       reliefMul = g.mix(reliefMul, (g.mix(reliefMul, 1.6, volcanic) * (1.0 - (0.7 * atoll))), isleZone);
@@ -338,5 +363,5 @@ export function makeHeight(U, hpfSample) {
     return h;
   }
 
-  return { snoise3: g.snoise3, broadShapeM, computeHCache, composeHeightC, detailFbm };
+  return { snoise3, broadShapeM, computeHCache, composeHeightC, detailFbm };
 }

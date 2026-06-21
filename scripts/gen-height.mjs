@@ -22,12 +22,9 @@ import { dirname, join } from 'node:path'
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SRC = readFileSync(join(ROOT, 'src/shaders/terrain.glsl'), 'utf8')
 
-// Hot leaf noise fns hand-scalarized in glsl-rt.js (bit-identical, no per-call arrays);
-// gen emits `g.<name>(...)` calls for these instead of inlining the transpiled bodies.
-const SCALAR_LEAVES = new Set(['shash3', 'snoise3'])
-
 // The height-path functions to transpile, in dependency order (defs before uses).
 const HEIGHT_FNS = [
+  'shash3', 'snoise3',
   'inciseRidgeField',
   'lakeBasinField', 'lakeCarveM',
   'riverRidgeField', 'riverCarveM',
@@ -279,9 +276,6 @@ function genFunction(fn, fnReturnTypes) {
       const fields = STRUCTS[name]
       return { js: `{ ${fields.map((f, k) => `${f}: ${args[k].js}`).join(', ')} }`, type: name }
     }
-    // scalarized hot leaves: emit a call to the hand-written bit-identical glsl-rt
-    // helper instead of the array-allocating transpiled body (perf, output-preserving).
-    if (SCALAR_LEAVES.has(name)) return { js: `g.${name}(${args.map(a => a.js).join(', ')})`, type: fnReturnTypes[name] || 'float' }
     // user function call -- handle out-params
     const callee = ALL_FNS.find(f => f.name === name && f.params.length === args.length)
     if (callee && callee.params.some(p => p.out)) {
@@ -471,7 +465,7 @@ import * as g from './glsl-rt.js';
 const out = header + '\nexport function makeHeight(U, hpfSample) {\n' +
   constJs.split('\n').filter(Boolean).map(l => '  ' + l).join('\n') + '\n' +
   want.map(w => w.split('\n').map(l => '  ' + l).join('\n')).join('\n\n') + '\n' +
-  '\n  return { snoise3: g.snoise3, broadShapeM, computeHCache, composeHeightC, detailFbm };\n}\n'
+  '\n  return { snoise3, broadShapeM, computeHCache, composeHeightC, detailFbm };\n}\n'
 
 writeFileSync(join(ROOT, 'src/height-gen.js'), out)
 console.log('[gen-height] wrote src/height-gen.js (' + want.length + ' fns, ' + out.length + ' bytes)')
