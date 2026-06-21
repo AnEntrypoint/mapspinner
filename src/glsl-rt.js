@@ -101,16 +101,18 @@ export const int = (x) => Math.trunc(x)
 // these instead of inlining the GLSL), using the EXACT same float ops in the EXACT same
 // order/associativity so heightAt() output is unchanged. See terrain.glsl shash3/snoise3.
 export function shash3(p) {
-  // p = fract(p*0.3183099 + vec3(0.1,0.2,0.3))   (componentwise)
-  let px = p[0] * 0.3183099 + 0.1
-  let py = p[1] * 0.3183099 + 0.2
-  let pz = p[2] * 0.3183099 + 0.3
-  px = px - Math.floor(px); py = py - Math.floor(py); pz = pz - Math.floor(pz)
-  // p += dot(p, p.yzx + 19.19)   (yzx = [py,pz,px]); dot accumulates i=0,1,2 in order
-  const d = px * (py + 19.19) + py * (pz + 19.19) + pz * (px + 19.19)
-  px += d; py += d; pz += d
-  const r = (px + py) * pz + (py + pz) * px
-  return r - Math.floor(r)
+  // DETERMINISTIC integer lattice hash -- bit-identical to terrain.glsl shash3 (uint32 mul/xor/shift;
+  // Math.imul + >>>0 wrap exactly as GLSL uint). p is always an integer lattice corner (snoise3 passes
+  // floor(P)+int offsets); round-to-int guards fp wobble. This makes the CPU height == GPU height for the
+  // lattice values (the per-GPU float-fract-hash divergence was the dominant CPU<->GPU parity gap).
+  const ix = Math.floor(p[0] + 0.5) | 0, iy = Math.floor(p[1] + 0.5) | 0, iz = Math.floor(p[2] + 0.5) | 0
+  let h = Math.imul(ix, 0x27d4eb2d) >>> 0
+  h = (h ^ Math.imul(iy, 0x9e3779b1)) >>> 0
+  h = (h ^ Math.imul(iz, 0x85ebca6b)) >>> 0
+  h = (h ^ (h >>> 16)) >>> 0; h = Math.imul(h, 0x7feb352d) >>> 0
+  h = (h ^ (h >>> 15)) >>> 0; h = Math.imul(h, 0x846ca68b) >>> 0
+  h = (h ^ (h >>> 16)) >>> 0
+  return (h >>> 0) * (1 / 4294967296)
 }
 export function snoise3(P) {
   const ix = Math.floor(P[0]), iy = Math.floor(P[1]), iz = Math.floor(P[2])

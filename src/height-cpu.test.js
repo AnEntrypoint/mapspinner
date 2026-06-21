@@ -47,10 +47,13 @@ test('golden samples (regression lock; update only with an intended terrain.glsl
   // (terrain-defaults.js SHAPE_UNIFORM_DEFAULTS: landBias -800, detailOverlay 50, hiFreqCut 0.95,
   // canyonDepthMul 1.0, cliffAmt 3.0, mtnBandWide 0.1, climateRelief 0.65, isleWide 1.0) -- the
   // values the demo used to force via window.__ now live SDK-side, so the default CPU field shifted.
+  // RE-BAKED 2026-06-21: shash3 switched to a DETERMINISTIC integer/uint32 lattice hash (was a float
+  // fract-hash) so the CPU height matches the GPU bit-for-bit on the lattice values -- this reseeds the
+  // noise field, hence the new golden values (intended terrain change; CPU<->GPU parity 4.3m->1.3m).
   const golden = [
-    [[0.9, 0.1, 0.4], 135.9252],
-    [[1, 0, 0], -133.761],
-    [[0.577, 0.577, 0.577], -3875.4983],
+    [[0.9, 0.1, 0.4], -1260.2723],
+    [[1, 0, 0], -518.5385],
+    [[0.577, 0.577, 0.577], 7307.5533],
   ]
   for (const [dir, exp] of golden) {
     const h = hs.heightAt(dir)
