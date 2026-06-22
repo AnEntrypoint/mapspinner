@@ -180,11 +180,11 @@ const int LTYPE_FBM = 0;
 const int LTYPE_RIDGED = 1;
 struct ProlandLayer { int ltype; int numOct; float gain; float ridgeOffset; float ridgeExp; float warpStr; float hmin; float hmax; };
 // noiseDesc: the outer rotated base layer (ridged, 23 octaves).
-const ProlandLayer noiseLayerBase = ProlandLayer(LTYPE_RIDGED, 23, 0.5, 1.064, 1.665, 3.6, 0.0, 1.0);
+const ProlandLayer noiseLayerBase = ProlandLayer(LTYPE_RIDGED, 23, 0.5, 1.064, 1.665, 0.45, 0.0, 1.0);
 // terrainDesc layers: layer0 ridged 10oct, layer1 FBM 18oct, layer2 ridged 18oct.
-const ProlandLayer noiseLayer0 = ProlandLayer(LTYPE_RIDGED, 10, 0.5, 1.064, 1.005, 1.6, 0.0, 1.0);
-const ProlandLayer noiseLayer1 = ProlandLayer(LTYPE_FBM,    18, 0.5, 1.064, 1.665, 2.6, -2.0, 2.0);
-const ProlandLayer noiseLayer2 = ProlandLayer(LTYPE_RIDGED, 18, 0.5, 1.064, 1.1,   0.9, -2.0, 2.0);
+const ProlandLayer noiseLayer0 = ProlandLayer(LTYPE_RIDGED, 10, 0.5, 1.064, 1.005, 0.2, 0.0, 1.0);
+const ProlandLayer noiseLayer1 = ProlandLayer(LTYPE_FBM,    18, 0.5, 1.064, 1.665, 0.32, -2.0, 2.0);
+const ProlandLayer noiseLayer2 = ProlandLayer(LTYPE_RIDGED, 18, 0.5, 1.064, 1.1,   0.11, -2.0, 2.0);
 float eval_layer(highp vec3 pos, ProlandLayer L) {
     float raw;
     if (L.ltype == LTYPE_FBM) {
@@ -207,21 +207,22 @@ const float PI = 3.14159265;
 // Proland terrain height: implements compute_terrain_height() from upsample.wgsl.
 // dir0 = unit world direction; noiseScale/rootSize tune the frequency (use 1.0/defRadius defaults).
 highp float prolandTerrainH(vec3 dir0) {
-    // Proland noise on unit sphere. noiseScale == rootSize in the reference so pCoords = dir0.
-    // Scale by 2.0 so base features span ~half-sphere (continent-to-ocean wavelength).
+    // pCoords at scale 2.0: 1 unit = ~quarter-sphere (~10000km at Earth radius).
+    // warpStr values scaled down by 8x from original to avoid over-scrambling.
     highp vec3 pCoords  = normalize(dir0) * 2.0;
+    // Base continental shape: rotated ridged FBM at half scale
     float angle   = value_fbm_scaled(pCoords * 0.25, 1.0, 3, -PI, PI) * 0.4;
     highp vec3 rotPt = rotate_domain(pCoords * 0.5, angle);
-    float base_h  = eval_layer(rotPt, noiseLayerBase);
-    float ratio   = value_fbm_scaled(pCoords * 2.0, 0.8, 3, 0.0, 1.0);
+    float base_h  = eval_layer(rotPt, noiseLayerBase);  // [0,1]
+    // Detail fractal: domain-warped 3-layer composite
     float h       = sample_fractal_terrain(pCoords);
-    // blend: don't clamp negatives here -- keep the full [-1,1] range for ocean topology
-    h = (base_h + h * ratio * 0.9) / 1.3;
-    // spatially varying power only on positive (land) values; ocean passes through as-is
+    // simple blend: base controls macro shape, fractal adds detail
+    h = base_h * 0.6 + h * 0.4;
+    // spatially varying power only on positive (land) values
     float pmix  = value_fbm_scaled(pCoords*0.53+vec3(123.0,456.0,789.0), 1.0, 3, 0.0, 1.0)*0.5+0.5;
     float power = mix(0.95, 1.3, pmix);
     if (h > 0.0) h = pow(h, power);
-    return h;  // range approx [-0.7, 1.0]; sea level at h=0
+    return h - 0.5;  // shift so 0 = mean terrain = sea level, range approx [-0.5, 0.5]
 }
 
 // SHARED vhash/vnoise2/faceWarp helpers still needed for the VS normal taps.
@@ -248,7 +249,7 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){
     // prolandTerrainH returns approx [-0.7, 1.0] with 0 = sea level.
     // Map to metres: positive land up to ~8000m, negative ocean down to ~-7000m.
     // uLandBias shifts sea level fraction (negative = more ocean, positive = more land).
-    h = h * 8000.0 + uLandBias;
+    h = h * 16000.0 + uLandBias;
     if (h < 0.0) {
         // Gentle coastal ease over 300m, then linear ocean floor
         const highp float SEABED_EASE = 300.0;
