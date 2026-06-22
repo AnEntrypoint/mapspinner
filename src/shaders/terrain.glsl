@@ -207,18 +207,21 @@ const float PI = 3.14159265;
 // Proland terrain height: implements compute_terrain_height() from upsample.wgsl.
 // dir0 = unit world direction; noiseScale/rootSize tune the frequency (use 1.0/defRadius defaults).
 highp float prolandTerrainH(vec3 dir0) {
-    highp vec3 worldPt  = normalize(dir0) * 700000.0;
-    highp vec3 pCoords  = worldPt / defRadius;
-    float angle   = value_fbm_scaled(pCoords * 0.01, 1.0, 3, -PI, PI) * 0.4;
+    // Proland noise on unit sphere. noiseScale == rootSize in the reference so pCoords = dir0.
+    // Scale by 2.0 so base features span ~half-sphere (continent-to-ocean wavelength).
+    highp vec3 pCoords  = normalize(dir0) * 2.0;
+    float angle   = value_fbm_scaled(pCoords * 0.25, 1.0, 3, -PI, PI) * 0.4;
     highp vec3 rotPt = rotate_domain(pCoords * 0.5, angle);
     float base_h  = eval_layer(rotPt, noiseLayerBase);
-    float ratio   = value_fbm_scaled(dir0 * 40.0, 0.8, 3, 0.0, 1.0);
+    float ratio   = value_fbm_scaled(pCoords * 2.0, 0.8, 3, 0.0, 1.0);
     float h       = sample_fractal_terrain(pCoords);
+    // blend: don't clamp negatives here -- keep the full [-1,1] range for ocean topology
     h = (base_h + h * ratio * 0.9) / 1.3;
+    // spatially varying power only on positive (land) values; ocean passes through as-is
     float pmix  = value_fbm_scaled(pCoords*0.53+vec3(123.0,456.0,789.0), 1.0, 3, 0.0, 1.0)*0.5+0.5;
     float power = mix(0.95, 1.3, pmix);
-    h = pow(max(h, 0.0), power);
-    return h;
+    if (h > 0.0) h = pow(h, power);
+    return h;  // range approx [-0.7, 1.0]; sea level at h=0
 }
 
 // SHARED vhash/vnoise2/faceWarp helpers still needed for the VS normal taps.
@@ -242,16 +245,16 @@ uniform float uBeachShelfM;
 // Single height function using the Proland algorithm.
 highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){
     highp float h = prolandTerrainH(dir0);
-    // Remap [0,1] to signed metres in the same range as the old broadShapeM:
-    // h=0.5 -> sea level (0m), h=1 -> ~8000m, h=0 -> ~-8000m.
-    h = (h - 0.5) * 16000.0 + uLandBias;
-    // Land coastal shelf (mirrors original composeHeight).
+    // prolandTerrainH returns approx [-0.7, 1.0] with 0 = sea level.
+    // Map to metres: positive land up to ~8000m, negative ocean down to ~-7000m.
+    // uLandBias shifts sea level fraction (negative = more ocean, positive = more land).
+    h = h * 8000.0 + uLandBias;
     if (h < 0.0) {
-        const highp float SEABED_EASE = 25.0;
+        // Gentle coastal ease over 300m, then linear ocean floor
+        const highp float SEABED_EASE = 300.0;
         highp float d0 = -h;
         highp float d = (d0 < SEABED_EASE) ? (d0 * d0 / SEABED_EASE) * (2.0 - d0 / SEABED_EASE) : d0;
-        h = -(min(d, 70.0) * 0.45 + max(d - 70.0, 0.0) * 0.85);
-        h = max(h, -11000.0);
+        h = -min(d, 11000.0);
     } else {
         highp float bShelf = uBeachShelfM > 1.0 ? uBeachShelfM : 600.0;
         if (h < bShelf) h = (h * h / bShelf) * (2.0 - h / bShelf);
