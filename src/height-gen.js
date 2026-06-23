@@ -298,6 +298,11 @@ export function makeHeight(U, hpfSample) {
     let ridgeMul = _C.ridgeMul;
     let bShape = broadShapeM(dir0, reliefMul, ridgeMul);
     let h = ((cbias + bShape) + U.uLandBias);
+    if (h > 0.0) {
+      const curve = (U.uHeightCurve > 0.0) ? U.uHeightCurve : 1.0;
+      const REF = 3000.0;
+      h = Math.pow(h / REF, curve) * REF;
+    }
     if ((h < 0.0)) {
       let COAST_RING_CEIL = 500.0;
       h = g.min(h, (cbias + COAST_RING_CEIL));

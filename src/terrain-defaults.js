@@ -20,12 +20,13 @@ export const TERRAIN_DEFAULTS = {
   splitFactor: 0.30,        // blessed mesh density
 
   // ---- SHAPE (composeHeight; mirrored in SHAPE_UNIFORM_DEFAULTS for the CPU height path) ----
-  landBias: -126450.0,      // bias for ~40% land at scale 750000 with the domain-warp FBM
+  landBias: 0.0,            // bias for ~40% land at scale 750000 with the domain-warp FBM
   detailOverlay: 53.0,      // perlin-everywhere relief term
   hiFreqCut: 1.0,           // fine-octave amplitude
   canyonDepth: 40.0,        // canyon-depth multiplier
   cliffAmt: 5.0,            // cliff/mesa terrace strength
   beachShelf: 0.0,          // land coastal shelf (m); 0 -> shader uses 600m guard
+  heightCurve: 1.0,         // power applied to positive land heights — >1 pushes mountains taller, <1 compresses them
   nrmStepM: 0.001,          // lit-normal FD step (m) — near-zero floors duP to 1/GRID (one vertex spacing) = true geometric mesh normal
   mtnBandWide: 1.0,         // mountain-belt width anchor step
   climateRelief: 1.0,       // climate-relief width
@@ -112,6 +113,7 @@ export const SHAPE_UNIFORM_DEFAULTS = {
   uClimateRelief: TERRAIN_DEFAULTS.climateRelief,
   uIsleWide:      TERRAIN_DEFAULTS.isleWide,
   cliffAmt:       TERRAIN_DEFAULTS.cliffAmt,
+  uHeightCurve:   TERRAIN_DEFAULTS.heightCurve,
 };
 
 export default TERRAIN_DEFAULTS;

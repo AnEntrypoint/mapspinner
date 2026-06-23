@@ -27,7 +27,8 @@ const GROUPS = [
   ['Terrain shape', [
     ['detailOverlay', 'Detail overlay relief', 0,   100,  0.5,  53.0],
     ['hiFreqCut',     'Hi-freq octave cut',    0,   1,    0.05, 1.0],
-    ['landBias',      'Land bias (m)',        -1000, 1500, 50,   0.0],
+    ['landBias',      'Land bias (m)',        -500000, 500000, 5000, 0.0],
+    ['heightCurve',   'Height curve (power)', 0.2,  4,    0.05, 1.0],
     ['mtnBandWide',   'Mountain belt width',   0,   1,    0.05, 1.0],
     ['climateRelief', 'Climate relief width',  0,   1,    0.05, 1.0],
     ['isleWide',      'Island zone width',     0,   1,    0.05, 0.55],
