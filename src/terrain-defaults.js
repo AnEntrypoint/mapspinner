@@ -20,7 +20,7 @@ export const TERRAIN_DEFAULTS = {
   splitFactor: 0.30,        // blessed mesh density
 
   // ---- SHAPE (composeHeight; mirrored in SHAPE_UNIFORM_DEFAULTS for the CPU height path) ----
-  landBias: 0.0,            // hypsometry bias (m); 0 = balanced with new blend (sea level at h=0)
+  landBias: 1000.0,         // hypsometry bias (m); push more land above sea level
   detailOverlay: 53.0,      // perlin-everywhere relief term
   hiFreqCut: 1.0,           // fine-octave amplitude
   canyonDepth: 40.0,        // canyon-depth multiplier
