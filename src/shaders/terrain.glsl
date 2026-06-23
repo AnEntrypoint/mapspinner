@@ -1188,11 +1188,14 @@ void main() {
         // NORMALS for a less repetitive faraway look -- dont fade it, draw both'): the high octave (wt4)
         // tiles tightly so it repeats visibly far off; ADD the low octave (wt, 2.4km, less repetitive)
         // NORMAL on top -- ALWAYS, no fade -- to break that repetition. Albedo stays high-octave only.
-        // DISTANCE-BANDED OCTAVE SCALE (user 2026-06-23 'band in relevant octaves for all distances'):
-        // scale the texture octave with camera distance (NOT pxWorld -- fwidth is discontinuous at LOD
-        // patch seams and caused visible texture frequency jumps at mesh level boundaries). camDist is
-        // smooth/continuous across all seams. Fine octave (scale=2.0) close up; coarse (scale=0.125) far.
-        float octScale = mix(2.0, 0.125, smoothstep(500.0, 50000.0, camDist));
+        // PIXEL-DENSITY OCTAVE SCALE (user 2026-06-23 'band in relevant octaves for all distances'):
+        // key octave scale on pxWorld (m/px) -- the actual screen-resolution signal -- not camDist.
+        // At grazing angles camDist is high even for foreground terrain, so camDist-keying selected
+        // coarse octaves and created a glazy/sheen artifact at low view angles. pxWorld is correct:
+        // fine tiles when pixels are dense (close/overhead), coarse when sparse (distant/grazing).
+        // LOD-seam safety: the smoothstep range [0.5, 80.0] spans 160x, so a 2x pxWorld jump at an
+        // LOD mesh boundary (e.g. 5->10m/px) shifts the blend ~3% -- invisible in practice.
+        float octScale = mix(2.0, 0.125, smoothstep(0.5, 80.0, pxWorld));
         highp vec3 wt4 = wt * octScale;
         vec4 albA = surfTriTap(uSurfAlb, wt4, tw, lA);
         vec3 cA = albA.rgb;
@@ -1351,7 +1354,7 @@ void main() {
     // GENTLE-SLOPE RELIEF SHADING (user 2026-06-10 'even gentle slopes shaded so terrain elevation
     // is obvious'): exaggerate the tangential tilt of the LIT normal only -- the material gates keep
     // the true geometric n, so placement is unchanged; lighting contrast on rolling ground increases.
-    if (vH > -2.0 && uReliefShade > 1.0) {
+    if (uReliefShade > 1.0) {
       // Relief exaggeration of the LIT normal's tangential tilt. The old SCREEN-SPACE dFdx(vH) term was
       // REMOVED (user 2026-06-14 'jagged normals, still there on the normals view'): dFdx/dFdy of the
       // INTERPOLATED vH varying is CONSTANT PER TRIANGLE and discontinuous at every triangle edge =
