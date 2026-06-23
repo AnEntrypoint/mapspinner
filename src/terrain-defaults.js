@@ -51,8 +51,8 @@ export const TERRAIN_DEFAULTS = {
 
   // ---- TEXTURE / SPLAT ----
   texMix: 1.0,
-  texNrmK: 1.0,
-  nrmLow: 1.0,
+  texNrmK: 0.4,
+  nrmLow: 0.4,
   triSharp: 3.0,
   texSat: 1.0,
   texBright: 1.0,
