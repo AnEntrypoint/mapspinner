@@ -26,7 +26,7 @@ export const TERRAIN_DEFAULTS = {
   canyonDepth: 40.0,        // canyon-depth multiplier
   cliffAmt: 5.0,            // cliff/mesa terrace strength
   beachShelf: 0.0,          // land coastal shelf (m); 0 -> shader uses 600m guard
-  nrmStepM: 700.0,          // lit-normal FD step (m)
+  nrmStepM: 200.0,          // lit-normal FD step (m)
   mtnBandWide: 1.0,         // mountain-belt width anchor step
   climateRelief: 1.0,       // climate-relief width
   isleWide: 0.55,           // island-zone width
