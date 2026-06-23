@@ -67,13 +67,13 @@ export const TERRAIN_DEFAULTS = {
   xFade1: 340.0,
   texFar0: 0.0,
   texFar1: 700.0,
-  nrmFade0: 100000.0,
-  nrmFade1: 2000000.0,
+  nrmFade0: 1000.0,
+  nrmFade1: 20000.0,
 
   // ---- BEACH / COAST ----
-  beachTop: 14500.0,
+  beachTop: 15.0,
   beachWidth: 1.0,
-  bandWarp: 100000.0,
+  bandWarp: 20.0,
 
   // ---- BIOME RAMP (read by gl-render C() from __gen.state.biome, else here) ----
   bcDeepSea:  [0.02, 0.06, 0.22],
@@ -83,10 +83,10 @@ export const TERRAIN_DEFAULTS = {
   bcGrass:    [0.30, 0.46, 0.12],
   bcRock:     [0.48, 0.40, 0.30],   // fallback until the rock-photo mean loads (window.__surfRockMean)
   bcSnow:     [0.94, 0.96, 1.00],
-  bandEdgesLo: [1000.0, 12500.0],
-  bandEdgesHi: [175000.0, 325000.0],
-  snowEdges:   [300000.0, 425000.0],
-  seaDepthM:   150000.0,
+  bandEdgesLo: [8.0, 20.0],
+  bandEdgesHi: [28.0, 50.0],
+  snowEdges:   [65.0, 100.0],
+  seaDepthM:   580.0,
   slopeRock:   [0.25, 0.55],
 
   // ---- OCEAN (Beer-Lambert; gl-render o3 reads window.__uOcean*, else here) ----

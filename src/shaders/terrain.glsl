@@ -612,7 +612,7 @@ vec3 terrainAlbedo(float h, float slope, float rockSlope, highp vec3 worldPos, f
         // over 1-15km scales), so the biome edge reads natural, not a band. highp dir for the lattice.
         highp vec3 bwd = normalize(worldPos);
         highp vec3 bww = bwd + vec3(snoise3(bwd * 130.0)) * 0.004;   // domain warp -> non-parallel fingers
-        float bandWarp = (snoise3(bww * 210.0) * 1.0 + snoise3(bww * 560.0) * 0.5 + snoise3(bww * 1450.0) * 0.25) * 720.0;
+        float bandWarp = (snoise3(bww * 210.0) * 1.0 + snoise3(bww * 560.0) * 0.5 + snoise3(bww * 1450.0) * 0.25) * uBandWarp;
         c = mix(c, bcRock, smoothstep(bandEdgesHi.x + bandWarp, bandEdgesHi.y + bandWarp, h));
         c = mix(c, bcSnow, smoothstep(snowEdges.x + bandWarp, snowEdges.y + bandWarp, h));
         c = mix(c, bcRock, smoothstep(slopeRock.x, slopeRock.y + rockWiden, rockSlope) * step(0.0, h));
@@ -1125,7 +1125,7 @@ void main() {
         float snowHi   = smoothstep(snowEdges.x + bandWarp, snowEdges.y + bandWarp, vH);
         // ROCK BAND leading up to the snow (user 2026-06-14): a rocky belt ~0.4-2.2km below the snow
         // line so high mountains show rock between alpine grass and snow, not grass straight to snow.
-        float rockBand = smoothstep(snowEdges.x - 2200.0 + bandWarp, snowEdges.x - 400.0 + bandWarp, vH) * (1.0 - snowHi);
+        float rockBand = smoothstep(snowEdges.x * 0.7 + bandWarp, snowEdges.x * 0.9 + bandWarp, vH) * (1.0 - snowHi);
         float wRock = max(wRockSlope, rockBand);
         // (SPLAT climate snow + polar/ice climate snow REMOVED with the anchor-point biomes -- both were
         // *uBiomeClimate (=0) so contributed nothing yet still computed; elevation snow stays via snowHi.)

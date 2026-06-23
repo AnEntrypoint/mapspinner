@@ -133,7 +133,7 @@ const normalize=v=>{const r=Math.hypot(...v)||1;return [v[0]/r,v[1]/r,v[2]/r]};
 // is ~63.6 km (1/100 of Earth's 6371 km). Default _planetScale = 0.01 makes that the rated size. The SDK
 // is scale-invariant (RADIUS + WEBGL2_TERRAIN_R_M + reliefScale + atmPos all scale together), so the render
 // is IDENTICAL to the old 6360 km planet -- only the reported numbers shrink 100x (node h/R diff 1e-19).
-const _planetScale = (typeof window !== 'undefined' && typeof window.__planetScale === 'number' && window.__planetScale > 0) ? window.__planetScale : 10.0;
+const _planetScale = (typeof window !== 'undefined' && typeof window.__planetScale === 'number' && window.__planetScale > 0) ? window.__planetScale : 0.01;
 const RADIUS=6371.0 * _planetScale;
 // WebGL2 terrain works in METERS. Surface radius 6.36e6 m * scale; the km-unit world maps to it 1 unit = this many m.
 const WEBGL2_TERRAIN_R_M = 6360000.0 * _planetScale;
@@ -404,9 +404,9 @@ function frameLoop(){
       // density -- it just consumes the SDK default. Move a Tweaks-panel slider to override live.
       import('./src/planet-orchestrator.js')
         .then(m => m.initMapspinnerPlanet(glw, { radius: WEBGL2_TERRAIN_R_M,  // frustumCull is DEFAULT-ON in the SDK (orchestrator: opts.frustumCull !== false) -- the demo no longer passes it. window.__frustumCull=false disables live.
-          // reliefScale=1.0: composeHeight already outputs heights in metres for Earth-scale proportions.
-          // The gl-render default of R/6360000 would scale relief down by 100x for a 0.01-scale planet.
-          reliefScale: 1.0,
+          // reliefScale: 10x smaller than default (R/6360000=0.01) to reduce terrain elevation.
+          // At _planetScale=0.01: reliefScale=0.001 -> vH peaks ~350m on a 63.6km planet.
+          reliefScale: WEBGL2_TERRAIN_R_M / 63600000.0,
           // FPS lever (2026-06-14): mesh GRID is overridable via ?grid=N for live triangle-count
           // A/B (the bottleneck is triangle/vertex throughput, not the broadShapeM ALU -- octMax
           // 12->3 left frame time flat). Absent param falls through to gl-render's 16 default.
