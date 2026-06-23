@@ -1211,15 +1211,14 @@ void main() {
         // mips down naturally. uNrmLow blends in the low-octave (wt) normal always for break-repetition.
         highp vec3 wt4 = wt * 4.0;
         // COARSE ALBEDO OCTAVE (user 2026-06-23 'add 1 lower frequency octave to the textures when going further away'):
-        // blend from fine (wt4) to coarse (wt4*0.25 = wt) albedo as pxWorld grows. The coarse octave tiles 4x
-        // less frequently -> less mip repetition at distance. Normals already carry both octaves (wt4 + wt4*0.25)
-        // at all distances; only albedo needs the explicit far-blend since mips soften the fine octave's colour
-        // at distance but don't remove the repetition pattern. dispA stays fine-octave (it's near-field only).
+        // blend from fine (wt4=600m tiles) to coarse (wt=2400m tiles) albedo as pxWorld grows. 4x tile scale
+        // ratio produces a clear pattern-scale shift at distance -> breaks repetition without a second texture.
+        // Normals carry both octaves at all distances. dispA stays fine-octave (near-field displacement only).
         float octFarFade = smoothstep(uOctFar0 * uReliefScale, uOctFar1 * uReliefScale, pxWorld);
         vec4 albA = surfTriTap(uSurfAlb, wt4, tw, lA);
-        vec3 cA = mix(albA.rgb, surfTriTap(uSurfAlb, wt4 * 0.25, tw, lA).rgb, octFarFade);
-        vec3 nA = surfTriNrm(uSurfNrm, wt4,      tw, lA, n) * 1.0
-                + surfTriNrm(uSurfNrm, wt4*0.25, tw, lA, n) * (1.7 * uNrmLow);
+        vec3 cA = mix(albA.rgb, surfTriTap(uSurfAlb, wt, tw, lA).rgb, octFarFade);
+        vec3 nA = surfTriNrm(uSurfNrm, wt4, tw, lA, n) * 1.0
+                + surfTriNrm(uSurfNrm, wt,  tw, lA, n) * (1.7 * uNrmLow);
         float dispA = albA.a;
         // NO BIOME COLOR INHERITANCE (user 2026-06-14 'take away all biome color inheritance, it will
         // speed it up' -- and fixes 'sand near grass tinted green'): each layer wears its OWN material
@@ -1260,9 +1259,9 @@ void main() {
         float bSharp = 1.0;      // 1 = pure layer A; reused by the texDn relief fade below
         if (wB > 0.02) {   // second layer only where a real transition exists
             vec4 albB = surfTriTap(uSurfAlb, wt4, tw, lB);
-            vec3 cB = mix(albB.rgb, surfTriTap(uSurfAlb, wt4 * 0.25, tw, lB).rgb, octFarFade);
+            vec3 cB = mix(albB.rgb, surfTriTap(uSurfAlb, wt, tw, lB).rgb, octFarFade);
             vec3 nB = surfTriNrm(uSurfNrm, wt4,      tw, lB, n) * 1.0
-                    + surfTriNrm(uSurfNrm, wt4*0.25, tw, lB, n) * (1.7 * uNrmLow);
+                    + surfTriNrm(uSurfNrm, wt, tw, lB, n) * (1.7 * uNrmLow);
             float dispB = albB.a;
             float ordB = lB < 0.5 ? 0.6 : (lB < 1.5 ? 0.3 : (lB < 2.5 ? 0.0 : 1.0));
             vec3 mcB = lB < 0.5 ? bcGrass : (lB < 1.5 ? bcRock : (lB < 2.5 ? bcShore : bcSnow));
