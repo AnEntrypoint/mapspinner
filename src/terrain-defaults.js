@@ -87,7 +87,7 @@ export const TERRAIN_DEFAULTS = {
   bandEdgesHi: [175000.0, 325000.0],
   snowEdges:   [300000.0, 425000.0],
   seaDepthM:   150000.0,
-  slopeRock:   [0.0, 0.22],
+  slopeRock:   [0.25, 0.55],
 
   // ---- OCEAN (Beer-Lambert; gl-render o3 reads window.__uOcean*, else here) ----
   uOceanDeep:    [0.008, 0.025, 0.06],
