@@ -1188,15 +1188,12 @@ void main() {
         // NORMALS for a less repetitive faraway look -- dont fade it, draw both'): the high octave (wt4)
         // tiles tightly so it repeats visibly far off; ADD the low octave (wt, 2.4km, less repetitive)
         // NORMAL on top -- ALWAYS, no fade -- to break that repetition. Albedo stays high-octave only.
-        // PIXEL-DENSITY OCTAVE SCALE (user 2026-06-23 'band in relevant octaves for all distances'):
-        // key octave scale on pxWorld (m/px) -- the actual screen-resolution signal -- not camDist.
-        // At grazing angles camDist is high even for foreground terrain, so camDist-keying selected
-        // coarse octaves and created a glazy/sheen artifact at low view angles. pxWorld is correct:
-        // fine tiles when pixels are dense (close/overhead), coarse when sparse (distant/grazing).
-        // LOD-seam safety: the smoothstep range [0.5, 80.0] spans 160x, so a 2x pxWorld jump at an
-        // LOD mesh boundary (e.g. 5->10m/px) shifts the blend ~3% -- invisible in practice.
-        float octScale = mix(2.0, 0.125, smoothstep(0.5, 80.0, pxWorld));
-        highp vec3 wt4 = wt * octScale;
+        // Fixed fine-octave scale -- GPU mip chain handles all distance/LOD variation automatically.
+        // Dynamic octScale (camDist or pxWorld) caused visible frequency artifacts: wrong mip at
+        // grazing angles (pxWorld version) or LOD seam jumps (camDist version). The hardware aniso
+        // mip chain is the correct per-pixel LOD mechanism; wt*4 keeps texels near 1px close-up and
+        // mips down naturally. uNrmLow blends in the low-octave (wt) normal always for break-repetition.
+        highp vec3 wt4 = wt * 4.0;
         vec4 albA = surfTriTap(uSurfAlb, wt4, tw, lA);
         vec3 cA = albA.rgb;
         vec3 nA = surfTriNrm(uSurfNrm, wt4,      tw, lA, n) * 1.0
@@ -1297,7 +1294,11 @@ void main() {
         // displacement-normal relief: WORLD-SPACE UDN perturbation from surfTriNrm (each projection
         // plane's tangent axes, not the radial frame). Amplitude capped low (scramble lesson d262b5e);
         // applied AFTER the uReliefShade exaggeration below so the exaggeration never amplifies it.
-        texDn = texNrm * (uTexNrmK * k) * texFade;   // NORMAL textures fade out 20->40km (user 2026-06-15 'mip the normal textures closer, gone by 40km') via the shared texFade -- distant relief is carried by the macro lit normal, not the photo normal
+        // Cap texNrm to unit length before applying as world-space perturbation.
+        // nA = two surfTriNrm() sums (weights 1.0 + 1.7*uNrmLow) -> magnitude can exceed 2.
+        // An oversized additive delta tilts nLit nearly horizontal at grazing view angles,
+        // creating a light-independent glazy/specular artifact. Normalize caps magnitude at 1.
+        texDn = normalize(texNrm) * (uTexNrmK * k) * texFade;   // NORMAL textures fade out 20->40km (user 2026-06-15 'mip the normal textures closer, gone by 40km') via the shared texFade -- distant relief is carried by the macro lit normal, not the photo normal
     }
 #ifdef _DEBUGVIEW_
     // DIAG displayMode 7: raw river field -> blue where the river line fires, grey ridge field
