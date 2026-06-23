@@ -20,7 +20,7 @@ export const TERRAIN_DEFAULTS = {
   splitFactor: 0.30,        // blessed mesh density
 
   // ---- SHAPE (composeHeight; mirrored in SHAPE_UNIFORM_DEFAULTS for the CPU height path) ----
-  landBias: -2529.0,        // bias for ~40% land at scale 15000 with the domain-warp FBM
+  landBias: -25.29,         // bias for ~40% land at scale 150 with the domain-warp FBM
   detailOverlay: 53.0,      // perlin-everywhere relief term
   hiFreqCut: 1.0,           // fine-octave amplitude
   canyonDepth: 40.0,        // canyon-depth multiplier
@@ -72,9 +72,9 @@ export const TERRAIN_DEFAULTS = {
   nrmFade1: 2000000.0,
 
   // ---- BEACH / COAST ----
-  beachTop: 290.0,
-  beachWidth: 20.0,
-  bandWarp: 2000.0,
+  beachTop: 2.9,
+  beachWidth: 0.2,
+  bandWarp: 20.0,
 
   // ---- BIOME RAMP (read by gl-render C() from __gen.state.biome, else here) ----
   bcDeepSea:  [0.04, 0.10, 0.28],
@@ -84,10 +84,10 @@ export const TERRAIN_DEFAULTS = {
   bcGrass:    [0.412, 0.416, 0.145],
   bcRock:     [0.52, 0.43, 0.34],   // fallback until the rock-photo mean loads (window.__surfRockMean)
   bcSnow:     [0.92, 0.94, 0.97],
-  bandEdgesLo: [20.0, 250.0],
-  bandEdgesHi: [3500.0, 6500.0],
-  snowEdges:   [6000.0, 8500.0],
-  seaDepthM:   3000.0,
+  bandEdgesLo: [0.2, 2.5],
+  bandEdgesHi: [35.0, 65.0],
+  snowEdges:   [60.0, 85.0],
+  seaDepthM:   30.0,
   slopeRock:   [0.0, 0.22],
 
   // ---- OCEAN (Beer-Lambert; gl-render o3 reads window.__uOcean*, else here) ----

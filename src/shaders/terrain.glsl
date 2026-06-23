@@ -209,8 +209,8 @@ float sample_fractal_terrain(highp vec3 pCoords) {
 const float PI = 3.14159265;
 // Planet terrain height. Returns [-1,1]; sea level at 0.
 highp float prolandTerrainH(vec3 dir0) {
-    // p at scale 3: features ~2000km at base octave (1/3 radian)
-    highp vec3 p = normalize(dir0) * 3.0;
+    // p at scale 300: features ~20km at base octave (100x more frequent than scale 3)
+    highp vec3 p = normalize(dir0) * 300.0;
 
     // Continent mask: 4-octave FBM at low frequency
     float continents = value_fbm(p * 0.5, 0.5, 4);
@@ -257,7 +257,7 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){
     highp float h = prolandTerrainH(dir0);
     // prolandTerrainH returns approx [-0.6, 0.6]. Scale to metres so peaks reach ~6500m (above snow at 6000m).
     // uLandBias shifts sea level fraction (negative = more ocean, positive = more land).
-    h = h * 15000.0 + uLandBias;
+    h = h * 150.0 + uLandBias;
     if (h < 0.0) {
         // Gentle coastal ease over 300m, then linear ocean floor
         const highp float SEABED_EASE = 300.0;
