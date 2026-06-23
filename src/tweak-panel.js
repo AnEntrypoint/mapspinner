@@ -47,7 +47,7 @@ const GROUPS = [
     ['triSharp',      'Triplanar sharpness',   0,   10,   0.1,  0.5],
     ['texSat',        'Texture saturation',    0,   2,    0.05, 1.0],
     ['texBright',     'Texture brightness',    0.2, 1.5,  0.02, 0.64],
-    ['biomeTint',     'Biome tint / texture',  0,   1,    0.02, 0.38],
+    ['biomeTint',     'Biome tint / texture',  0,   1,    0.02, 0.62],
     ['texWarp',       'Anti-repeat warp',      0,   0.6,  0.02, 0.38],
     ['xSoft',         'Crossover fade width',  0,   0.5,  0.02, 0.3],
     ['xFinger',       'Crossover fingering',   0,   5,    0.1,  1.6],

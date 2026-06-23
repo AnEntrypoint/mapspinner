@@ -56,7 +56,7 @@ export const TERRAIN_DEFAULTS = {
   triSharp: 0.5,
   texSat: 1.0,
   texBright: 0.64,
-  biomeTint: 0.38,
+  biomeTint: 0.62,
   texWarp: 0.38,
   xSoft: 0.3,
   xFinger: 1.6,
@@ -76,13 +76,13 @@ export const TERRAIN_DEFAULTS = {
   bandWarp: 100000.0,
 
   // ---- BIOME RAMP (read by gl-render C() from __gen.state.biome, else here) ----
-  bcDeepSea:  [0.04, 0.10, 0.28],
-  bcSea:      [0.10, 0.22, 0.42],
-  bcShore:    [0.78, 0.72, 0.50],
-  bcLowland:  [0.22, 0.34, 0.12],
-  bcGrass:    [0.412, 0.416, 0.145],
-  bcRock:     [0.52, 0.43, 0.34],   // fallback until the rock-photo mean loads (window.__surfRockMean)
-  bcSnow:     [0.92, 0.94, 0.97],
+  bcDeepSea:  [0.02, 0.06, 0.22],
+  bcSea:      [0.08, 0.18, 0.38],
+  bcShore:    [0.82, 0.76, 0.52],
+  bcLowland:  [0.18, 0.38, 0.10],
+  bcGrass:    [0.30, 0.46, 0.12],
+  bcRock:     [0.48, 0.40, 0.30],   // fallback until the rock-photo mean loads (window.__surfRockMean)
+  bcSnow:     [0.94, 0.96, 1.00],
   bandEdgesLo: [1000.0, 12500.0],
   bandEdgesHi: [175000.0, 325000.0],
   snowEdges:   [300000.0, 425000.0],
