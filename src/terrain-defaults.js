@@ -17,7 +17,7 @@
 
 export const TERRAIN_DEFAULTS = {
   // ---- LOD ----
-  splitFactor: 0.30,        // blessed mesh density
+  splitFactor: 0.25,        // blessed mesh density (0.30->0.25, user 2026-06-23: LOD tightening reduces visible quads ~17, ~2ms speedup)
 
   // ---- SHAPE (composeHeight; mirrored in SHAPE_UNIFORM_DEFAULTS for the CPU height path) ----
   landBias: -100000.0,            // bias for ~40% land at scale 750000 with the domain-warp FBM

@@ -788,8 +788,8 @@ vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, flo
     {
         highp vec3 od = nwp;
         float ov = 0.0, oa = 0.0;
-        float fq = 75.0, am = 1.0;                 // octaves: ~84km / 17km / 3.4km features (halved to match VS detailFbm)
-        int fdOcts = 3;
+        float fq = 75.0, am = 1.0;                 // octaves: ~84km / 17km (user 2026-06-23: 3->2 octaves, cuts fine detail snoise3 calls, ~0.8ms speedup + 33 quads)
+        int fdOcts = 2;
         for (int o = 0; o < fdOcts; o++) {
             float wl = 40000000.0 * uReliefScale / fq;   // feature wavelength (m) ~ 2*pi*R/fq. *uReliefScale = SCALE-INVARIANT: the octave is angular so its WORLD wavelength scales with R; the 40000000 Earth-circumference ref must scale too or the Nyquist sub-pixel fade engages at the wrong relative distance at the small-radius scale (2026-06-18 real-size).
             float nyq = 1.0 - smoothstep(wl * 0.03, wl * 0.12, pxWorld);   // fade before sub-pixel

@@ -74,7 +74,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
   // (-52%) and tris/quad 1152->512 (-55%), so the per-vertex 14-oct broadShapeM VS (browser-9: 95% of
   // the low-alt frame) runs on ~half the vertices. median scales ~24/16 -> ~3.6px, far closer to the
   // band; the fine relief is carried per-pixel by the FS dFdx normal, not the mesh tessellation.
-  const GRID = opts.gridMeshSize || 11;    // mesh quads per edge. 16->11 (user 2026-06-14): FPS is TRIANGLE-THROUGHPUT bound, not broadShapeM ALU (octMax 12->3 left frame time flat; GRID is ~linear). GRID 8 was faster (-50%) but made BIOME CROSSOVER LINES JAGGED (climate varying interpolated across coarse triangles steps along edges) -- reverted to 11 (-37%). Proper fix to reclaim GRID 8 = per-pixel biome sampling in the FS. Override via ?grid=N.
+  const GRID = opts.gridMeshSize || 9;    // mesh quads per edge. 16->11->9 (user 2026-06-23): FPS TRIANGLE-THROUGHPUT lever. 11->9 cuts verts/quad 144->81 (-44%) and tris/quad 242->162 (-33%), fine relief carried by FS normal (dFdx) not mesh. GRID 8 was faster (-50%) but made BIOME CROSSOVER LINES JAGGED (climate varying interpolated across coarse triangles steps along edges). Proper fix to reclaim GRID 8 = per-pixel biome sampling in the FS. Override via ?grid=N.
   // Expose the LIVE mesh grid so screen-space-error diagnostics (planet.html __diag.pxPerPoly)
   // divide by the real polys/tile instead of a stale literal. Any future GRID change self-corrects
   // the metric (the 24->16 lever left pxPerPoly defaulting to 24 = 1.5x wrong band fraction).
