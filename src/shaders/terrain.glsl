@@ -255,7 +255,7 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){
     highp float h = prolandTerrainH(dir0);
     // prolandTerrainH returns approx [-0.6, 0.6]. Scale to metres so peaks reach ~6500m (above snow at 6000m).
     // uLandBias shifts sea level fraction (negative = more ocean, positive = more land).
-    h = h * 150000.0 + uLandBias;
+    h = h * 1500000.0 + uLandBias;
     if (h < 0.0) {
         // Gentle coastal ease over 300m, then linear ocean floor
         const highp float SEABED_EASE = 300.0;
