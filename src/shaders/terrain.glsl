@@ -258,8 +258,9 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){
     // compresses foothills and keeps peaks tall; curve<1 lifts low terrain. Identity at curve=1.
     if (h > 0.0) {
         highp float curve = uHeightCurve > 0.0 ? uHeightCurve : 1.0;
-        const highp float HPEAK = 0.014;
-        h = pow(clamp(h / HPEAK, 0.0, 1.0), curve) * HPEAK;
+        // prolandTerrainH land range is [0, ~0.6]. pow(h/0.6, curve)*0.6 redistributes within that range.
+        // curve>1: foothills compress, peaks stay near 0.6 -> taller mountains relative to flat land.
+        h = pow(clamp(h / 0.6, 0.0, 1.0), curve) * 0.6;
     }
     // Scale to metres so peaks reach ~6500m.
     // uLandBias shifts sea level fraction (negative = more ocean, positive = more land).

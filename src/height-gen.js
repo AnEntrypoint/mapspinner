@@ -314,7 +314,7 @@ export function makeHeight(U, hpfSample) {
       }
       if (h > 0.0) {
         const curve = U.uHeightCurve > 0.0 ? U.uHeightCurve : 1.0;
-        const MAX = 0.014 * 750000.0; // matches GLSL HPEAK*750000
+        const MAX = 0.6 * 750000.0; // matches GLSL: proland range [0,0.6] * 750000
         h = Math.pow(Math.min(h / MAX, 1.0), curve) * MAX;
       }
     }
