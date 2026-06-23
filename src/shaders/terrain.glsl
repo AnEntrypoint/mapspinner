@@ -117,26 +117,26 @@ highp vec4 hpfSample(vec3 dir) {   // W7: R=seaBias is metres (~1600) -> highp s
 // ---- PROLAND NOISE PRIMITIVES (ported from nervtech.org noise.wgsl) ----
 // PCG integer hash -> [-1,1]. Uses the exact same algorithm as the Proland WGSL hash(p: vec3i).
 // W7 highp: lattice coords reach freq*dir ~1.4e4 -> ALL noise args are highp.
-highp float pcg_hash3(highp ivec3 p) {
-    int n = p.x * 1597 + p.y * 3571 + p.z * 7919;
-    uint state = uint(n) * 747796405u + 2891336453u;
-    state = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
-    state = (state >> 22u) ^ state;
-    return -1.0 + 2.0 * float(state) / 4294967295.0;
+// Hash: fract-sine, robust across all WebGL2 implementations.
+highp float h3(highp vec3 p) {
+    p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+    p += dot(p, p.yxz + 33.33);
+    return fract((p.x + p.y) * p.z) * 2.0 - 1.0;
 }
-// Quintic value noise matching Proland (METHOD_INTEGER_HASH + INTERP_QUINTIC).
+// Quintic value noise.
 float snoise3(highp vec3 P) {
     highp ivec3 i = ivec3(floor(P));
     highp vec3 f = fract(P);
     highp vec3 u = f*f*f*(f*(f*6.0-15.0)+10.0);
-    float n000 = pcg_hash3(i);
-    float n100 = pcg_hash3(i+ivec3(1,0,0));
-    float n010 = pcg_hash3(i+ivec3(0,1,0));
-    float n110 = pcg_hash3(i+ivec3(1,1,0));
-    float n001 = pcg_hash3(i+ivec3(0,0,1));
-    float n101 = pcg_hash3(i+ivec3(1,0,1));
-    float n011 = pcg_hash3(i+ivec3(0,1,1));
-    float n111 = pcg_hash3(i+ivec3(1,1,1));
+    highp vec3 i0 = vec3(i), i1 = vec3(i) + vec3(1.0);
+    float n000 = h3(i0);
+    float n100 = h3(vec3(i1.x, i0.y, i0.z));
+    float n010 = h3(vec3(i0.x, i1.y, i0.z));
+    float n110 = h3(vec3(i1.x, i1.y, i0.z));
+    float n001 = h3(vec3(i0.x, i0.y, i1.z));
+    float n101 = h3(vec3(i1.x, i0.y, i1.z));
+    float n011 = h3(vec3(i0.x, i1.y, i1.z));
+    float n111 = h3(i1);
     float x00=mix(n000,n100,u.x), x10=mix(n010,n110,u.x);
     float x01=mix(n001,n101,u.x), x11=mix(n011,n111,u.x);
     return mix(mix(x00,x10,u.y), mix(x01,x11,u.y), u.z);   // [-1,1]
@@ -207,36 +207,31 @@ float sample_fractal_terrain(highp vec3 pCoords) {
     return (h0 + h1 + h2) / 3.0;
 }
 const float PI = 3.14159265;
-// Planet terrain height using domain-warped FBM.
-// Returns signed value in approx [-1, 1]; sea level at 0.
+// Planet terrain height. Returns [-1,1]; sea level at 0.
 highp float prolandTerrainH(vec3 dir0) {
+    // p at scale 3: features ~2000km at base octave (1/3 radian)
     highp vec3 p = normalize(dir0) * 3.0;
 
-    // Layer 1: low-frequency domain warp from a coarse FBM
-    highp vec3 warp1;
-    warp1.x = value_fbm(p * 0.4 + vec3(1.7, 9.2, 0.0), 0.5, 5);
-    warp1.y = value_fbm(p * 0.4 + vec3(8.3, 2.8, 1.5), 0.5, 5);
-    warp1.z = value_fbm(p * 0.4 + vec3(3.1, 6.7, 4.9), 0.5, 5);
-    highp vec3 q = p + 0.8 * warp1;
+    // Continent mask: 4-octave FBM at low frequency
+    float continents = value_fbm(p * 0.5, 0.5, 4);
 
-    // Layer 2: continent-scale FBM on warped coords
-    float continents = value_fbm(q * 0.5, 0.55, 7);
+    // Single domain warp pass
+    highp vec3 q = p + 0.5 * vec3(
+        value_fbm(p * 0.7 + vec3(1.7, 9.2, 0.0), 0.5, 3),
+        value_fbm(p * 0.7 + vec3(8.3, 2.8, 1.5), 0.5, 3),
+        value_fbm(p * 0.7 + vec3(3.1, 6.7, 4.9), 0.5, 3)
+    );
 
-    // Layer 3: detail FBM at higher frequency
-    highp vec3 warp2;
-    warp2.x = value_fbm(q + vec3(0.0, 3.2, 1.1), 0.5, 4);
-    warp2.y = value_fbm(q + vec3(2.3, 0.0, 4.5), 0.5, 4);
-    warp2.z = value_fbm(q + vec3(5.1, 1.8, 0.0), 0.5, 4);
-    float detail = value_fbm(q * 1.5 + 0.4 * warp2, 0.5, 6);
+    // Detail FBM on warped coords
+    float detail = value_fbm(q * 1.2, 0.5, 5);
 
-    // Blend: continents control macro, detail adds relief
-    float h = continents * 0.65 + detail * 0.35;
+    float h = continents * 0.6 + detail * 0.4;
 
-    // Terrain shaping: sharpen mountains (positive) with power curve
-    if (h > 0.0) h = pow(h, 0.85);
-    else h = -pow(-h, 0.75);  // soften ocean floor
+    // Shape: steepen peaks, flatten ocean floor
+    if (h > 0.0) h = pow(h, 0.8);
+    else h = -pow(-h, 0.7);
 
-    return h;  // range approx [-1, 1]; sea level at 0
+    return h;
 }
 
 // SHARED vhash/vnoise2/faceWarp helpers still needed for the VS normal taps.
