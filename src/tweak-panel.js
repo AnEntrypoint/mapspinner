@@ -32,7 +32,7 @@ const GROUPS = [
     ['mtnBandWide',   'Mountain belt width',   0,   1,    0.05, 1.0],
     ['climateRelief', 'Climate relief width',  0,   1,    0.05, 1.0],
     ['isleWide',      'Island zone width',     0,   1,    0.05, 0.55],
-    ['nrmStepM',      'Normal smooth step m',  0,   2000, 25,   700.0],
+    ['nrmStepM',      'Normal smooth step m',  0,   20000, 100, 5000],
     ['splitFactor',   'LOD density (split)',   0.05, 1.0, 0.01, 0.30],
   ]],
   ['Beach / coast', [
