@@ -207,25 +207,15 @@ float sample_fractal_terrain(highp vec3 pCoords) {
     return (h0 + h1 + h2) / 3.0;
 }
 const float PI = 3.14159265;
-// Planet terrain height. Returns [-1,1]; sea level at 0.
+// Planet terrain height. Returns approx [-0.6,0.6]; sea level at 0.
 highp float prolandTerrainH(vec3 dir0) {
     // p at scale 3: features ~2000km at base octave (1/3 radian)
     highp vec3 p = normalize(dir0) * 3.0;
 
-    // Continent mask: 4-octave FBM at low frequency
-    float continents = value_fbm(p * 0.5, 0.5, 4);
-
-    // Single domain warp pass
-    highp vec3 q = p + 0.5 * vec3(
-        value_fbm(p * 0.7 + vec3(1.7, 9.2, 0.0), 0.5, 3),
-        value_fbm(p * 0.7 + vec3(8.3, 2.8, 1.5), 0.5, 3),
-        value_fbm(p * 0.7 + vec3(3.1, 6.7, 4.9), 0.5, 3)
-    );
-
-    // Detail FBM on warped coords
-    float detail = value_fbm(q * 1.2, 0.5, 5);
-
-    float h = continents * 0.6 + detail * 0.4;
+    // Use the full Proland ridged+FBM layer stack (46 octaves, domain-warped) for sharp ridges and detail.
+    // sample_fractal_terrain returns roughly [-1.33, 1.67]; normalise to [-1,1] by subtracting centre ~0.17 then dividing.
+    float raw = sample_fractal_terrain(p);
+    float h = (raw - 0.17) * 0.6;   // centre and compress to ~[-0.6,0.6]
 
     // Shape: steepen peaks, flatten ocean floor
     if (h > 0.0) h = pow(h, 0.8);
