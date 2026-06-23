@@ -36,7 +36,7 @@ export const TERRAIN_DEFAULTS = {
   exposure: 0.85,
   reliefShade: 6.0,
   skyFill: 0.3,
-  variationAmt: 0.23,
+  variationAmt: 0.05,
   hazeMul: 0.4,
   vertexAO: 0.0,
   aoAmt: 0.0,
@@ -69,8 +69,8 @@ export const TERRAIN_DEFAULTS = {
   texFar1: 10000.0,
   nrmFade0: 100.0,
   nrmFade1: 1000.0,
-  octFar0: 200.0,
-  octFar1: 2000.0,
+  octFar0: 5.0,
+  octFar1: 50.0,
 
   // ---- BEACH / COAST ----
   beachTop: 15.0,

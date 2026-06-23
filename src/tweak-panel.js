@@ -60,8 +60,8 @@ const GROUPS = [
     ['texFar1',       'Splat fade end m',      0,   5000, 50,   700],
     ['nrmFade0',      'Normal fade start m',   0,   500000,5000,100000],
     ['nrmFade1',      'Normal fade end m',     0,   5000000,50000,2000000],
-    ['octFar0',       'Coarse oct start m',    0,   5000, 10,   200],
-    ['octFar1',       'Coarse oct end m',      0,   50000,50,   2000],
+    ['octFar0',       'Coarse oct start m',    0,   500,  1,    5],
+    ['octFar1',       'Coarse oct end m',      0,   2000, 5,    50],
   ]],
   ['Lighting / look', [
     ['exposure',      'Exposure',              0.2, 4,    0.05, 0.85],
