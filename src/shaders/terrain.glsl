@@ -268,11 +268,6 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){
         // Height curve: pow(h/MAX, curve)*MAX redistributes land heights within [0,MAX].
         // curve>1 compresses foothills and keeps peaks -> sharper mountains relative to flat land.
         // curve<1 lifts low terrain toward MAX. Identity at curve=1. MAX=10000 = hard ceiling.
-        if (h > 0.0) {
-            highp float curve = uHeightCurve > 0.0 ? uHeightCurve : 1.0;
-            const highp float MAX = 10000.0;
-            h = pow(clamp(h / MAX, 0.0, 1.0), curve) * MAX;
-        }
     }
     return h * (uReliefScale > 0.0 ? uReliefScale : 1.0);
 }
