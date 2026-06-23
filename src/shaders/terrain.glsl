@@ -1099,7 +1099,7 @@ void main() {
         // texture DISPLACEMENT height-blend (bSharp below) interlock grass+sand across it (user 2026-06-15
         // 'the beach-to-sand band is super narrow not letting the displacement replacement do much' -- the old
         // 0.5x beachTop band was a ~15m strip = a thin horizontal LINE). uBeachWidth (default 5x) widens it.
-        float beach = (1.0 - smoothstep(bandWarp, uBeachTopM * uBeachWidth + bandWarp, vH))
+        float beach = (1.0 - smoothstep(max(0.0, bandWarp), uBeachTopM * uBeachWidth + max(0.0, bandWarp), vH))
                     * (1.0 - smoothstep(0.18, 0.55, slope));
         // SAND BLEED REMOVED (user 2026-06-17 'our warp should not affect the width of the band'): the old
         // sandBleed = max(0,vTexWarp.y)*0.35*... added SAND WEIGHT by the WARP AMPLITUDE, so the grass<->sand
