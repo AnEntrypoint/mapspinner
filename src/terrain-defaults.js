@@ -55,7 +55,7 @@ export const TERRAIN_DEFAULTS = {
   nrmLow: 1.0,
   triSharp: 3.0,
   texSat: 1.0,
-  texBright: 0.64,
+  texBright: 1.0,
   biomeTint: 0.62,
   texWarp: 1.0,
   xSoft: 0.3,
