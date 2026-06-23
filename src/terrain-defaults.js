@@ -26,7 +26,6 @@ export const TERRAIN_DEFAULTS = {
   canyonDepth: 40.0,        // canyon-depth multiplier
   cliffAmt: 5.0,            // cliff/mesa terrace strength
   beachShelf: 0.0,          // land coastal shelf (m); 0 -> shader uses 600m guard
-  heightCurve: 3.0,         // power applied to positive land heights — >1 pushes mountains taller, <1 compresses them
   nrmStepM: 5000,           // lit-normal FD step (m) — 5km captures ridge-scale features; floors to 1/GRID (vertex spacing) on fine tiles
   mtnBandWide: 1.0,         // mountain-belt width anchor step
   climateRelief: 1.0,       // climate-relief width
@@ -113,7 +112,6 @@ export const SHAPE_UNIFORM_DEFAULTS = {
   uClimateRelief: TERRAIN_DEFAULTS.climateRelief,
   uIsleWide:      TERRAIN_DEFAULTS.isleWide,
   cliffAmt:       TERRAIN_DEFAULTS.cliffAmt,
-  uHeightCurve:   TERRAIN_DEFAULTS.heightCurve,
 };
 
 export default TERRAIN_DEFAULTS;

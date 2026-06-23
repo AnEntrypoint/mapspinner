@@ -514,7 +514,6 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(loc('uVsCheap'),       (typeof window!=='undefined' && window.__vsCheap) ? 1.0 : 0.0);   // VS carve-cost profiling A/B
     gl.uniform1f(loc('uBeachShelfM'),   g('beachShelf', TD.beachShelf));   // land coastal shelf (geometry); probe MUST match render
     gl.uniform1f(loc('uLandBias'),      g('landBias', TD.landBias));       // hypsometry bias = ~+30% land:sea (measured: landFrac 0.041 -> 0.054 over a 700-dir sphere grid, user 2026-06-14). window.__landBias dials it live.
-    gl.uniform1f(loc('uHeightCurve'),   g('heightCurve', TD.heightCurve)); // power curve on positive land heights (1=linear, >1 lifts mountains)
     gl.uniform1f(loc('cliffAmt'),       g('cliffAmt', TD.cliffAmt));
     gl.uniform1i(loc('uFloatLinearOK'), _halfFloatLinearOK ? 1 : 0);
     // FXC unroll-defeat (2026-06-12 AMD d3d11 fix): runtime octave bound for broadShapeM; the shader

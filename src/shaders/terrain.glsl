@@ -246,24 +246,12 @@ uniform float uReliefScale;
 uniform float uGrid;
 uniform float uNrmStepM;
 uniform float uLandBias;
-uniform float uHeightCurve;   // power applied to positive land heights (1.0 = linear)
 uniform float uBeachShelfM;
 
 #if defined(_VERTEX_) || defined(_PROBE_) || defined(_HEIGHTBAKE_)
 // Single height function using the Proland algorithm.
 highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){
     highp float h = prolandTerrainH(dir0);
-    // Apply height curve on raw proland output before scaling. Land peaks reach ~0.014 in this
-    // normalized space. pow(h/0.014, curve)*0.014 redistributes within [0, peak]: curve>1
-    // compresses foothills and keeps peaks tall; curve<1 lifts low terrain. Identity at curve=1.
-    if (h > 0.0) {
-        highp float curve = uHeightCurve > 0.0 ? uHeightCurve : 1.0;
-        // prolandTerrainH land range is [0, ~0.6]. pow(h/0.6, curve)*0.6 redistributes within that range.
-        // curve>1: foothills compress, peaks stay near 0.6 -> taller mountains relative to flat land.
-        h = pow(clamp(h / 0.6, 0.0, 1.0), curve) * 0.6;
-    }
-    // Scale to metres so peaks reach ~6500m.
-    // uLandBias shifts sea level fraction (negative = more ocean, positive = more land).
     h = h * 750000.0 + uLandBias;
     if (h < 0.0) {
         // Gentle coastal ease over 300m, then linear ocean floor
