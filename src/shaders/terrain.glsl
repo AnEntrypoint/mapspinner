@@ -590,6 +590,8 @@ uniform float uBandWarp;     // snow/rock/BEACH biome-band warp amplitude metres
 uniform float uBeachWidth;   // grass<->beach crossover band WIDTH (x beachTop) (__beachWidth, default 5.0) -- wide = the displacement maps interlock a broad fingered shoreline (narrow = a thin line)
 uniform float uTexFar0;      // splat->biome far-fade start (pxWorld metres) (__texFar0, default 0 = full splat from camera)
 uniform float uTexFar1;      // splat->biome far-fade end (pxWorld metres) (__texFar1, default 26000) -- splat gone to macro biome past here
+uniform float uOctFar0;      // coarse-albedo-octave blend start (pxWorld metres) (__octFar0, default 200) -- fine octave pure below this
+uniform float uOctFar1;      // coarse-albedo-octave blend end (pxWorld metres) (__octFar1, default 2000) -- fully coarse octave albedo above this
 // MATERIAL-BOUNDARY DITHER REVERTED (2026-06-05): the threshold-perturbation approach (matEdgeNoise on
 // the smoothstep input) produced HARD-EDGED PATCHES + a UV-like grid on uniform grass/snow (user live
 // eye: 'hard uninteresting lines between rocky/grass', 'grass/snow UV problem') -- perturbing a near-
@@ -1200,8 +1202,14 @@ void main() {
         // mip chain is the correct per-pixel LOD mechanism; wt*4 keeps texels near 1px close-up and
         // mips down naturally. uNrmLow blends in the low-octave (wt) normal always for break-repetition.
         highp vec3 wt4 = wt * 4.0;
+        // COARSE ALBEDO OCTAVE (user 2026-06-23 'add 1 lower frequency octave to the textures when going further away'):
+        // blend from fine (wt4) to coarse (wt4*0.25 = wt) albedo as pxWorld grows. The coarse octave tiles 4x
+        // less frequently -> less mip repetition at distance. Normals already carry both octaves (wt4 + wt4*0.25)
+        // at all distances; only albedo needs the explicit far-blend since mips soften the fine octave's colour
+        // at distance but don't remove the repetition pattern. dispA stays fine-octave (it's near-field only).
+        float octFarFade = smoothstep(uOctFar0 * uReliefScale, uOctFar1 * uReliefScale, pxWorld);
         vec4 albA = surfTriTap(uSurfAlb, wt4, tw, lA);
-        vec3 cA = albA.rgb;
+        vec3 cA = mix(albA.rgb, surfTriTap(uSurfAlb, wt4 * 0.25, tw, lA).rgb, octFarFade);
         vec3 nA = surfTriNrm(uSurfNrm, wt4,      tw, lA, n) * 1.0
                 + surfTriNrm(uSurfNrm, wt4*0.25, tw, lA, n) * (1.7 * uNrmLow);
         float dispA = albA.a;
@@ -1244,7 +1252,7 @@ void main() {
         float bSharp = 1.0;      // 1 = pure layer A; reused by the texDn relief fade below
         if (wB > 0.02) {   // second layer only where a real transition exists
             vec4 albB = surfTriTap(uSurfAlb, wt4, tw, lB);
-            vec3 cB = albB.rgb;
+            vec3 cB = mix(albB.rgb, surfTriTap(uSurfAlb, wt4 * 0.25, tw, lB).rgb, octFarFade);
             vec3 nB = surfTriNrm(uSurfNrm, wt4,      tw, lB, n) * 1.0
                     + surfTriNrm(uSurfNrm, wt4*0.25, tw, lB, n) * (1.7 * uNrmLow);
             float dispB = albB.a;

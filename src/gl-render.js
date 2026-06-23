@@ -1199,6 +1199,8 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(U('uTriSharp'),   _g('triSharp', TD.triSharp));     // triplanar weight exponent (2026-06-15 ^8 'normals flipping between two states' -> 4 smooth)
     gl.uniform1f(U('uNrmFade0'),   _g('nrmFade0', TD.nrmFade0)); // normal-texture fade start (m) -- DOUBLED from 20km (2026-06-15)
     gl.uniform1f(U('uNrmFade1'),   _g('nrmFade1', TD.nrmFade1)); // normal-texture fade end (m) -- DOUBLED from 40km
+    gl.uniform1f(U('uOctFar0'),    _g('octFar0',  TD.octFar0));  // coarse-albedo-octave blend start (pxWorld m) (__octFar0)
+    gl.uniform1f(U('uOctFar1'),    _g('octFar1',  TD.octFar1));  // coarse-albedo-octave blend end (pxWorld m) (__octFar1)
     gl.uniform1f(U('uBandWarp'),   _g('bandWarp', TD.bandWarp));  // snow/rock/BEACH band warp amplitude (m), low-freq (2026-06-15 'use the snow warp on the beach too')
     gl.uniform1f(U('uBeachWidth'), _g('beachWidth', TD.beachWidth));   // grass<->beach crossover band width x beachTop (2026-06-15 'band super narrow, displacement does little') -- wide = displacement-fingered shoreline
     gl.uniform1f(U('uTexFar0'),    _g('texFar0', TD.texFar0));      // splat->biome far-fade start (pxWorld m). User baked 0 = the splat fades from the deck out.
