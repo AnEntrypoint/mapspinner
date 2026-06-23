@@ -559,6 +559,8 @@ export async function initMapspinnerRender(gl, opts = {}) {
   for (let v = 0; v < 256; v++) LIN8[v] = Math.pow(v / 255, 2.2);
   async function loadSurfaceTextures() {
     const MATS = ['grass', 'rock', 'sand', 'snow'];   // layer order: matches terrain.glsl splat
+    // Normal JPG filenames per material (null = derive from displacement via Sobel)
+    const NRM_JPGS = ['grass-normals.jpg', 'ground-normals.jpg', 'sand-normals.jpg', 'snow-normals.jpg'];
     const SZ = 1024;
     const img = (u) => new Promise((res, rej) => { const i = new Image(); i.crossOrigin = 'anonymous'; i.onload = () => res(i); i.onerror = () => rej(new Error('load ' + u)); i.src = u; });   // crossOrigin: textures fetched cross-origin (e.g. a consumer loading the SDK from unpkg) must be CORS-clean or the drawImage+getImageData de-shade below taints the canvas + throws SecurityError -> textures silently fail (flat untextured terrain). unpkg serves Access-Control-Allow-Origin:*.
     const cv = document.createElement('canvas'); cv.width = SZ; cv.height = SZ;
@@ -568,8 +570,8 @@ export async function initMapspinnerRender(gl, opts = {}) {
     const nrmAll = new Uint8Array(SZ * SZ * 4 * MATS.length);
     for (let m = 0; m < MATS.length; m++) {
       const _tex = (n) => new URL('../textures/' + n, import.meta.url).href   // EMBEDDABLE: module-relative, not page-relative
-      const [ci, di] = await Promise.all([img(_tex(MATS[m] + '-color.jpg')), img(_tex(MATS[m] + '-displacement.jpg'))]);
-      const c = px(ci), d = px(di);
+      const [ci, di, ni] = await Promise.all([img(_tex(MATS[m] + '-color.jpg')), img(_tex(MATS[m] + '-displacement.jpg')), img(_tex(NRM_JPGS[m])).catch(() => null)]);
+      const c = px(ci), d = px(di), nj = ni ? px(ni) : null;
       // DE-SHADE (user 2026-06-11 'flat, unangled bowls of rock'): the photos carry baked large-scale
       // shading (shadowed depressions), which at a 2.4km tile pastes bowl-shaped shadows onto geometry
       // with no matching shape. Divide each pixel by a wrapped-bilinear 32x32 blur of the photo's own
@@ -612,42 +614,39 @@ export async function initMapspinnerRender(gl, opts = {}) {
       // single contiguous main-thread block; splitting halves the worst long task.
       await new Promise(res => setTimeout(res, 0));
       const base = m * SZ * SZ * 4;
-      const S = 2.2;   // gradient gain: 1024px tile reads as believable relief at the default repeat
-      for (let y = 0; y < SZ; y++) {
-        const ym = (y + SZ - 1) % SZ, yp = (y + 1) % SZ;
-        for (let x = 0; x < SZ; x++) {
-          const xm = (x + SZ - 1) % SZ, xp = (x + 1) % SZ;
-          const i = y * SZ + x, o = base + i * 4;
-          const r = (X, Y) => d[(Y * SZ + X) * 4];
-          const gx = (r(xp, ym) + 2 * r(xp, y) + r(xp, yp) - r(xm, ym) - 2 * r(xm, y) - r(xm, yp)) / (8 * 255);
-          const gy = (r(xm, yp) + 2 * r(x, yp) + r(xp, yp) - r(xm, ym) - 2 * r(x, ym) - r(xp, ym)) / (8 * 255);
-          // COARSE octave (user 2026-06-11 'normals seem missing for textures'): the 1px Sobel is
-          // pure fine detail and mips to flat at any distance; a +/-6px central diff carries the
-          // mid-scale relief through the mip chain.
-          const x6p = (x + 6) % SZ, x6m = (x + SZ - 6) % SZ, y6p = (y + 6) % SZ, y6m = (y + SZ - 6) % SZ;
-          const gx2 = (r(x6p, y) - r(x6m, y)) / (2 * 255), gy2 = (r(x, y6p) - r(x, y6m)) / (2 * 255);
-          // LARGE octave (user 2026-06-11, repeated displacement->normals ask -- the gap was SPECTRAL:
-          // a km-scale displacement feature spans hundreds of px, so its per-texel gradient (~0.004)
-          // never registered in the 1px/6px diffs = the BIG relief had zero normal response, and the
-          // fine detail that did register mips away at flight altitude. A +/-48px diff at gain 8
-          // makes the large features tilt the normal AND survive the mip chain.)
-          const x48p = (x + 48) % SZ, x48m = (x + SZ - 48) % SZ, y48p = (y + 48) % SZ, y48m = (y + SZ - 48) % SZ;
-          const gx3 = (r(x48p, y) - r(x48m, y)) / (2 * 255), gy3 = (r(x, y48p) - r(x, y48m)) / (2 * 255);
-          // gain 8 -> 2 + total tilt CAP (user: 'rock blotches reappear, normal data gone again' --
-          // gain 8 saturated the tangential normal (gradients ~0.3 on ~100px features x8 = full
-          // sideways tilt) = the scramble class, self-inflicted). Cap |xy| at 0.9 so no texel ever
-          // encodes a >42deg tilt regardless of octave stacking.
-          let nx = -(gx * S + gx2 * 2.5 + gx3 * 2.0), ny = -(gy * S + gy2 * 2.5 + gy3 * 2.0);
-          const tm = Math.hypot(nx, ny);
-          if (tm > 0.9) { nx *= 0.9 / tm; ny *= 0.9 / tm; }
-          const il = 1 / Math.hypot(nx, ny, 1);
+      if (nj) {
+        // Use artist-authored normal JPG directly (RG = tangent XY 0.5-biased, standard normal map format)
+        for (let i = 0; i < SZ * SZ; i++) {
+          const o = base + i * 4;
           albAll[o] = c[i * 4]; albAll[o + 1] = c[i * 4 + 1]; albAll[o + 2] = c[i * 4 + 2]; albAll[o + 3] = d[i * 4];
-          nrmAll[o] = Math.round((nx * il * 0.5 + 0.5) * 255);
-          nrmAll[o + 1] = Math.round((ny * il * 0.5 + 0.5) * 255);
-          nrmAll[o + 2] = d[i * 4]; nrmAll[o + 3] = 255;
+          nrmAll[o] = nj[i * 4]; nrmAll[o + 1] = nj[i * 4 + 1]; nrmAll[o + 2] = d[i * 4]; nrmAll[o + 3] = 255;
+        }
+      } else {
+        // Derive normals from displacement via multi-scale Sobel (fallback when no normals JPG)
+        const S = 2.2;
+        for (let y = 0; y < SZ; y++) {
+          const ym = (y + SZ - 1) % SZ, yp = (y + 1) % SZ;
+          for (let x = 0; x < SZ; x++) {
+            const xm = (x + SZ - 1) % SZ, xp = (x + 1) % SZ;
+            const i = y * SZ + x, o = base + i * 4;
+            const r = (X, Y) => d[(Y * SZ + X) * 4];
+            const gx = (r(xp, ym) + 2 * r(xp, y) + r(xp, yp) - r(xm, ym) - 2 * r(xm, y) - r(xm, yp)) / (8 * 255);
+            const gy = (r(xm, yp) + 2 * r(x, yp) + r(xp, yp) - r(xm, ym) - 2 * r(x, ym) - r(xp, ym)) / (8 * 255);
+            const x6p = (x + 6) % SZ, x6m = (x + SZ - 6) % SZ, y6p = (y + 6) % SZ, y6m = (y + SZ - 6) % SZ;
+            const gx2 = (r(x6p, y) - r(x6m, y)) / (2 * 255), gy2 = (r(x, y6p) - r(x, y6m)) / (2 * 255);
+            const x48p = (x + 48) % SZ, x48m = (x + SZ - 48) % SZ, y48p = (y + 48) % SZ, y48m = (y + SZ - 48) % SZ;
+            const gx3 = (r(x48p, y) - r(x48m, y)) / (2 * 255), gy3 = (r(x, y48p) - r(x, y48m)) / (2 * 255);
+            let nx = -(gx * S + gx2 * 2.5 + gx3 * 2.0), ny = -(gy * S + gy2 * 2.5 + gy3 * 2.0);
+            const tm = Math.hypot(nx, ny);
+            if (tm > 0.9) { nx *= 0.9 / tm; ny *= 0.9 / tm; }
+            const il = 1 / Math.hypot(nx, ny, 1);
+            albAll[o] = c[i * 4]; albAll[o + 1] = c[i * 4 + 1]; albAll[o + 2] = c[i * 4 + 2]; albAll[o + 3] = d[i * 4];
+            nrmAll[o] = Math.round((nx * il * 0.5 + 0.5) * 255);
+            nrmAll[o + 1] = Math.round((ny * il * 0.5 + 0.5) * 255);
+            nrmAll[o + 2] = d[i * 4]; nrmAll[o + 3] = 255;
+          }
         }
       }
-      // yield between materials so the ~4x 1M-px Sobel never blocks a whole frame budget at once
       await new Promise(res => setTimeout(res, 0));
     }
     const aniso = gl.getExtension('EXT_texture_filter_anisotropic');
