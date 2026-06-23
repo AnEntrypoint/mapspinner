@@ -187,12 +187,15 @@ const ProlandLayer noiseLayer1 = ProlandLayer(LTYPE_FBM,    18, 0.5, 1.064, 1.66
 const ProlandLayer noiseLayer2 = ProlandLayer(LTYPE_RIDGED, 18, 0.5, 1.064, 1.1,   0.11, -2.0, 2.0);
 float eval_layer(highp vec3 pos, ProlandLayer L) {
     float raw;
+    float t;
     if (L.ltype == LTYPE_FBM) {
         raw = value_fbm(pos, L.gain, L.numOct);
+        t = raw * 0.5 + 0.5;  // FBM: [-1,1] -> [0,1]
     } else {
         raw = value_ridged_fbm_rot(pos, L.gain, L.numOct, L.ridgeOffset, L.ridgeExp);
+        t = raw;  // ridged FBM already returns [0,1]
     }
-    return L.hmin + (L.hmax - L.hmin) * (raw*0.5+0.5);
+    return L.hmin + (L.hmax - L.hmin) * t;
 }
 // sample_fractal_terrain: 3-layer domain-warp terrain (warpLevel=3, one warp layer).
 float sample_fractal_terrain(highp vec3 pCoords) {
@@ -204,25 +207,36 @@ float sample_fractal_terrain(highp vec3 pCoords) {
     return (h0 + h1 + h2) / 3.0;
 }
 const float PI = 3.14159265;
-// Proland terrain height: implements compute_terrain_height() from upsample.wgsl.
-// dir0 = unit world direction; noiseScale/rootSize tune the frequency (use 1.0/defRadius defaults).
+// Planet terrain height using domain-warped FBM.
+// Returns signed value in approx [-1, 1]; sea level at 0.
 highp float prolandTerrainH(vec3 dir0) {
-    // pCoords at scale 2.0: 1 unit = ~quarter-sphere (~10000km at Earth radius).
-    // warpStr values scaled down by 8x from original to avoid over-scrambling.
-    highp vec3 pCoords  = normalize(dir0) * 2.0;
-    // Base continental shape: rotated ridged FBM at half scale
-    float angle   = value_fbm_scaled(pCoords * 0.25, 1.0, 3, -PI, PI) * 0.4;
-    highp vec3 rotPt = rotate_domain(pCoords * 0.5, angle);
-    float base_h  = eval_layer(rotPt, noiseLayerBase);  // [0,1]
-    // Detail fractal: domain-warped 3-layer composite
-    float h       = sample_fractal_terrain(pCoords);
-    // simple blend: base controls macro shape, fractal adds detail
-    h = base_h * 0.6 + h * 0.4;
-    // spatially varying power only on positive (land) values
-    float pmix  = value_fbm_scaled(pCoords*0.53+vec3(123.0,456.0,789.0), 1.0, 3, 0.0, 1.0)*0.5+0.5;
-    float power = mix(0.95, 1.3, pmix);
-    if (h > 0.0) h = pow(h, power);
-    return h - 0.5;  // shift so 0 = mean terrain = sea level, range approx [-0.5, 0.5]
+    highp vec3 p = normalize(dir0) * 3.0;
+
+    // Layer 1: low-frequency domain warp from a coarse FBM
+    highp vec3 warp1;
+    warp1.x = value_fbm(p * 0.4 + vec3(1.7, 9.2, 0.0), 0.5, 5);
+    warp1.y = value_fbm(p * 0.4 + vec3(8.3, 2.8, 1.5), 0.5, 5);
+    warp1.z = value_fbm(p * 0.4 + vec3(3.1, 6.7, 4.9), 0.5, 5);
+    highp vec3 q = p + 0.8 * warp1;
+
+    // Layer 2: continent-scale FBM on warped coords
+    float continents = value_fbm(q * 0.5, 0.55, 7);
+
+    // Layer 3: detail FBM at higher frequency
+    highp vec3 warp2;
+    warp2.x = value_fbm(q + vec3(0.0, 3.2, 1.1), 0.5, 4);
+    warp2.y = value_fbm(q + vec3(2.3, 0.0, 4.5), 0.5, 4);
+    warp2.z = value_fbm(q + vec3(5.1, 1.8, 0.0), 0.5, 4);
+    float detail = value_fbm(q * 1.5 + 0.4 * warp2, 0.5, 6);
+
+    // Blend: continents control macro, detail adds relief
+    float h = continents * 0.65 + detail * 0.35;
+
+    // Terrain shaping: sharpen mountains (positive) with power curve
+    if (h > 0.0) h = pow(h, 0.85);
+    else h = -pow(-h, 0.75);  // soften ocean floor
+
+    return h;  // range approx [-1, 1]; sea level at 0
 }
 
 // SHARED vhash/vnoise2/faceWarp helpers still needed for the VS normal taps.
@@ -249,7 +263,7 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){
     // prolandTerrainH returns approx [-0.7, 1.0] with 0 = sea level.
     // Map to metres: positive land up to ~8000m, negative ocean down to ~-7000m.
     // uLandBias shifts sea level fraction (negative = more ocean, positive = more land).
-    h = h * 16000.0 + uLandBias;
+    h = h * 8000.0 + uLandBias;
     if (h < 0.0) {
         // Gentle coastal ease over 300m, then linear ocean floor
         const highp float SEABED_EASE = 300.0;
