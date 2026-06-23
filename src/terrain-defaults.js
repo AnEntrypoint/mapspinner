@@ -34,7 +34,7 @@ export const TERRAIN_DEFAULTS = {
 
   // ---- LOOK / LIGHTING ----
   exposure: 0.85,
-  reliefShade: 2.5,
+  reliefShade: 2.0,
   skyFill: 0.3,
   variationAmt: 0.23,
   hazeMul: 0.4,
@@ -53,11 +53,11 @@ export const TERRAIN_DEFAULTS = {
   texMix: 1.0,
   texNrmK: 1.0,
   nrmLow: 1.0,
-  triSharp: 0.5,
+  triSharp: 3.0,
   texSat: 1.0,
   texBright: 0.64,
   biomeTint: 0.62,
-  texWarp: 0.38,
+  texWarp: 1.0,
   xSoft: 0.3,
   xFinger: 1.6,
   ordPush: 0.4,
@@ -66,9 +66,9 @@ export const TERRAIN_DEFAULTS = {
   xFade0: 100.0,
   xFade1: 340.0,
   texFar0: 0.0,
-  texFar1: 700.0,
-  nrmFade0: 1000.0,
-  nrmFade1: 20000.0,
+  texFar1: 10000.0,
+  nrmFade0: 100.0,
+  nrmFade1: 1000.0,
 
   // ---- BEACH / COAST ----
   beachTop: 15.0,
@@ -84,8 +84,8 @@ export const TERRAIN_DEFAULTS = {
   bcRock:     [0.48, 0.40, 0.30],   // fallback until the rock-photo mean loads (window.__surfRockMean)
   bcSnow:     [0.94, 0.96, 1.00],
   bandEdgesLo: [8.0, 20.0],
-  bandEdgesHi: [28.0, 50.0],
-  snowEdges:   [65.0, 100.0],
+  bandEdgesHi: [60.0, 100.0],
+  snowEdges:   [120.0, 180.0],
   seaDepthM:   580.0,
   slopeRock:   [0.25, 0.55],
 

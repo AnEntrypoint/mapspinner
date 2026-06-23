@@ -1187,20 +1187,15 @@ void main() {
         // NORMALS for a less repetitive faraway look -- dont fade it, draw both'): the high octave (wt4)
         // tiles tightly so it repeats visibly far off; ADD the low octave (wt, 2.4km, less repetitive)
         // NORMAL on top -- ALWAYS, no fade -- to break that repetition. Albedo stays high-octave only.
-        highp vec3 wt4 = wt * 2.0;   // OCTAVE 4->2 (2026-06-15 'grainy, octave too high'): the x4 scale (~0.6m/texel) was too FINE -> aliased/grainy under the isotropic triplanar up close; x2 (~1.2m/texel) keeps detail without the grain.
+        // DISTANCE-BANDED OCTAVE SCALE (user 2026-06-23 'band in relevant octaves for all distances'):
+        // instead of a fixed wt*2.0, scale the texture octave continuously with pxWorld so we always
+        // sample the octave whose wavelength matches the pixel footprint -- fine up close, coarser far off.
+        // This eliminates hard normal discontinuities at LOD mesh stage transitions because the texture
+        // frequency tracks the mesh density rather than jumping at a discrete fade boundary.
+        float octScale = mix(2.0, 0.125, smoothstep(10.0, 4000.0, pxWorld));
+        highp vec3 wt4 = wt * octScale;
         vec4 albA = surfTriTap(uSurfAlb, wt4, tw, lA);
-        vec3 cA = albA.rgb;   // CHROMA EXPRESSED (2026-06-15 'colors faded / rock looks like sand'): carry the photo's real color, not luma-only -- detail below rescales it to the material BRIGHTNESS so rock reads grey-rocky + grass/sand/snow show their true hue
-        // DOWNWARD NORMAL PYRAMID (2026-06-15 user 'we dont see the lower-freq octave normals on rocks, or the
-        // albedo-octave normals -- just the one one step lower than albedo'): the old pyramid built UPWARD
-        // (wt4*2, wt4, wt4*0.5) -- the wt4*2 octave is finer than the texel/mip floor at any real distance so
-        // it averaged FLAT, and the albedo octave (wt4) was masked, leaving only the coherent wt4*0.5 visible.
-        // Rebuild DOWNWARD from the albedo octave: wt4 (== color, FINEST now -> visible matching detail), wt4*0.5,
-        // wt4*0.25 (genuinely lower freq = big rock relief). RISING weights toward low freq (lower octaves carry
-        // gentler slope per unit amplitude so they need more weight to read as relief). uNrmLow scales the two
-        // low octaves live (window.__nrmLow) so rock multi-scale relief is dialable.
-        // PERF (2026-06-15): normal pyramid 3->2 octaves (dropped the mid wt4*0.5) -- saves 1 octave x 3
-        // planes x 2 layers of texture fetches in the FS (FS-bound at altitude). Keeps the albedo-matching
-        // octave (wt4) + a low octave (wt4*0.25) for big rock relief.
+        vec3 cA = albA.rgb;
         vec3 nA = surfTriNrm(uSurfNrm, wt4,      tw, lA, n) * 1.0
                 + surfTriNrm(uSurfNrm, wt4*0.25, tw, lA, n) * (1.7 * uNrmLow);
         float dispA = albA.a;
@@ -1244,9 +1239,9 @@ void main() {
         float bSharp = 1.0;      // 1 = pure layer A; reused by the texDn relief fade below
         if (wB > 0.02) {   // second layer only where a real transition exists
             vec4 albB = surfTriTap(uSurfAlb, wt4, tw, lB);
-            vec3 cB = albB.rgb;   // CHROMA EXPRESSED (match cA)
+            vec3 cB = albB.rgb;
             vec3 nB = surfTriNrm(uSurfNrm, wt4,      tw, lB, n) * 1.0
-                    + surfTriNrm(uSurfNrm, wt4*0.25, tw, lB, n) * (1.7 * uNrmLow);   // 2-octave (match nA, PERF)
+                    + surfTriNrm(uSurfNrm, wt4*0.25, tw, lB, n) * (1.7 * uNrmLow);
             float dispB = albB.a;
             float ordB = lB < 0.5 ? 0.6 : (lB < 1.5 ? 0.3 : (lB < 2.5 ? 0.0 : 1.0));
             vec3 mcB = lB < 0.5 ? bcGrass : (lB < 1.5 ? bcRock : (lB < 2.5 ? bcShore : bcSnow));
