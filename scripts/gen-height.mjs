@@ -24,17 +24,12 @@ const SRC = readFileSync(join(ROOT, 'src/shaders/terrain.glsl'), 'utf8')
 
 // The height-path functions to transpile, in dependency order (defs before uses).
 const HEIGHT_FNS = [
-  'shash3', 'snoise3',
-  'inciseRidgeField',
-  'lakeBasinField', 'lakeCarveM',
-  'riverRidgeField', 'riverCarveM',
-  'canyonRidgeField', 'canyonCarveM',
-  'badlandsRegion', 'mesaField', 'broadShapeLowM', 'cliffTerraceM',
-  'duneFieldM',
-  'ruggedFromElevAmp', 'faceWarp',
-  'broadShapeM',
-  'vtxDisplace', 'detailFbm',
-  'computeHCache', 'composeHeightC',
+  'h3', 'snoise3',
+  'value_fbm', 'value_fbm_scaled',
+  'value_ridged_fbm_rot', 'value_ridged_fbm_rot_scaled',
+  'eval_layer', 'sample_fractal_terrain',
+  'prolandTerrainH', 'vhash', 'vnoise2', 'faceWarp',
+  'composeHeight', 'continentalBias',
 ]
 // Uniforms referenced by the height path -> read from a runtime `U` object. The
 // height-cpu wrapper supplies the renderer's defaults so CPU == GPU.
