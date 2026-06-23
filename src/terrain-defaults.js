@@ -34,7 +34,7 @@ export const TERRAIN_DEFAULTS = {
 
   // ---- LOOK / LIGHTING ----
   exposure: 0.85,
-  reliefShade: 2.0,
+  reliefShade: 6.0,
   skyFill: 0.3,
   variationAmt: 0.23,
   hazeMul: 0.4,
