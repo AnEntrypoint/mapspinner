@@ -1152,11 +1152,6 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // (uDetailOverlay inline set removed 2026-06-18 destructive-opt wohggez72 -- redundant duplicate of
     //  setComposeHeightUniforms(U) line ~454, same locator/value; one uniform call/frame saved, render identical.)
     gl.uniform1f(U('uHazeMul'),        _g('hazeMul', TD.hazeMul));        // aerial-perspective strength (2026-06-10 'pale hazy': 1.0 milked the midground)
-    // uDiffWrap lives in ATMOSPHERE.glsl (atm_sunSkyIrradiance), not terrain.glsl -- the 2026-06-11
-    // dead-code scan only covered terrain.glsl and wrongly deleted this setter (wrap silently -> 0,
-    // restoring the very view-angle darkening b990add fixed). Scan BOTH shader files before
-    // declaring a uniform dead.
-    gl.uniform1f(U('uDiffWrap'),       _g('diffWrap', TD.diffWrap));   // diffuse wrap: 0.7 flattened ALL slope shading; 0.5 = grazing lift without killing the N.L relief keytion'); 0.5 = grazing lift without killing the N.L relief key
     // SURFACE PHOTO-TEXTURES (TEXTURE6/7): triplanar grass/rock/sand/snow splat. hasSurfTex stays 0
     // until the async loader uploads (procedural-only fallback, no flash -- the splat fades in).
     const hasSurf = !!_surfAlb;

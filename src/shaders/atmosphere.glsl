@@ -198,7 +198,6 @@ vec3 atm_skyRadiance(highp vec3 cameraIn, vec3 viewRay, vec3 sun, out vec3 trans
 // ripple backsides) reads darker than the grazing view of the same field. Wrap lifts away-facing
 // gentle slopes (N.L -> (N.L+w)/(1+w)) -- soft-knee terrain diffuse, view-angle gradient gone.
 // Unset by programs that do not bind it (GL zero-default) -> plain Lambert there (sky pass).
-uniform float uDiffWrap;   // 0 = pure Lambert; ~0.35 = soft wrap (terrain render program)
 vec3 atm_sunSkyIrradiance(highp vec3 point, vec3 normal, vec3 sun, out vec3 sky_irradiance) {   // W7: km-scale point -> highp
     highp float r = length(point);
     vec3 up = point / r;
@@ -213,7 +212,7 @@ vec3 atm_sunSkyIrradiance(highp vec3 point, vec3 normal, vec3 sun, out vec3 sky_
     // direct light -- slope (N.sun) owns the shading. The sky/AP marches keep their per-point
     // physics (airborne sample points genuinely differ); only the SURFACE direct term is pinned.
     vec3 tSun = atm_transmittanceToSun(up * (ATM_BOTTOM + 0.5), sun);
-    vec3 direct = ATM_SOLAR_IRRADIANCE * tSun * clamp((dot(normal, sun) + uDiffWrap) / (1.0 + uDiffWrap), 0.0, 1.0);
+    vec3 direct = ATM_SOLAR_IRRADIANCE * tSun * clamp(dot(normal, sun), 0.0, 1.0);
     // Sky (ambient) dome: Rayleigh-tinted, scaled by how much sky the surface sees
     // and by daylight (smoothstep over the terminator). Hemispheric weight (1+N.up)/2.
     float day = smoothstep(-0.10, 0.25, muS);
