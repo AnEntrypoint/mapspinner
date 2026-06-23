@@ -265,6 +265,13 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){
     } else {
         highp float bShelf = uBeachShelfM > 1.0 ? uBeachShelfM : 600.0;
         if (h < bShelf) h = (h * h / bShelf) * (2.0 - h / bShelf);
+        // Height curve: pow(h/MAX, curve)*MAX redistributes land heights within [0,MAX].
+        // curve>1 compresses foothills and keeps peaks -> sharper mountains relative to flat land.
+        // curve<1 lifts low terrain toward MAX. Identity at curve=1. MAX=10000 = hard ceiling.
+        if (h > 0.0 && uHeightCurve > 0.0 && uHeightCurve != 1.0) {
+            const highp float MAX = 10000.0;
+            h = pow(clamp(h / MAX, 0.0, 1.0), uHeightCurve) * MAX;
+        }
     }
     return h * (uReliefScale > 0.0 ? uReliefScale : 1.0);
 }
