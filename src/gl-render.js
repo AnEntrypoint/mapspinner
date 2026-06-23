@@ -842,11 +842,13 @@ export async function initMapspinnerRender(gl, opts = {}) {
   const idx = [];
   for (let y=0;y<g2;y++) for (let x=0;x<g2;x++){
     const a=y*n2+x,b=a+1,c=a+n2,d=c+1;
-    // Per-quad hash -> randomise diagonal direction to eliminate grid-aligned artifact.
-    let h = (x * 2654435761 ^ y * 1013904223) >>> 0;
-    h ^= h >>> 16;
-    if (h & 1) idx.push(a,d,c, a,b,d);   // BL-TR diagonal
-    else       idx.push(a,c,b, b,c,d);   // TL-BR diagonal (original)
+    // Murmur3 finalizer on packed (x,y) -> quasi-random diagonal per quad.
+    let h = (x | (y << 16)) | 0;
+    h = Math.imul(h ^ (h >>> 16), 0x45d9f3b | 0);
+    h = Math.imul(h ^ (h >>> 16), 0x45d9f3b | 0);
+    h = h ^ (h >>> 16);
+    if ((h >>> 17) & 1) idx.push(a,c,d, a,d,b);   // TL-BR diagonal (same CCW winding)
+    else                idx.push(a,c,b, b,c,d);   // TR-BL diagonal (original)
   }
   const verts = new Float32Array(vlist);
   const indices = new Uint32Array(idx);
