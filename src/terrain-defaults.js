@@ -26,7 +26,7 @@ export const TERRAIN_DEFAULTS = {
   canyonDepth: 40.0,        // canyon-depth multiplier
   cliffAmt: 5.0,            // cliff/mesa terrace strength
   beachShelf: 0.0,          // land coastal shelf (m); 0 -> shader uses 600m guard
-  nrmStepM: 5000,           // lit-normal FD step (m) — 5km captures ridge-scale features; floors to 1/GRID (vertex spacing) on fine tiles
+  nrmStepM: 0,              // unused — FD step is always 1/GRID (one vertex spacing)
   mtnBandWide: 1.0,         // mountain-belt width anchor step
   climateRelief: 1.0,       // climate-relief width
   isleWide: 0.55,           // island-zone width
@@ -71,6 +71,7 @@ export const TERRAIN_DEFAULTS = {
   nrmFade1: 1000.0,
   octFar0: 1.5,
   octFar1: 15.0,
+  texTile: 2400.0,          // surface texture repeat size (m) at Earth radius; scales with R
 
   // ---- BEACH / COAST ----
   beachTop: 15.0,
