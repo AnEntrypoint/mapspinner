@@ -298,11 +298,6 @@ export function makeHeight(U, hpfSample) {
     let ridgeMul = _C.ridgeMul;
     let bShape = broadShapeM(dir0, reliefMul, ridgeMul);
     let h = ((cbias + bShape) + U.uLandBias);
-    if (h > 0.0) {
-      const curve = (U.uHeightCurve > 0.0) ? U.uHeightCurve : 1.0;
-      const REF = 3000.0;
-      h = Math.pow(h / REF, curve) * REF;
-    }
     if ((h < 0.0)) {
       let COAST_RING_CEIL = 500.0;
       h = g.min(h, (cbias + COAST_RING_CEIL));
@@ -317,6 +312,11 @@ export function makeHeight(U, hpfSample) {
       if ((h < bShelf)) {
         h = (((h * h) / bShelf) * (2.0 - (h / bShelf)));
       }
+    }
+    if (h > 0.0) {
+      const curve = (U.uHeightCurve > 0.0) ? U.uHeightCurve : 1.0;
+      const REF = 3000.0;
+      h = Math.pow(h / REF, curve) * REF;
     }
     h += (vDisp * g.mix(1.0, 2.2, g.clamp(((h + 50.0) / (-550.0)), 0.0, 1.0)));
     h += (((detailFbm(dir0) * U.uDetailOverlay) * 30.0) * g.step(0.0, h));
