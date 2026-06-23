@@ -253,14 +253,7 @@ uniform float uBeachShelfM;
 // Single height function using the Proland algorithm.
 highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){
     highp float h = prolandTerrainH(dir0);
-    // prolandTerrainH returns approx [-0.6, 0.6]. Apply height curve on the normalised [0,1] land signal
-    // before scaling -- this is the safe range for pow(). curve>1 tips mountains taller (high elevations
-    // grow faster than foothills); curve<1 compresses land toward sea level. Ocean (h<0) is untouched.
-    if (h > 0.0) {
-        highp float curve = uHeightCurve > 0.0 ? uHeightCurve : 1.0;
-        h = pow(h / 0.6, curve) * 0.6;
-    }
-    // prolandTerrainH returns approx [-0.6, 0.6]. Scale to metres so peaks reach ~6500m (above snow at 6000m).
+    // prolandTerrainH returns approx [-0.6, 0.6]. Scale to metres so peaks reach ~6500m.
     // uLandBias shifts sea level fraction (negative = more ocean, positive = more land).
     h = h * 750000.0 + uLandBias;
     if (h < 0.0) {
@@ -272,6 +265,16 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){
     } else {
         highp float bShelf = uBeachShelfM > 1.0 ? uBeachShelfM : 600.0;
         if (h < bShelf) h = (h * h / bShelf) * (2.0 - h / bShelf);
+        // Height curve: applied AFTER ease where h is in the 0–~8000m range.
+        // Normalises to [0,1] using the same 750000*0.6=45000 raw-to-metres peak, then
+        // applies pow(t, curve) and restores. REF=8000m caps the output so mountains
+        // cannot exceed ~8000m regardless of curve. curve>1 tips peaks taller vs foothills;
+        // curve<1 compresses. Identity at curve=1.
+        if (h > 0.0) {
+            highp float curve = uHeightCurve > 0.0 ? uHeightCurve : 1.0;
+            const highp float REF = 8000.0;
+            h = pow(clamp(h / REF, 0.0, 1.0), curve) * REF;
+        }
     }
     return h * (uReliefScale > 0.0 ? uReliefScale : 1.0);
 }
