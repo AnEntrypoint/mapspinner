@@ -312,6 +312,11 @@ export function makeHeight(U, hpfSample) {
       if ((h < bShelf)) {
         h = (((h * h) / bShelf) * (2.0 - (h / bShelf)));
       }
+      if (h > 0.0) {
+        const curve = U.uHeightCurve > 0.0 ? U.uHeightCurve : 1.0;
+        const MAX = 0.014 * 750000.0; // matches GLSL HPEAK*750000
+        h = Math.pow(Math.min(h / MAX, 1.0), curve) * MAX;
+      }
     }
     h += (vDisp * g.mix(1.0, 2.2, g.clamp(((h + 50.0) / (-550.0)), 0.0, 1.0)));
     h += (((detailFbm(dir0) * U.uDetailOverlay) * 30.0) * g.step(0.0, h));

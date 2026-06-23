@@ -26,7 +26,7 @@ export const TERRAIN_DEFAULTS = {
   canyonDepth: 40.0,        // canyon-depth multiplier
   cliffAmt: 5.0,            // cliff/mesa terrace strength
   beachShelf: 0.0,          // land coastal shelf (m); 0 -> shader uses 600m guard
-  heightCurve: 1.0,         // power applied to positive land heights — >1 pushes mountains taller, <1 compresses them
+  heightCurve: 3.0,         // power applied to positive land heights — >1 pushes mountains taller, <1 compresses them
   nrmStepM: 0.001,          // lit-normal FD step (m) — near-zero floors duP to 1/GRID (one vertex spacing) = true geometric mesh normal
   mtnBandWide: 1.0,         // mountain-belt width anchor step
   climateRelief: 1.0,       // climate-relief width

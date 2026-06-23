@@ -253,7 +253,15 @@ uniform float uBeachShelfM;
 // Single height function using the Proland algorithm.
 highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){
     highp float h = prolandTerrainH(dir0);
-    // prolandTerrainH returns approx [-0.6, 0.6]. Scale to metres so peaks reach ~6500m.
+    // Apply height curve on raw proland output before scaling. Land peaks reach ~0.014 in this
+    // normalized space. pow(h/0.014, curve)*0.014 redistributes within [0, peak]: curve>1
+    // compresses foothills and keeps peaks tall; curve<1 lifts low terrain. Identity at curve=1.
+    if (h > 0.0) {
+        highp float curve = uHeightCurve > 0.0 ? uHeightCurve : 1.0;
+        const highp float HPEAK = 0.014;
+        h = pow(clamp(h / HPEAK, 0.0, 1.0), curve) * HPEAK;
+    }
+    // Scale to metres so peaks reach ~6500m.
     // uLandBias shifts sea level fraction (negative = more ocean, positive = more land).
     h = h * 750000.0 + uLandBias;
     if (h < 0.0) {
