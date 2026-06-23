@@ -1064,6 +1064,7 @@ void main() {
     vec3 texDn = vec3(0.0);   // photo-texture WORLD-SPACE normal perturbation, applied after uReliefShade
     // SPLAT RUNS UNDERWATER TOO (user 2026-06-11 'continue under water as sand and rock'): the old
     // vH > -2 gate cut the photo textures at the waterline, leaving the seabed flat-colored.
+    highp float camDist = length(camWorld - vWorld);
     float texFarFade = 1.0 - smoothstep(uTexFar0 * uReliefScale, uTexFar1 * uReliefScale, pxWorld);   // splat->macro-biome handoff; LIVE LEVER (__texFar0/__texFar1). *uReliefScale = SCALE-INVARIANT: pxWorld (m/px) scales with the planet radius, so the absolute-metre thresholds must too -> the splat fades at the same RELATIVE distance at any planet size (2026-06-18 real-size).
     if (uHasSurfTex > 0.5 && uTexMix > 0.001 && texFarFade > 0.001) {
         vec3 biomeC = albedo;   // SUBTLE landscape color variation (user 2026-06-14 're-introduce ... use existing data, make it subtle'): the macro biome/climate color is ALREADY computed; save it now and mix a touch back after the material override (no new computation).
@@ -1188,11 +1189,10 @@ void main() {
         // tiles tightly so it repeats visibly far off; ADD the low octave (wt, 2.4km, less repetitive)
         // NORMAL on top -- ALWAYS, no fade -- to break that repetition. Albedo stays high-octave only.
         // DISTANCE-BANDED OCTAVE SCALE (user 2026-06-23 'band in relevant octaves for all distances'):
-        // instead of a fixed wt*2.0, scale the texture octave continuously with pxWorld so we always
-        // sample the octave whose wavelength matches the pixel footprint -- fine up close, coarser far off.
-        // This eliminates hard normal discontinuities at LOD mesh stage transitions because the texture
-        // frequency tracks the mesh density rather than jumping at a discrete fade boundary.
-        float octScale = mix(2.0, 0.125, smoothstep(10.0, 4000.0, pxWorld));
+        // scale the texture octave with camera distance (NOT pxWorld -- fwidth is discontinuous at LOD
+        // patch seams and caused visible texture frequency jumps at mesh level boundaries). camDist is
+        // smooth/continuous across all seams. Fine octave (scale=2.0) close up; coarse (scale=0.125) far.
+        float octScale = mix(2.0, 0.125, smoothstep(500.0, 50000.0, camDist));
         highp vec3 wt4 = wt * octScale;
         vec4 albA = surfTriTap(uSurfAlb, wt4, tw, lA);
         vec3 cA = albA.rgb;
@@ -1212,7 +1212,6 @@ void main() {
         // high-frequency noise at a distance'. The high-octave disp (~1.2m) goes sub-pixel far out and the *1.5
         // amplification turned mip residue into sparkle; dropping it early collapses the boundary to the smooth
         // weight ramp well before it can alias. Both window-dialable (__texNrmFadeKm not needed; __xFade0/__xFade1).
-        highp float camDist = length(camWorld - vWorld);
         float texFade   = 1.0 - smoothstep(uNrmFade0, uNrmFade1, camDist);   // DOUBLED 20/40 -> 40/80km (user 2026-06-15 'double the distance of the max normal textures'); dial __nrmFade0/__nrmFade1
         float crossFade = 1.0 - smoothstep(uXFade0, uXFade1, camDist);
         // albFade REMOVED (user 2026-06-15 'a curved line circles the mountain, lighter grass'): the manual
