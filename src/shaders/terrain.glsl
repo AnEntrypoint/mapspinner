@@ -182,9 +182,9 @@ struct ProlandLayer { int ltype; int numOct; float gain; float ridgeOffset; floa
 // noiseDesc: the outer rotated base layer (ridged, 23 octaves).
 const ProlandLayer noiseLayerBase = ProlandLayer(LTYPE_RIDGED, 23, 0.5, 1.064, 1.665, 0.45, 0.0, 1.0);
 // terrainDesc layers: layer0 ridged 10oct, layer1 FBM 18oct, layer2 ridged 18oct.
-const ProlandLayer noiseLayer0 = ProlandLayer(LTYPE_RIDGED, 10, 0.5, 1.064, 1.005, 0.2, 0.0, 1.0);
-const ProlandLayer noiseLayer1 = ProlandLayer(LTYPE_FBM,    18, 0.5, 1.064, 1.665, 0.32, -2.0, 2.0);
-const ProlandLayer noiseLayer2 = ProlandLayer(LTYPE_RIDGED, 18, 0.5, 1.064, 1.1,   0.11, -2.0, 2.0);
+const ProlandLayer noiseLayer0 = ProlandLayer(LTYPE_RIDGED, 10, 0.5, 1.064, 1.005, 1.6, 0.0, 1.0);
+const ProlandLayer noiseLayer1 = ProlandLayer(LTYPE_FBM,    18, 0.5, 1.064, 1.665, 2.6, -2.0, 2.0);
+const ProlandLayer noiseLayer2 = ProlandLayer(LTYPE_RIDGED, 18, 0.5, 1.064, 1.1,   0.9, -2.0, 2.0);
 float eval_layer(highp vec3 pos, ProlandLayer L) {
     float raw;
     float t;
@@ -217,9 +217,17 @@ highp float prolandTerrainH(vec3 dir0) {
     float raw = sample_fractal_terrain(p);
     float h = (raw - 0.17) * 0.6;   // centre and compress to ~[-0.6,0.6]
 
+    // Spatially varying power exponent (TerrainView8 pipeline step 5)
+    float pmix = snoise3(p * 0.53 + vec3(123.0, 456.0, 789.0)) * 0.5 + 0.5;  // 0..1
+    float vPower = mix(0.95, 1.3, pmix);
+
     // Shape: steepen peaks, flatten ocean floor
-    if (h > 0.0) h = pow(h, 0.8);
-    else h = -pow(-h, 0.7);
+    if (h > 0.0) h = pow(h, 0.8 * vPower);
+    else h = -pow(-h, 0.7 * vPower);
+
+    // Continental ratio: suppresses fine detail in low-variation regions
+    float cRatio = clamp(snoise3(normalize(dir0) * 4.0) * 0.5 + 0.7, 0.3, 1.0);
+    h *= cRatio;
 
     return h;
 }
