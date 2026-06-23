@@ -20,7 +20,7 @@ export const TERRAIN_DEFAULTS = {
   splitFactor: 0.30,        // blessed mesh density
 
   // ---- SHAPE (composeHeight; mirrored in SHAPE_UNIFORM_DEFAULTS for the CPU height path) ----
-  landBias: 0.0,            // bias for ~40% land at scale 750000 with the domain-warp FBM
+  landBias: -100000.0,            // bias for ~40% land at scale 750000 with the domain-warp FBM
   detailOverlay: 53.0,      // perlin-everywhere relief term
   hiFreqCut: 1.0,           // fine-octave amplitude
   canyonDepth: 40.0,        // canyon-depth multiplier

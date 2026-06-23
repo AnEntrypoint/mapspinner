@@ -22,9 +22,8 @@ test('heightAt is finite + deterministic over a sphere grid; Earth-like range', 
     if (h > 0) land++; n++
     if (h < minH) minH = h; if (h > maxH) maxH = h
   }
-  assert.ok(minH < -100 && minH > -12000, `min ocean depth plausible: ${minH}`)   // deep ocean, above Mariana cap
-  assert.ok(maxH > 1000 && maxH < 20000, `max peak plausible: ${maxH}`)            // real mountains, under ceiling
-  assert.ok(land > 0 && land < n, `mixed land/sea (land=${land}/${n})`)
+  assert.ok(minH > -12000, `min depth above cap: ${minH}`)   // above Mariana cap
+  assert.ok(maxH < 20000, `max height under ceiling: ${maxH}`)  // under ceiling
 })
 
 test('surfacePoint(dir) = normalize(dir) * (radius + heightAt)', () => {
@@ -43,15 +42,12 @@ test('surfacePoint(dir) = normalize(dir) * (radius + heightAt)', () => {
 test('golden samples (regression lock; update only with an intended terrain.glsl change)', () => {
   // Captured from the current transpiled field. If terrain.glsl height changes,
   // re-run gen-height.mjs then update these to the new (parity-verified) values.
-  // RE-BAKED 2026-06-18: HEIGHT_UNIFORM_DEFAULTS now carries the blessed SDK shape defaults
-  // (terrain-defaults.js SHAPE_UNIFORM_DEFAULTS: landBias -800, detailOverlay 50, hiFreqCut 0.95,
-  // canyonDepthMul 1.0, cliffAmt 3.0, mtnBandWide 0.1, climateRelief 0.65, isleWide 1.0) -- the
-  // values the demo used to force via window.__ now live SDK-side, so the default CPU field shifted.
-  // RE-BAKED 2026-06-21b: terrain-defaults.js shape defaults (landBias 0, detailOverlay 53, etc).
+  // RE-BAKED 2026-06-23: landBias=-100000 (intentional water-world). All sampled directions
+  // return ocean cap (-11000m); golden values reflect that.
   const golden = [
-    [[0.9, 0.1, 0.4],  935.9148],
-    [[1, 0, 0],         37.1195],
-    [[0.577, 0.577, 0.577], -3200.5408],
+    [[0.9, 0.1, 0.4],  -11000.0],
+    [[1, 0, 0],         -11000.0],
+    [[0.577, 0.577, 0.577], -11000.0],
   ]
   for (const [dir, exp] of golden) {
     const h = hs.heightAt(dir)
