@@ -47,10 +47,11 @@ test('golden samples (regression lock; update only with an intended terrain.glsl
   // (terrain-defaults.js SHAPE_UNIFORM_DEFAULTS: landBias -800, detailOverlay 50, hiFreqCut 0.95,
   // canyonDepthMul 1.0, cliffAmt 3.0, mtnBandWide 0.1, climateRelief 0.65, isleWide 1.0) -- the
   // values the demo used to force via window.__ now live SDK-side, so the default CPU field shifted.
-  // RE-BAKED 2026-06-23c: heightCurve=3, REF=8000m (pow(h/8000,3)*8000 caps at 8000m).
+  // RE-BAKED 2026-06-21b: terrain-defaults.js shape defaults updated (landBias 0, detailOverlay 53,
+  // hiFreqCut 1, canyonDepth 40, cliffAmt 5, mtnBandWide 1, climateRelief 1, isleWide 0.55).
   const golden = [
-    [[0.9, 0.1, 0.4],  101.7014],
-    [[1, 0, 0],        -409.4375],
+    [[0.9, 0.1, 0.4],  935.9148],
+    [[1, 0, 0],         37.1195],
     [[0.577, 0.577, 0.577], -3200.5408],
   ]
   for (const [dir, exp] of golden) {

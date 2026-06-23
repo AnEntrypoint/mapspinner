@@ -265,16 +265,6 @@ highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){
     } else {
         highp float bShelf = uBeachShelfM > 1.0 ? uBeachShelfM : 600.0;
         if (h < bShelf) h = (h * h / bShelf) * (2.0 - h / bShelf);
-        // Height curve: applied AFTER ease where h is in the 0–~8000m range.
-        // Normalises to [0,1] using the same 750000*0.6=45000 raw-to-metres peak, then
-        // applies pow(t, curve) and restores. REF=8000m caps the output so mountains
-        // cannot exceed ~8000m regardless of curve. curve>1 tips peaks taller vs foothills;
-        // curve<1 compresses. Identity at curve=1.
-        if (h > 0.0) {
-            highp float curve = uHeightCurve > 0.0 ? uHeightCurve : 1.0;
-            const highp float REF = 8000.0;
-            h = pow(clamp(h / REF, 0.0, 1.0), curve) * REF;
-        }
     }
     return h * (uReliefScale > 0.0 ? uReliefScale : 1.0);
 }
