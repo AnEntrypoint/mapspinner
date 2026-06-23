@@ -582,7 +582,7 @@ uniform float uNrmFade0;     // normal-texture fade start metres (__nrmFade0, de
 uniform float uNrmFade1;     // normal-texture fade end metres (__nrmFade1, default 80000) -- texture normals gone past here
 uniform float uBandWarp;     // snow/rock/BEACH biome-band warp amplitude metres (__bandWarp, default 1100) -- one low-freq field warps every elevation-keyed biome edge incl. the beach
 uniform float uBeachWidth;   // grass<->beach crossover band WIDTH (x beachTop) (__beachWidth, default 5.0) -- wide = the displacement maps interlock a broad fingered shoreline (narrow = a thin line)
-uniform float uTexFar0;      // splat->biome far-fade start (pxWorld metres) (__texFar0, default 4000)
+uniform float uTexFar0;      // splat->biome far-fade start (pxWorld metres) (__texFar0, default 0 = full splat from camera)
 uniform float uTexFar1;      // splat->biome far-fade end (pxWorld metres) (__texFar1, default 26000) -- splat gone to macro biome past here
 // MATERIAL-BOUNDARY DITHER REVERTED (2026-06-05): the threshold-perturbation approach (matEdgeNoise on
 // the smoothstep input) produced HARD-EDGED PATCHES + a UV-like grid on uniform grass/snow (user live
