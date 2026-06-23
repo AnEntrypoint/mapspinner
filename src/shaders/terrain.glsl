@@ -399,7 +399,10 @@ void main() {
     if (uIsWater < 0.5 && uThc > 0.5) {
         hN0 = thcSample(vertex.xy, iLayer);
         highp float nStepM = (uNrmStepM > 0.0) ? uNrmStepM : 300.0;
-        highp float duP = clamp(nStepM / max(defOffset.z, 1.0), 1.0 / ((uGrid > 0.0) ? uGrid : 16.0), 0.34);
+        // Upper clamp removed: world-space FD step = duP * defOffset.z = nStepM (constant across all LODs).
+        // The old 0.34 cap made fine-patch steps smaller than nStepM -> normal mismatch at LOD seams.
+        // composeHeight/thcSample are global pure functions so FD taps outside the current tile are valid.
+        highp float duP = max(nStepM / max(defOffset.z, 1.0), 1.0 / ((uGrid > 0.0) ? uGrid : 16.0));
         highp float hPU = thcSample(vertex.xy + vec2(duP, 0.0), iLayer);
         highp float hMU = thcSample(vertex.xy + vec2(-duP, 0.0), iLayer);
         highp float hPV = thcSample(vertex.xy + vec2(0.0, duP), iLayer);
@@ -413,7 +416,10 @@ void main() {
         if (dot(vN, dir0) < 0.0) vN = -vN;
     } else if (uIsWater < 0.5) {
         highp float nStepM = (uNrmStepM > 0.0) ? uNrmStepM : 300.0;
-        highp float duP = clamp(nStepM / max(defOffset.z, 1.0), 1.0 / ((uGrid > 0.0) ? uGrid : 16.0), 0.34);
+        // Upper clamp removed: world-space FD step = duP * defOffset.z = nStepM (constant across all LODs).
+        // The old 0.34 cap made fine-patch steps smaller than nStepM -> normal mismatch at LOD seams.
+        // composeHeight is a global pure function so FD taps outside the current tile are valid.
+        highp float duP = max(nStepM / max(defOffset.z, 1.0), 1.0 / ((uGrid > 0.0) ? uGrid : 16.0));
         highp float hPU = 0.0, hMU = 0.0, hPV = 0.0, hMV = 0.0;
         highp vec3 dPU = dir0, dMU = dir0, dPV = dir0, dMV = dir0;
         int fdIters = (uGrid >= 0.0) ? 5 : 1;
