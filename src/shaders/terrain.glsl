@@ -209,10 +209,7 @@ float sample_fractal_terrain(highp vec3 pCoords) {
 const float PI = 3.14159265;
 // Planet terrain height. Returns approx [-0.6,0.6]; sea level at 0.
 highp float prolandTerrainH(vec3 dir0) {
-    // p scale: features ~2000km at base octave (1/3 radian) at Earth radius.
-    // Multiply by uReliefScale (= R/6360000 = _planetScale) so feature angular density
-    // stays constant regardless of planet size -- bigger planet, higher noise frequency.
-    highp vec3 p = normalize(dir0) * (3.0 * uReliefScale);
+    highp vec3 p = normalize(dir0) * 3.0;
 
     // Use the full Proland ridged+FBM layer stack (46 octaves, domain-warped) for sharp ridges and detail.
     // sample_fractal_terrain returns roughly [-1.33, 1.67]; normalise to [-1,1] by subtracting centre ~0.17 then dividing.
@@ -228,7 +225,7 @@ highp float prolandTerrainH(vec3 dir0) {
     else h = -pow(-h, 0.7 * vPower);
 
     // Continental ratio: suppresses fine detail in low-variation regions
-    float cRatio = clamp(snoise3(normalize(dir0) * (4.0 * uReliefScale)) * 0.5 + 0.7, 0.3, 1.0);
+    float cRatio = clamp(snoise3(normalize(dir0) * 4.0) * 0.5 + 0.7, 0.3, 1.0);
     h *= cRatio;
 
     return h;
