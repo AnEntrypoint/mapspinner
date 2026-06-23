@@ -72,7 +72,7 @@ export const TERRAIN_DEFAULTS = {
 
   // ---- BEACH / COAST ----
   beachTop: 14500.0,
-  beachWidth: 1000.0,
+  beachWidth: 5.0,
   bandWarp: 100000.0,
 
   // ---- BIOME RAMP (read by gl-render C() from __gen.state.biome, else here) ----
