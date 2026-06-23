@@ -78,7 +78,7 @@ function worldToFaceLocal(face, camWorld, R) {   // R = configured planet radius
 // straddling the near/limb is kept. This can't remove a quad touching the screen (such a
 // quad has >=1 corner inside every plane's half-space). vpr = the SAME viewProjRel the
 // render uses (render.cullMatrix), fed ABSOLUTE world coords (vpr folds translate(-eye)).
-const CULL_MAX_ELEV = 12000.0;   // meters: +/- elevation margin so peaks can't poke in (Earth-reference; the cull uses R*CULL_ELEV_FRAC so it scales with the planet)
+const CULL_MAX_ELEV = 500000.0;  // meters: +/- elevation margin so peaks can't poke in (Earth-reference; the cull uses R*CULL_ELEV_FRAC so it scales with the planet); raised to match 750000 height multiplier x 0.6 peak
 const CULL_ELEV_FRAC = CULL_MAX_ELEV / 6360000.0;   // SCALE-INVARIANT: the elevation margin as a FRACTION of R, so R*CULL_ELEV_FRAC == 12km at Earth R and 120m at the 63.6km real-size R (else the cull margin is relatively 100x too big at the small scale -> looser cull -> more quads)
 const CULL_NDC_MARGIN = 0.06;   // NDC slack so an edge-touching quad is kept (false-keep is cheap)
 // Robust screen-space-AABB frustum cull. The old 4-CORNER "all corners past one plane" test could not
