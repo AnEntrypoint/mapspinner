@@ -391,9 +391,9 @@ void main() {
     mat3 defLocalToWorld = faceFrame(iFace);   // face-local -> world rotation
     // (elevation atlas removed -- terrain height is the GPU fractal broadShapeM, no tile sample.)
     // world direction of this vertex (pre-deform) for the continental mask.
-    vec3 dir0 = normalize(defLocalToWorld * vec3(faceWarp(vertex.xy * defOffset.z + defOffset.xy), defRadius));  // W7: faceWarp/defRadius highp -> pre-normalize ~6.4e6 stays highp
+    highp vec2 faceLocal = faceWarp(vertex.xy * defOffset.z + defOffset.xy);   // hoisted: reused for dir0 and composeHeight (was computed twice)
+    vec3 dir0 = normalize(defLocalToWorld * vec3(faceLocal, defRadius));  // W7: faceWarp/defRadius highp -> pre-normalize ~6.4e6 stays highp
     highp vec4 hpf0 = hpfSample(dir0);    // (seaBias, elevAmp, temp, humid) -- used for vClimate
-    highp vec2 faceLocal = faceWarp(vertex.xy * defOffset.z + defOffset.xy);
 
     // Height from Proland algorithm
     highp float hN0 = 0.0;
@@ -595,7 +595,7 @@ uniform float uOctFar1;      // coarse-albedo-octave blend end (pxWorld metres) 
 // binary boundary snaps material across wide areas instead of softly interfingering, and the high-freq
 // octave aliased on bright materials. Reverted to the clean smoothstep boundaries; a non-aliasing
 // 'interesting boundary' technique (e.g. a wide soft transition material band) is a separate future task.
-vec3 terrainAlbedo(float h, float slope, float rockSlope, highp vec3 worldPos, float pxW) {   // highp: worldPos feeds normalize(worldPos)*freq noise UVs -- mediump would scramble the lattice at close range
+vec3 terrainAlbedo(float h, float slope, float rockSlope, highp vec3 worldPos, highp vec3 nwp, float pxW) {   // highp: nwp=normalize(worldPos) passed in from caller (already computed in terrainAlbedoClimate)
     // DISTANCE-WIDENED rock-slope band (user 2026-06-14 'hard edge to rock slopes at a distance'): the
     // close-up height-blend doesn't run far off, so the macro slope gate showed a hard edge. Widen its
     // upper threshold with distance so the rock->grass slope boundary fades softly when it's far.
@@ -619,8 +619,7 @@ vec3 terrainAlbedo(float h, float slope, float rockSlope, highp vec3 worldPos, f
         // the single-octave warp made smooth wavy contour lines. A 3-octave domain-warped field breaks
         // the rock/snow boundaries into irregular fingers + patches (height-keyed band wobbles +/-~1.1km
         // over 1-15km scales), so the biome edge reads natural, not a band. highp dir for the lattice.
-        highp vec3 bwd = normalize(worldPos);
-        highp vec3 bww = bwd + vec3(snoise3(bwd * 130.0)) * 0.004;   // domain warp -> non-parallel fingers
+        highp vec3 bww = nwp + vec3(snoise3(nwp * 130.0)) * 0.004;   // domain warp -> non-parallel fingers (nwp = normalize(worldPos), passed from caller)
         float bandWarp = (snoise3(bww * 210.0) * 1.0 + snoise3(bww * 560.0) * 0.5 + snoise3(bww * 1450.0) * 0.25) * uBandWarp;
         c = mix(c, bcRock, smoothstep(bandEdgesHi.x + bandWarp, bandEdgesHi.y + bandWarp, h));
         c = mix(c, bcSnow, smoothstep(snowEdges.x + bandWarp, snowEdges.y + bandWarp, h));
@@ -719,8 +718,8 @@ float canyonMask(vec3 worldPos, float h, float temp, float humid, float px, out 
 #endif   // biomeClassColor/riverMask/canyonMask: DEBUGVIEW-only (called solely from displayMode blocks) -- excluded from render FS cold-compile (FS-2, workflow w4y1bnrqc)
 
 vec3 terrainAlbedoClimate(float h, float slope, float rockSlope, float temp, float humid, highp vec3 worldPos, float pxWorld) {   // highp: worldPos feeds normalize(worldPos)*freq noise UVs (mottle/river/canyon ridge) -- mediump scrambles the lattice up close
-    highp vec3 nwp = normalize(worldPos);   // hoisted: reused by the mottle + river/canyon ridge dirs (was recomputed)
-    vec3 c = terrainAlbedo(h, slope, rockSlope, worldPos, pxWorld);
+    highp vec3 nwp = normalize(worldPos);   // hoisted: reused by terrainAlbedo + mottle + river/canyon ridge dirs
+    vec3 c = terrainAlbedo(h, slope, rockSlope, worldPos, nwp, pxWorld);
     if (h < 0.0) {
         // SEA ICE: near-polar ocean (very cold) freezes to white-blue pack ice. Pure fn of the
         // anchor temp -> seam-safe; the soft threshold gives an irregular (not hard-zonal) margin.
@@ -849,6 +848,17 @@ vec3 surfTriNrm(sampler2DArray sm, highp vec3 wt, vec3 bw, float layer, vec3 sn)
          + vec3(pz.x, pz.y, 0.0) * (bw.z * sign(sn.z));
 }
 
+// shared water day/night + ACES tonemap chain (used by underwater + surface water paths)
+vec3 waterTonemapped(vec3 wcol, vec3 uz) {
+    float macroMuW = dot(uz, sunDir);
+    float dayShadeW = mix(uNightFloor, 1.0, smoothstep(-uTermWidth, uTermWidth, macroMuW));
+    vec3 cW = wcol * dayShadeW * uExposure;
+    vec3 mappedW = clamp((cW * (2.51 * cW + 0.03)) / (cW * (2.43 * cW + 0.59) + 0.14), 0.0, 1.0);
+    float lumW = dot(mappedW, vec3(0.2126, 0.7152, 0.0722));
+    mappedW = mix(vec3(lumW), mappedW, uLookSat);
+    return clamp((mappedW - 0.5) * uLookContrast + 0.5, 0.0, 1.0);
+}
+
 void main() {
     // PER-FRAGMENT tangent frame from vWorld (the sphere position, C0 across quad edges):
     // uz = up (radial), ux = normalize(Y x uz), uy = uz x ux. Continuous across adjacent quads
@@ -898,13 +908,7 @@ void main() {
             wcol = mix(wcol, skyWindow, snell * 0.85);
             float sunw = pow(max(dot(viewW, sunDir), 0.0), 180.0);   // sun seen through the window
             wcol += vec3(1.0, 0.92, 0.70) * sunw * (0.4 + 0.6 * snell);
-            float macroMuW = dot(uz, sunDir);
-            float dayShadeW = mix(uNightFloor, 1.0, smoothstep(-uTermWidth, uTermWidth, macroMuW));
-            vec3 cW = wcol * dayShadeW * uExposure;
-            vec3 mappedW = clamp((cW * (2.51 * cW + 0.03)) / (cW * (2.43 * cW + 0.59) + 0.14), 0.0, 1.0);
-            float lumW = dot(mappedW, vec3(0.2126, 0.7152, 0.0722));
-            mappedW = mix(vec3(lumW), mappedW, uLookSat);
-            mappedW = clamp((mappedW - 0.5) * uLookContrast + 0.5, 0.0, 1.0);
+            vec3 mappedW = waterTonemapped(wcol, uz);
             fragColor = vec4(pow(mappedW, vec3(1.0 / 2.2)), 1.0);
             return;
         }
@@ -998,13 +1002,7 @@ void main() {
         float apGW = smoothstep(3000.0 * uReliefScale, 120000.0 * uReliefScale, wDistW) * uHazeMul;   // *uReliefScale = SCALE-INVARIANT water haze (wDistW render metres scale with R)
         wcol = mix(wcol, uSkyFill * vec3(0.40, 0.55, 0.78) * 1.6, apGW * 0.7);
         // day/night + tonemap chain kept consistent with the terrain pass so the two surfaces match.
-        float macroMuW = dot(uz, sunDir);
-        float dayShadeW = mix(uNightFloor, 1.0, smoothstep(-uTermWidth, uTermWidth, macroMuW));
-        vec3 cW = wcol * dayShadeW * uExposure;
-        vec3 mappedW = clamp((cW * (2.51 * cW + 0.03)) / (cW * (2.43 * cW + 0.59) + 0.14), 0.0, 1.0);
-        float lumW = dot(mappedW, vec3(0.2126, 0.7152, 0.0722));
-        mappedW = mix(vec3(lumW), mappedW, uLookSat);
-        mappedW = clamp((mappedW - 0.5) * uLookContrast + 0.5, 0.0, 1.0);
+        vec3 mappedW = waterTonemapped(wcol, uz);
         // coverage: optically thick water -> opaque; first metres see-through; grazing fresnel and
         // foam are opaque regardless of depth; feather the exact waterline contact.
         // THIN WATER STAYS CLEAR (user 2026-06-14 'water isnt transparent where its thin'): the grazing
@@ -1544,6 +1542,7 @@ void main() {
     // and ramping in only across tens-of-km+ (the depth cue that makes distant ridges recede and the
     // space->ground transition read as real). N=8 march (cheaper than the sky pass's 16; the surface
     // term tolerates it), single draw, reuses atm_* -> zero assets.
+    float nwSun = dot(nWorld, sunDir);   // hoisted: reused for terminator graze/termDay (AP block) + macroMu (globe shading)
     vec3 color = lit;
     {
         highp vec3 camA  = atmPos(camWorld, terrainR);     // W7: km-scale -> highp
@@ -1593,11 +1592,11 @@ void main() {
             // peak at the terminator (N.sun~0), fall off toward both day-center and night-center, and
             // SQUARE it so the warm band is tight at the day/night line instead of a fat ring round the
             // whole limb. Warm amber (not pure red) so it reads as sunset haze, not a bruise.
-            float gz = 1.0 - abs(dot(nWorld, sunDir));
+            float gz = 1.0 - abs(nwSun);   // nwSun = dot(nWorld,sunDir) hoisted before AP block
             float graze = smoothstep(0.55, 1.0, gz); graze *= graze;
             // only on the LIT side of the terminator (mu>0) -- past the line the surface is night and
             // additive amber on near-black extinct land reads as a scorched maroon rim. Day-gate kills it.
-            float termDay = smoothstep(-0.02, 0.18, dot(nWorld, sunDir));
+            float termDay = smoothstep(-0.02, 0.18, nwSun);
             hazed += uTerminatorGlow * graze * termDay * vec3(1.0, 0.55, 0.34) * apGate;
             color = mix(lit, hazed, apGate * uHazeMul);   // uHazeMul lever (2026-06-10 'pale hazy': full-strength haze milked the midground)
         }
@@ -1662,7 +1661,7 @@ void main() {
     // SPHERE sun angle to EVERY fragment (land + ocean) so the globe reads 3D: bright at the sub-solar
     // point, falling to dark across the day side into the terminator. dayShade = smoothstep over the
     // surface-normal . sun, with a small ambient floor (0.10) so the night/terminator isn't pure black.
-    float macroMu = dot(nWorld, sunDir);
+    float macroMu = nwSun;   // nwSun hoisted before AP block
     // SOFT FLOORED TERMINATOR (Real-World Look): a wider, smoother twilight band (uTermWidth) with a
     // night floor (uNightFloor) so framed night longitudes keep faint detail instead of crushing to
     // black (defect #4). The old hard 0.10..-0.12,0.55 band was too steep + too dark.

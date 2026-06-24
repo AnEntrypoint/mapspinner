@@ -23,8 +23,7 @@ const HPF = () => window.__hpf || null;
 
 // ---- canonical defaults: DERIVED from the SDK single source of truth (src/terrain-defaults.js).
 // gen-controls is a LIVE OVERLAY; these values mirror TD so the panel's state/reset == the SDK
-// default == the look gl-render renders with no override. (biomeSat/colorVar have no SDK uniform --
-// dead/diagnostic levers -- so they keep a literal.) NOT force-applied at boot (see boot note below).
+// default == the look gl-render renders with no override. NOT force-applied at boot (see boot note below).
 const DEFAULTS = {
   normal: {
     pvNormal: TD.pvNormal,   // window.__pvNormal (per-vertex seamless normal, default on)
@@ -46,10 +45,9 @@ const DEFAULTS = {
     seaDepthM: TD.seaDepthM, slopeRock: TD.slopeRock,
   },
   // REAL-WORLD LOOK levers (applyShaderGlobals sets window globals when the user tweaks; gl-render
-  // reads them via _g(), else the TD fallback). All sourced from TD; biomeSat/colorVar are dead/
-  // diagnostic levers with no SDK uniform so they keep a literal.
+  // reads them via _g(), else the TD fallback). All sourced from TD.
   look: {
-    exposure: TD.exposure, skyFill: TD.skyFill, biomeSat: 1.05, variationAmt: TD.variationAmt, colorVar: 0.5, vertexAO: TD.vertexAO, reliefShade: TD.reliefShade,
+    exposure: TD.exposure, skyFill: TD.skyFill, variationAmt: TD.variationAmt, vertexAO: TD.vertexAO, reliefShade: TD.reliefShade,
     nightFloor: TD.nightFloor, termWidth: TD.termWidth, terminatorGlow: TD.terminatorGlow, lookSat: TD.lookSat, lookContrast: TD.lookContrast,
     detailOverlay: TD.detailOverlay, hazeMul: TD.hazeMul,
     ocean: { deep: TD.uOceanDeep, shallow: TD.uOceanShallow, k: TD.uOceanK },
@@ -74,9 +72,8 @@ function applyShaderGlobals(state){
   window.__elevEdgeInset = state.geometry.elevEdgeInset;
   if(state.lod.splitFactor != null) window.__splitFactor = state.lod.splitFactor;
   const L = state.look; if(L){
-    window.__exposure = L.exposure; window.__skyFill = L.skyFill; window.__biomeSat = L.biomeSat;
+    window.__exposure = L.exposure; window.__skyFill = L.skyFill;
     window.__variationAmt = L.variationAmt; window.__nightFloor = L.nightFloor; window.__termWidth = L.termWidth;
-    if(L.colorVar != null) window.__colorVar = L.colorVar;
     if(L.detailOverlay != null) window.__detailOverlay = L.detailOverlay;
     if(L.hazeMul != null) window.__hazeMul = L.hazeMul;
     if(L.vertexAO != null) window.__vertexAO = L.vertexAO;
