@@ -812,6 +812,32 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.bindTexture(gl.TEXTURE_2D, null);
     _sceneCopyW = W; _sceneCopyH = H;
   }
+  // HALF-RES WATER FBO (perf 2026-06-24, user opted in): the water pass is ~9ms of per-pixel FS-ALU
+  // over a large screen area (measured: not verts/raster/swell). Rendering it at half resolution = ~4x
+  // fewer water FS invocations. Color = RGBA8 (alpha carries coverage for the composite); its own depth
+  // renderbuffer is cleared each frame -- the water relies on the terrain.glsl vH>1 discard to drop
+  // under-land water (front-occlusion by tall land over ocean is negligible at the deck). Gated behind
+  // window.__halfResWater. Reallocated only on a real half-size change.
+  let _hrwFbo=null, _hrwColor=null, _hrwDepth=null, _hrwW=0, _hrwH=0;
+  function ensureHrwTargets(W, H){
+    if (_hrwFbo && _hrwW===W && _hrwH===H) return;
+    if (_hrwColor) gl.deleteTexture(_hrwColor);
+    if (_hrwDepth) gl.deleteRenderbuffer(_hrwDepth);
+    if (_hrwFbo)   gl.deleteFramebuffer(_hrwFbo);
+    _hrwColor=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,_hrwColor);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,W,H,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    _hrwDepth=gl.createRenderbuffer(); gl.bindRenderbuffer(gl.RENDERBUFFER,_hrwDepth);
+    gl.renderbufferStorage(gl.RENDERBUFFER,gl.DEPTH_COMPONENT24,W,H);
+    _hrwFbo=gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER,_hrwFbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,_hrwColor,0);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.RENDERBUFFER,_hrwDepth);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+    _hrwW=W; _hrwH=H;
+  }
   function ensureVdrsTargets(W, H){
     if (_vdrsFbo && _vdrsW === W && _vdrsH === H) return;   // realloc ONLY on a real canvas-size change
     if (_vdrsColor) gl.deleteTexture(_vdrsColor);
@@ -875,6 +901,25 @@ export async function initMapspinnerRender(gl, opts = {}) {
   const indices = new Uint32Array(idx);
   const vbo=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,vbo); gl.bufferData(gl.ARRAY_BUFFER,verts,gl.STATIC_DRAW);
   const ibo=gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ibo); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,indices,gl.STATIC_DRAW);
+
+  // SEPARATE COARSE WATER MESH (perf 2026-06-24): the water surface is near-flat (swell VS is ~0.4ms,
+  // measured; waves are an FS effect) so it does NOT need the terrain GRID density. MEASURED at the
+  // deck the water pass was ~12ms of a 20ms frame and pure vertex/triangle THROUGHPUT (262 tiles x
+  // GRID^2 verts). A coarse water grid cuts that throughput ~Nx with no visual change (the FS raymarch
+  // + per-pixel normal carry all wave detail; the mesh only needs enough verts to follow the sphere +
+  // the waterline discard). No skirt ring (water sets skirt=0). Live-tunable via window.__waterGrid.
+  const WGRID = (typeof window!=='undefined' && window.__waterGrid) ? window.__waterGrid : 4;
+  const wg2 = WGRID+2, wn2 = wg2+1, wdu = 1.0/WGRID;
+  const wvlist = [];
+  for (let y=0;y<wn2;y++) for (let x=0;x<wn2;x++){
+    const isRing=(x===0||x===wn2-1||y===0||y===wn2-1);
+    wvlist.push(Math.min(Math.max((x-1)*wdu,0.0),1.0), Math.min(Math.max((y-1)*wdu,0.0),1.0), isRing?1.0:0.0);
+  }
+  const widx=[];
+  for (let y=0;y<wg2;y++) for (let x=0;x<wg2;x++){ const a=y*wn2+x,b=a+1,c=a+wn2,d=c+1; widx.push(a,c,b,b,c,d); }
+  const waterVerts=new Float32Array(wvlist), waterIndices=new Uint32Array(widx);
+  const wvbo=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,wvbo); gl.bufferData(gl.ARRAY_BUFFER,waterVerts,gl.STATIC_DRAW);
+  const wibo=gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,wibo); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,waterIndices,gl.STATIC_DRAW);
   const instBuf=gl.createBuffer();   // per-instance [ox,oy,l,level,face] (filled per frame in render())
   // DATA-CONTINUITY CACHE (2026-06-14): terrain + water get their OWN persistent instance buffers so
   // neither clobbers the other (the shared-buffer clobber forced a re-upload every frame and was the
@@ -1173,6 +1218,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(U('uAoAmt'),         _g('aoAmt', TD.aoAmt));
     gl.uniform1f(U('uWireframe'),     (typeof window!=='undefined' && window.__wireframe) ? 1.0 : 0.0);
     gl.uniform1f(U('uFsCheap'),        (typeof window!=='undefined' && window.__fsCheap) ? 1.0 : 0.0);  // GPU-timer VS-isolation frame (window.__gpuTimer)
+    gl.uniform1f(U('uWaterDbg'),       (typeof window!=='undefined' && window.__waterDbg) ? window.__waterDbg : 0.0);  // water-FS intermediate readout (1=refrCol 2=refl 3=fogT 4=waterBody 5=spec)
     // (uBiomeBandBias render setter removed 2026-06-18 -- dead with the anchor-point biome system.)
     // REAL-WORLD LOOK overhaul (live-tunable via window globals / DEFAULTS.look). Beer-Lambert ocean
     // extinction, biome saturation pull, intra-biome mottle, sky-fill relief, terminator sunset glow,
@@ -1403,6 +1449,31 @@ export async function initMapspinnerRender(gl, opts = {}) {
         const wn = _instWaterN;
         gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 4, gl.FLOAT, false, STRIDE, 0);     gl.vertexAttribDivisor(1, 1);
         gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 1, gl.FLOAT, false, STRIDE, 4 * 4); gl.vertexAttribDivisor(2, 1);
+        // HALF-RES WATER: redirect the water draw into a half-res FBO (gated, default on above water --
+        // the underwater up-view is a thin ceiling, render it full-res to keep Snell's-window crisp).
+        const _sceneFbo = (typeof window!=='undefined' && window.__vdrs===true && !thcActive()) ? _vdrsFbo : null;
+        const _hrw = (typeof window==='undefined' || window.__halfResWater!==false) && !_uw;
+        let _hrwVW=0, _hrwVH=0;
+        if (_hrw) {
+          _hrwVW = Math.max(1, _vW>>1); _hrwVH = Math.max(1, _vH>>1);
+          ensureHrwTargets(_hrwVW, _hrwVH);
+          // DEPTH OCCLUSION (user 2026-06-24 'backface water appears to be drawing over the scene'): the
+          // half-res water must depth-test against the TERRAIN so water behind land (and the far-side
+          // sphere back-faces) is occluded, not composited over the scene. Blit the full-res scene depth
+          // DOWN into the half-res FBO depth (READ scene FBO -> DRAW half-res FBO, NEAREST), then draw
+          // water with DEPTH_TEST on + depthMask off (don't write, just test). Source viewport = the
+          // scene's rendered rect (full _vW/_vH, or the vdrs-flexed sub-rect).
+          const _srcW = _sceneFbo ? Math.max(1,Math.round(_vW*_vrs)) : _vW;
+          const _srcH = _sceneFbo ? Math.max(1,Math.round(_vH*_vrs)) : _vH;
+          gl.bindFramebuffer(gl.READ_FRAMEBUFFER, _sceneFbo);
+          gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, _hrwFbo);
+          gl.blitFramebuffer(0,0,_srcW,_srcH, 0,0,_hrwVW,_hrwVH, gl.DEPTH_BUFFER_BIT, gl.NEAREST);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, _hrwFbo);
+          gl.viewport(0,0,_hrwVW,_hrwVH);
+          gl.enable(gl.DEPTH_TEST);                  // occlude against the blitted terrain depth
+          gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);   // color only -- KEEP the blitted depth
+          gl.uniform2f(U('uResolution'), _hrwVW, _hrwVH);   // refraction screenUV = fragCoord/halfRes -> samples full-res uSceneTex correctly
+        }
         if (_uw) {
           gl.disable(gl.BLEND);
           gl.depthMask(true);
@@ -1411,18 +1482,40 @@ export async function initMapspinnerRender(gl, opts = {}) {
           gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
           gl.depthMask(false);
         }
-        // TWO-SIDED WATER (user 2026-06-24 'the underside of the water should also render'): the
-        // water pass inherits the terrain CULL_FACE state, so the surface back-faces (the UNDERSIDE,
-        // seen looking up from below sea level, and any grazing back-face from above) were culled and
-        // left a hole. The water surface is a thin shell shaded both sides (the FS uUnderwater branch
-        // handles the up-from-below view), so it must be drawn two-sided. Restored after the draw.
-        gl.disable(gl.CULL_FACE);
+        // TWO-SIDED ONLY UNDERWATER (user 2026-06-24): the underside is needed only for the up-view
+        // from below sea level (uUnderwater). ABOVE water, drawing two-sided meant the FAR-SIDE water
+        // sphere back-faces rendered too -- and in the half-res pass (no shared depth before this fix)
+        // they composited OVER the scene ('backface water drawing over the scene'). Above water, keep
+        // back-face culling so only the near surface draws; the depth blit above occludes the rest.
+        if (_uw) gl.disable(gl.CULL_FACE); else { gl.enable(gl.CULL_FACE); gl.cullFace(gl.FRONT); gl.frontFace(gl.CCW); }   // FRONT = match the terrain cull (shows the near/top water surface, drops the far-side back-faces)
         gl.uniform1f(U('uIsWater'), 1.0);
-        gl.drawElementsInstanced(gl.TRIANGLES, indices.length, gl.UNSIGNED_INT, 0, wn);
+        // Bind the COARSE water mesh (wvbo/wibo) for attrib 0 -- far fewer verts than the terrain GRID
+        // mesh, the measured ~12ms->lower deck win. Restore the terrain mesh (vbo/ibo) after the draw.
+        gl.bindBuffer(gl.ARRAY_BUFFER, wvbo); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, wibo);
+        gl.drawElementsInstanced(gl.TRIANGLES, waterIndices.length, gl.UNSIGNED_INT, 0, wn);
+        gl.bindBuffer(gl.ARRAY_BUFFER, vbo); gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
         gl.uniform1f(U('uIsWater'), 0.0);
         gl.enable(gl.CULL_FACE);
         gl.depthMask(true);
         gl.disable(gl.BLEND);
+        // HALF-RES WATER COMPOSITE: restore the scene FBO + full viewport, then alpha-blend the half-res
+        // water color over the full-res terrain via the existing fullscreen-tri upscale program (LINEAR
+        // upsample). The water's coverage alpha (1 where water, 0 on the cleared/discarded pixels) gates
+        // the blend so land is untouched. Restore the main program after.
+        if (_hrw) {
+          gl.bindFramebuffer(gl.FRAMEBUFFER, _sceneFbo);
+          gl.viewport(0,0, (_sceneFbo? Math.max(1,Math.round(_vW*_vrs)) : _vW), (_sceneFbo? Math.max(1,Math.round(_vH*_vrs)) : _vH));
+          gl.disable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
+          gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
+          gl.useProgram(upProg);
+          gl.activeTexture(gl.TEXTURE9); gl.bindTexture(gl.TEXTURE_2D, _hrwColor); gl.uniform1i(upUTex, 9);
+          gl.uniform2f(upUScale, 1.0, 1.0);
+          gl.drawArrays(gl.TRIANGLES, 0, 3);
+          gl.disable(gl.BLEND); gl.depthMask(true); gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE);
+          gl.useProgram(prog);
+        }
         if (typeof window !== 'undefined') window.__lastWaterQuads = wn;
       }
       _instQuadsRef = quads;   // mark this quad set uploaded; next frame with the same array skips the rebuild
