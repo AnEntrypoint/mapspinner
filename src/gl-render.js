@@ -1479,22 +1479,16 @@ export async function initMapspinnerRender(gl, opts = {}) {
         if (_hrw) {
           _hrwVW = Math.max(1, _vW>>1); _hrwVH = Math.max(1, _vH>>1);
           ensureHrwTargets(_hrwVW, _hrwVH);
-          // DEPTH OCCLUSION (user 2026-06-24 'backface water appears to be drawing over the scene'): the
-          // half-res water must depth-test against the TERRAIN so water behind land (and the far-side
-          // sphere back-faces) is occluded, not composited over the scene. Blit the full-res scene depth
-          // DOWN into the half-res FBO depth (READ scene FBO -> DRAW half-res FBO, NEAREST), then draw
-          // water with DEPTH_TEST on + depthMask off (don't write, just test). Source viewport = the
-          // scene's rendered rect (full _vW/_vH, or the vdrs-flexed sub-rect).
-          const _srcW = _sceneFbo ? Math.max(1,Math.round(_vW*_vrs)) : _vW;
-          const _srcH = _sceneFbo ? Math.max(1,Math.round(_vH*_vrs)) : _vH;
-          gl.bindFramebuffer(gl.READ_FRAMEBUFFER, _sceneFbo);
-          gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, _hrwFbo);
-          gl.blitFramebuffer(0,0,_srcW,_srcH, 0,0,_hrwVW,_hrwVH, gl.DEPTH_BUFFER_BIT, gl.NEAREST);
+          // NO DEPTH OCCLUSION in the half-res pass: a cross-size depth blitFramebuffer (full->half) was
+          // BROKEN on NVIDIA/ANGLE (rejected most water -- confirmed same-pose A/B on an RTX 3060), and a
+          // depth-texture + FS-sample approach hit a sampler-unit collision that blacked out terrain. So
+          // the half-res water draws with NO depth test; the vH>1 discard drops water directly under land.
+          // Distant-mountain-occluding-water is rare at the deck and parked for a later portable fix.
           gl.bindFramebuffer(gl.FRAMEBUFFER, _hrwFbo);
           gl.viewport(0,0,_hrwVW,_hrwVH);
-          gl.enable(gl.DEPTH_TEST);                  // occlude against the blitted terrain depth
-          gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);   // color only -- KEEP the blitted depth
-          gl.uniform2f(U('uResolution'), _hrwVW, _hrwVH);   // refraction screenUV = fragCoord/halfRes -> samples full-res uSceneTex correctly
+          gl.disable(gl.DEPTH_TEST); gl.depthMask(false);
+          gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
+          gl.uniform2f(U('uResolution'), _hrwVW, _hrwVH);   // refraction screenUV = fragCoord/halfRes -> samples full-res uSceneTex
         }
         if (_uw) {
           gl.disable(gl.BLEND);
