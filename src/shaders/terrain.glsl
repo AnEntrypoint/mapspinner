@@ -1165,7 +1165,12 @@ void main() {
         // the dry albedo. Darken the refracted seabed hard (0.4) so the shallows read as wet dark sand
         // seen through clear water (transparent), not a pale light film. Deeper water still builds the
         // teal scatter veil on top. This is what makes shallow water read transparent yet unmistakably wet.
-        vec3  waterBody  = refrCol * 0.40 * absorb + deepColor * (1.0 - absorb);
+        // EDGE TRANSPARENCY (user 2026-06-24 'can the waters edge where its shallowest be more
+        // transparent'): at the very waterline (depth->0) ramp the seabed dim UP toward ~0.9 (nearly
+        // un-attenuated = the wet sand shows through almost clear), settling to the 0.40 wet-dark by
+        // ~2.5m depth. So the thin shallowest band reads see-through, deepening to wet-dark then teal.
+        float edgeDim    = mix(0.9, 0.40, smoothstep(0.0, 2.5, depthW));
+        vec3  waterBody  = refrCol * edgeDim * absorb + deepColor * (1.0 - absorb);
         float fogT       = 1.0 - dot(absorb, vec3(0.333)); // scalar 'how scattered' for the reflection weight below
         // REFLECTIVE SKY SHEEN = the 'scatter version' the user means (a reflective SURFACE look, not the
         // underwater colour). It is GATED OFF in shallow water (must stay transparent/refractive there --
