@@ -175,7 +175,7 @@ function pickFace(camWorld) {
 }
 
 export async function initMapspinnerPlanet(gl, opts = {}) {
-  const R = opts.radius || 6360000.0;
+  const R = opts.radius || 6360.0;  // default matches _planetScale=0.001 (WEBGL2_TERRAIN_R_M)
   // maxLevel default raised 12 -> 16: at 12 the quadtree hit its cap around ~300km altitude so
   // terrain detail froze on descent. 16 lets it keep refining toward first-person (texel ~7m at
   // L16 vs ~116m at L12); fps sweep (browser-1835) showed deeper levels are cheap here. Live

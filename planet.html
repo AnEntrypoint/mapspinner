@@ -165,7 +165,7 @@ const cam={
   pos:[0, 0, 3*RADIUS],
   fwd:[0, 0, -1],        // looking toward planet center
   up:[0, 1, 0],
-  speed:10.0,
+  speed:1.0,
   sunLatBase:0.35,   // lower sun (was 0.6) -> longer shadows so even gentle rolling terrain self-shades and the default view reads 3D (see mutable default-sun-oblique-for-relief). 0.35rad ~= 20deg above horizon.
   sunLonBase:0.0,
   sunLonAccum:0.0,
@@ -403,13 +403,8 @@ function frameLoop(){
       // (TERRAIN_DEFAULTS.splitFactor; altitude ramp is opt-in) so the demo does NOT establish LOD
       // density -- it just consumes the SDK default. Move a Tweaks-panel slider to override live.
       import('./src/planet-orchestrator.js')
-        .then(m => m.initMapspinnerPlanet(glw, { radius: WEBGL2_TERRAIN_R_M,  // frustumCull is DEFAULT-ON in the SDK (orchestrator: opts.frustumCull !== false) -- the demo no longer passes it. window.__frustumCull=false disables live.
-          // reliefScale: 10x smaller than default (R/6360000=0.01) to reduce terrain elevation.
-          // At _planetScale=0.01: reliefScale=0.001 -> vH peaks ~350m on a 63.6km planet.
-          reliefScale: WEBGL2_TERRAIN_R_M / 63600000.0,
+        .then(m => m.initMapspinnerPlanet(glw, {
           // FPS lever (2026-06-14): mesh GRID is overridable via ?grid=N for live triangle-count
-          // A/B (the bottleneck is triangle/vertex throughput, not the broadShapeM ALU -- octMax
-          // 12->3 left frame time flat). Absent param falls through to gl-render's 16 default.
           gridMeshSize: ((new URLSearchParams(location.search).get('grid')|0) || undefined) }))
         .then(orch => { window.__planetOrch = orch; window.__planetOrchGL = glw; window.__planetOrchStatus='ready';
           // Load the gen-controls overlay (installs window.__gen for the Generation panel) but do NOT

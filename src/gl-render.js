@@ -48,7 +48,7 @@ const M4 = {
 };
 
 export async function initMapspinnerRender(gl, opts = {}) {
-  const R = opts.radius || 6360000.0;
+  const R = opts.radius || 6360.0;  // default matches _planetScale=0.001
   // ===== PERF BOUND (ff-planet-fragment-bound-rootcause / terrain-one-two-drawcalls, 2026-06-19) =====
   // CONFIRMED by code analysis + the in-file measured comments: the planet render is VERTEX/TILE-COUNT
   // bound, NOT fragment bound. Evidence:
@@ -547,7 +547,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // passes -> any radius renders identically (the dev demo at 6360km => exactly 1.0 = no-op), while the
     // camera/LOD/collision use the real R. Set on BOTH render + _PROBE_ here so the rendered mesh and the
     // collision probe scale together (else the camera clamps to an unscaled surface).
-    gl.uniform1f(loc('uReliefScale'),   g('reliefScale', opts.reliefScale != null ? opts.reliefScale : R / 6360000.0));   // DECOUPLED: relief height scales independently of radius (opts.reliefScale / live window.__reliefScale); default R/6360000 (pristine at Earth)
+    gl.uniform1f(loc('uReliefScale'),   g('reliefScale', opts.reliefScale != null ? opts.reliefScale : R / 63600000.0));   // default R/63600000 (10x smaller than Earth-geometry default) gives ~350m peak relief at 6360m radius
   }
 
 
@@ -1411,9 +1411,16 @@ export async function initMapspinnerRender(gl, opts = {}) {
           gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
           gl.depthMask(false);
         }
+        // TWO-SIDED WATER (user 2026-06-24 'the underside of the water should also render'): the
+        // water pass inherits the terrain CULL_FACE state, so the surface back-faces (the UNDERSIDE,
+        // seen looking up from below sea level, and any grazing back-face from above) were culled and
+        // left a hole. The water surface is a thin shell shaded both sides (the FS uUnderwater branch
+        // handles the up-from-below view), so it must be drawn two-sided. Restored after the draw.
+        gl.disable(gl.CULL_FACE);
         gl.uniform1f(U('uIsWater'), 1.0);
         gl.drawElementsInstanced(gl.TRIANGLES, indices.length, gl.UNSIGNED_INT, 0, wn);
         gl.uniform1f(U('uIsWater'), 0.0);
+        gl.enable(gl.CULL_FACE);
         gl.depthMask(true);
         gl.disable(gl.BLEND);
         if (typeof window !== 'undefined') window.__lastWaterQuads = wn;

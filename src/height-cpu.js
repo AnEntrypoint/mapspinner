@@ -34,10 +34,10 @@ export const HEIGHT_UNIFORM_DEFAULTS = {
 }
 
 export function createHeightSampler(opts = {}) {
-  const radius = opts.radius || 6360000
+  const radius = opts.radius || 6360
   // SCALE-INVARIANT relief: mirror the GLSL composeHeight wrapper's uReliefScale (R/6360000,
   // or an independent opts.reliefScale) so the CPU physics height matches the rendered surface.
-  const reliefScale = opts.reliefScale != null ? opts.reliefScale : radius / 6360000
+  const reliefScale = opts.reliefScale != null ? opts.reliefScale : radius / 63600000
   const hpfTexRes = opts.hpfTexRes || 128
   const BAKE_MAX_LEVEL = Math.round(Math.log2(hpfTexRes))   // matches planet-orchestrator bake
   const af = opts.anchorField || createAnchorField({ seed: opts.seed })
