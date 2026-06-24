@@ -795,6 +795,15 @@ export async function initMapspinnerRender(gl, opts = {}) {
   if(!gl.getProgramParameter(upProg, gl.LINK_STATUS)) throw new Error('upscale link: '+gl.getProgramInfoLog(upProg));
   const upUTex = gl.getUniformLocation(upProg, 'uTex');
   const upUScale = gl.getUniformLocation(upProg, 'uUvScale');
+  // PREMULTIPLIED-ALPHA composite for the half-res water (perf 2026-06-24): the half-res FBO clears to
+  // (0,0,0,0); at the waterline a straight-alpha LINEAR upsample mixes water-rgb toward the cleared
+  // BLACK as alpha falls 1->0, then a SRC_ALPHA blend lays partial-black over land = a black fringe
+  // (user 'black line where water meets land'). The water FS outputs alpha=1 wherever it draws, so its
+  // colour is ALREADY premultiplied (rgb*1); the LINEAR filter then mixes premultiplied water with the
+  // premultiplied-zero cleared texels = correct alpha-weighted edge (rgb and a scale together). So the
+  // composite is a PASSTHROUGH sample blended with ONE, ONE_MINUS_SRC_ALPHA -> zero-alpha edge texels
+  // add zero colour, no black bleed. (Distinct from upProg only in the blend mode used at the call site.)
+  const cmpUTex = upUTex;   // reuse upProg (passthrough sample); the fix is the premultiplied blend func
   const upVao = gl.createVertexArray();
   let _vdrsFbo = null, _vdrsColor = null, _vdrsDepth = null, _vdrsW = 0, _vdrsH = 0, _vdrsRsThisFrame = 0;
   // Scene-copy texture: snapshot of the terrain pass color buffer read by the water FS for refraction.
@@ -1521,9 +1530,13 @@ export async function initMapspinnerRender(gl, opts = {}) {
           gl.bindFramebuffer(gl.FRAMEBUFFER, _sceneFbo);
           gl.viewport(0,0, (_sceneFbo? Math.max(1,Math.round(_vW*_vrs)) : _vW), (_sceneFbo? Math.max(1,Math.round(_vH*_vrs)) : _vH));
           gl.disable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
-          gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
+          // PREMULTIPLIED blend (ONE, ONE_MINUS_SRC_ALPHA): water FS alpha=1 -> its colour is already
+          // premultiplied; the LINEAR upsample mixes it with the premultiplied-zero cleared texels, so a
+          // half-covered waterline texel is (water*0.5, 0.5) and adds exactly 0.5*water over land = no
+          // black fringe (the SRC_ALPHA blend laid 0.5*black there = the black line user reported).
+          gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
           gl.useProgram(upProg);
-          gl.activeTexture(gl.TEXTURE9); gl.bindTexture(gl.TEXTURE_2D, _hrwColor); gl.uniform1i(upUTex, 9);
+          gl.activeTexture(gl.TEXTURE9); gl.bindTexture(gl.TEXTURE_2D, _hrwColor); gl.uniform1i(cmpUTex, 9);
           gl.uniform2f(upUScale, 1.0, 1.0);
           gl.drawArrays(gl.TRIANGLES, 0, 3);
           gl.disable(gl.BLEND); gl.depthMask(true); gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE);

@@ -1165,12 +1165,15 @@ void main() {
         // the dry albedo. Darken the refracted seabed hard (0.4) so the shallows read as wet dark sand
         // seen through clear water (transparent), not a pale light film. Deeper water still builds the
         // teal scatter veil on top. This is what makes shallow water read transparent yet unmistakably wet.
-        // EDGE TRANSPARENCY (user 2026-06-24 'can the waters edge where its shallowest be more
-        // transparent'): at the very waterline (depth->0) ramp the seabed dim UP toward ~0.9 (nearly
-        // un-attenuated = the wet sand shows through almost clear), settling to the 0.40 wet-dark by
-        // ~2.5m depth. So the thin shallowest band reads see-through, deepening to wet-dark then teal.
-        float edgeDim    = mix(0.9, 0.40, smoothstep(0.0, 2.5, depthW));
-        vec3  waterBody  = refrCol * edgeDim * absorb + deepColor * (1.0 - absorb);
+        // EDGE TRANSPARENCY = SEE THE WET-DARK SEABED, NOT a bright film (user 2026-06-24, corrected):
+        // the earlier edgeDim ramp BRIGHTENED the seabed toward 0.9 at the waterline -> waterBody came
+        // out BRIGHTER than the raw seabed (158 vs 141 witnessed) -> the tonemap washed it pale white =
+        // 'washed out and white instead of transparent'. Transparency at the shallow edge is NOT a
+        // brighter seabed -- it is the WET-DARK seabed (0.40) shown through CLEAR water (absorb->1 at
+        // depth 0 means zero teal veil, so the bare dark seabed reads through = see-through). Keep the
+        // seabed dim a constant wet-dark; the shallow band already reads transparent because the
+        // deepColor scatter builds only with depth.
+        vec3  waterBody  = refrCol * 0.40 * absorb + deepColor * (1.0 - absorb);
         float fogT       = 1.0 - dot(absorb, vec3(0.333)); // scalar 'how scattered' for the reflection weight below
         // REFLECTIVE SKY SHEEN = the 'scatter version' the user means (a reflective SURFACE look, not the
         // underwater colour). It is GATED OFF in shallow water (must stay transparent/refractive there --
