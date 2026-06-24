@@ -850,7 +850,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
   function ensureVdrsTargets(W, H){
     if (_vdrsFbo && _vdrsW === W && _vdrsH === H) return;   // realloc ONLY on a real canvas-size change
     if (_vdrsColor) gl.deleteTexture(_vdrsColor);
-    if (_vdrsDepth) gl.deleteRenderbuffer(_vdrsDepth);
+    if (_vdrsDepth) gl.deleteTexture(_vdrsDepth);
     if (_vdrsFbo)   gl.deleteFramebuffer(_vdrsFbo);
     _vdrsColor = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, _vdrsColor);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
@@ -858,11 +858,20 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    _vdrsDepth = gl.createRenderbuffer(); gl.bindRenderbuffer(gl.RENDERBUFFER, _vdrsDepth);
-    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, W, H);
+    // DEPTH as a sampleable TEXTURE: the half-res water FS samples this full-res scene depth for
+    // per-pixel occlusion (the cross-size depth blit was broken on NVIDIA/ANGLE). NEAREST (depth must
+    // not be filtered). Must be unbound from its sampler unit before _vdrsFbo is rebound as a draw
+    // target (the composite) or NVIDIA flags a feedback loop -> black.
+    _vdrsDepth = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, _vdrsDepth);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, W, H, 0, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindTexture(gl.TEXTURE_2D, null);
     _vdrsFbo = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, _vdrsFbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, _vdrsColor, 0);
-    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, _vdrsDepth);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, _vdrsDepth, 0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     _vdrsW = W; _vdrsH = H;
   }
@@ -1405,6 +1414,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
       gl.uniform1f(U('uThc'), _thc ? 1.0 : 0.0);
       if (_thc) { gl.activeTexture(gl.TEXTURE8); gl.bindTexture(gl.TEXTURE_2D_ARRAY, heightPool); gl.uniform1i(U('uHeightPool'), 8); gl.uniform1f(U('uPoolRes'), THC_BAKE_RES); gl.uniform1f(U('uPoolLinear'), _halfFloatLinearOK ? 1.0 : 0.0); }
       gl.uniform1f(U('uIsWater'), 0.0);
+      gl.uniform1f(U('uOccludeDepth'), 0.0);   // terrain pass: no FS depth occlusion
       // UNDERWATER DETECTION: camera below sea level enables underwater shading + water surface
       // rendering from below. Set before the terrain draw so the FS can apply underwater fog.
       const _uw = camDist < R - 2.0;
@@ -1488,6 +1498,12 @@ export async function initMapspinnerRender(gl, opts = {}) {
           gl.viewport(0,0,_hrwVW,_hrwVH);
           gl.disable(gl.DEPTH_TEST); gl.depthMask(false);
           gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
+          // Occlude the half-res water against the full-res scene DEPTH TEXTURE in the FS (portable; the
+          // cross-size depth blit was NVIDIA-broken). Bind on a FREE unit (4 -- terrain uses 0/3/5/6/7/8/9)
+          // and UNBIND it before the composite (the composite rebinds _vdrsFbo as the target, and sampling
+          // its depth attachment while attached = feedback loop = black on NVIDIA).
+          gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, _vdrsDepth); gl.uniform1i(U('uSceneDepth'), 4);
+          gl.uniform1f(U('uOccludeDepth'), 1.0);
           gl.uniform2f(U('uResolution'), _hrwVW, _hrwVH);   // refraction screenUV = fragCoord/halfRes -> samples full-res uSceneTex
         }
         if (_uw) {
@@ -1521,6 +1537,8 @@ export async function initMapspinnerRender(gl, opts = {}) {
         // upsample). The water's coverage alpha (1 where water, 0 on the cleared/discarded pixels) gates
         // the blend so land is untouched. Restore the main program after.
         if (_hrw) {
+          gl.uniform1f(U('uOccludeDepth'), 0.0);   // done with FS occlusion this frame
+          gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, null);   // UNBIND _vdrsDepth before its FBO is rebound = no feedback loop
           gl.bindFramebuffer(gl.FRAMEBUFFER, _sceneFbo);
           gl.viewport(0,0, (_sceneFbo? Math.max(1,Math.round(_vW*_vrs)) : _vW), (_sceneFbo? Math.max(1,Math.round(_vH*_vrs)) : _vH));
           gl.disable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);

@@ -515,6 +515,8 @@ uniform float uFsCheap;    // GPU-TIMER VS/FS attribution: 1 = short-circuit the
 uniform float uWaterDbg;   // WATER-FS DEBUG READOUT (live via window.__waterDbg): 1=refrCol 2=refl
                            // 3=fogT(grey) 4=waterBody 5=spec*NoL*0.5 -- isolates which term is white.
                            // Set by window.__gpuTimer's measure frame (gl-render). 0 in normal render.
+uniform highp sampler2D uSceneDepth;  // full-res scene DEPTH texture; the half-res water FS samples it
+uniform float uOccludeDepth;          // for per-pixel terrain occlusion. 1 = occlude (half-res water pass).
 in vec4 vClimate;     // (seaBias, elevAmp, temp, humid) interpolated -- FS does NOT sample the HPF texture
 layout(location=0) out vec4 fragColor;
 
@@ -955,6 +957,14 @@ void main() {
     // none of the terrain material/atmosphere work below runs for water fragments.
     if (uIsWater > 0.5) {
         if (vH > 1.0) discard;                       // surface under land: depth test culls it anyway; discard kills shoreline shimmer
+        // FS DEPTH OCCLUSION (NVIDIA-portable): the half-res water has NO hardware depth test (the cross-
+        // size depth blit was broken on NVIDIA/ANGLE). Sample the full-res scene depth at this fragment's
+        // screen position and DISCARD where terrain is in front. gl_FragCoord.z and the sampled scene
+        // depth share the same projection -> compare directly. Bias avoids waterline z-fighting.
+        if (uOccludeDepth > 0.5) {
+            float sceneZ = texture(uSceneDepth, gl_FragCoord.xy / uResolution).r;
+            if (gl_FragCoord.z > sceneZ + 0.00003) discard;   // terrain in front -> water occluded
+        }
         // UNDERWATER WATER SURFACE (camera below sea level): render the surface from below as
         // opaque deep blue with Gerstner wave animation. No sky reflection, no Fresnel (TIR from
         // below = mostly opaque deep water), no Beer-Lambert (there is no seabed above the camera).
