@@ -497,26 +497,25 @@ vec2 oceanWaveSlope(highp vec2 p, highp float t) {   // W7: p = camera-relative 
     vec2 slope = vec2(0.0);
     const int N = 5;
     vec2 dirs[5];   float wl[5];  float spd[5];  float amp[5];
-    dirs[0]=vec2( 1.0, 0.0);  wl[0]=520.0; spd[0]=1.10; amp[0]=1.0;
-    dirs[1]=vec2( 0.6, 0.8);  wl[1]=310.0; spd[1]=1.35; amp[1]=0.7;
-    dirs[2]=vec2(-0.4, 0.9);  wl[2]=170.0; spd[2]=1.60; amp[2]=0.5;
-    dirs[3]=vec2( 0.9,-0.3);  wl[3]= 95.0; spd[3]=2.10; amp[3]=0.35;
-    dirs[4]=vec2(-0.7,-0.6);  wl[4]= 47.0; spd[4]=2.80; amp[4]=0.22;
+    dirs[0]=vec2( 1.0, 0.0);  wl[0]=2.6; spd[0]=1.10; amp[0]=1.0;
+    dirs[1]=vec2( 0.6, 0.8);  wl[1]=1.6; spd[1]=1.35; amp[1]=0.7;
+    dirs[2]=vec2(-0.4, 0.9);  wl[2]=0.9; spd[2]=1.60; amp[2]=0.5;
+    dirs[3]=vec2( 0.9,-0.3);  wl[3]=0.5; spd[3]=2.10; amp[3]=0.35;
+    dirs[4]=vec2(-0.7,-0.6);  wl[4]=0.25; spd[4]=2.80; amp[4]=0.22;
     for (int i=0;i<N;i++){
         vec2 d = normalize(dirs[i]);
         highp float k = 6.2831853 / wl[i];
         highp float phase = k*dot(d,p) + t*spd[i]*k*8.0;
         float a = amp[i] * oceanAmp * (1.0 + oceanChoppy);
-        slope += d * (cos(phase) * a * 0.28);   // raised from 0.06 -- was too subtle to see
+        slope += d * (cos(phase) * a * 0.28);
     }
-    // Seascape-style choppy noise cap: abs(sin) warp on fine octaves for visible choppiness.
-    // Keeps freq in world metres (p is camera-relative metres); use snoise3 with a 0-elevation probe.
+    // Seascape-style choppy noise: abs(sin) on fine octaves. ~18m and ~11m tiles.
     float chopScale = oceanAmp * oceanChoppy * 0.55;
-    vec2 q = p * 0.0028 + vec2(t * 0.18, t * 0.11);     // ~360m feature tiles
-    vec2 wv = 1.0 - abs(sin(q));                          // Seascape abs(sin) chop pattern
+    vec2 q = p * 0.55 + vec2(t * 0.18, t * 0.11);     // ~1.8m feature tiles
+    vec2 wv = 1.0 - abs(sin(q));
     wv = mix(wv, abs(cos(q)), wv);
     slope += (wv - 0.5) * chopScale;
-    vec2 q2 = p * 0.0052 + vec2(-t * 0.14, t * 0.21);   // ~190m tiles -- higher freq detail
+    vec2 q2 = p * 0.90 + vec2(-t * 0.14, t * 0.21);   // ~1.1m tiles
     vec2 wv2 = 1.0 - abs(sin(q2));
     wv2 = mix(wv2, abs(cos(q2)), wv2);
     slope += (wv2 - 0.5) * chopScale * 0.5;
@@ -896,7 +895,7 @@ void main() {
             highp vec2 wpW = vec2(dot(vWorld - wOriginW, ux), dot(vWorld - wOriginW, uy));
             vec2 slopeW = oceanWaveSlope(wpW, oceanTime);
             highp float wDistW = length(camWorld - vWorld);
-            slopeW *= clamp(1.0 - wDistW / (80000.0 * uReliefScale), 0.0, 1.0);  // wave normal fade to 80m
+            slopeW *= clamp(1.0 - wDistW / 500.0, 0.0, 1.0);   // wave normal fade to ~500m (world metres, scale-invariant)
             vec3 wn = normalize(uz - ux * slopeW.x - uy * slopeW.y);
             vec3 viewW = normalize(camWorld - vWorld);
             float ndl = max(dot(wn, sunDir), 0.0);
@@ -925,7 +924,7 @@ void main() {
         highp vec2 wpW = vec2(dot(vWorld - wOriginW, ux), dot(vWorld - wOriginW, uy));
         vec2 slopeW = oceanWaveSlope(wpW, oceanTime);
         highp float wDistW = length(camWorld - vWorld);
-        slopeW *= clamp(1.0 - wDistW / (80000.0 * uReliefScale), 0.0, 1.0);         // wave normal fade: 4000->80000 so waves visible up to 80m at default scale
+        slopeW *= clamp(1.0 - wDistW / 500.0, 0.0, 1.0);          // wave normal fade to ~500m (world metres, scale-invariant)
         vec3 wn = normalize(uz - ux * slopeW.x - uy * slopeW.y);
         vec3 viewW = normalize(camWorld - vWorld);
         float fres = 0.02 + 0.98 * pow(clamp(1.0 - max(dot(wn, viewW), 0.0), 0.0, 1.0), 5.0);
