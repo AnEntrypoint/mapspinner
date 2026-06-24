@@ -1460,7 +1460,12 @@ export async function initMapspinnerRender(gl, opts = {}) {
         // HALF-RES WATER: redirect the water draw into a half-res FBO (gated, default on above water --
         // the underwater up-view is a thin ceiling, render it full-res to keep Snell's-window crisp).
         const _sceneFbo = (_vdrsRsThisFrame > 0) ? _vdrsFbo : null;   // scene target this frame (vdrs FBO when half-res water forced it on)
-        const _hrw = (typeof window==='undefined' || window.__halfResWater!==false) && !_uw;
+        // _hrw REQUIRES the scene to be in the vdrs FBO (_sceneFbo set): the half-res depth blit reads
+        // _sceneFbo's depth, which fails from the default framebuffer. On any frame where the scene went
+        // straight to canvas (e.g. a THC-bake frame where _vrs=0), fall back to FULL-RES water -- doing
+        // half-res there left the water un-occluded for that frame = the intermittent terrain-over-water
+        // FLASH (user 2026-06-24). Tying _hrw to _sceneFbo keeps the two in lockstep, no per-frame race.
+        const _hrw = (typeof window==='undefined' || window.__halfResWater!==false) && !_uw && _sceneFbo === _vdrsFbo;
         let _hrwVW=0, _hrwVH=0;
         if (_hrw) {
           _hrwVW = Math.max(1, _vW>>1); _hrwVH = Math.max(1, _vH>>1);
