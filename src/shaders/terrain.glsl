@@ -487,64 +487,38 @@ uniform float oceanFoam;   // foam amount (0..1): whitecaps on steep wave slopes
 uniform sampler2D uSceneTex;   // snapshot of terrain pass color buffer for refraction
 uniform vec2 uResolution;      // viewport size in pixels (for uSceneTex UV)
 
-// ---- Seascape-style ocean wave normal (TDM 2014, adapted to world-metres tangent plane).
-// hash + value noise for UV displacement, abs(sin)/cos choppy octaves iterated with a
-// rotation matrix -- this is what makes Seascape look organic vs plain sine waves.
-float _wHash(vec2 p) {
-    float h = dot(p, vec2(127.1, 311.7));
-    return fract(sin(h) * 43758.5453123);
-}
-float _wNoise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    return -1.0 + 2.0 * mix(
-        mix(_wHash(i + vec2(0.0, 0.0)), _wHash(i + vec2(1.0, 0.0)), u.x),
-        mix(_wHash(i + vec2(0.0, 1.0)), _wHash(i + vec2(1.0, 1.0)), u.x), u.y);
-}
-// Returns slope (dx,dy) of one choppy sea octave at uv with given choppy sharpness.
-vec2 _seaOctaveSlope(vec2 uv, float choppy) {
-    uv += _wNoise(uv);                  // organic displacement -- the Seascape secret
-    vec2 wv = 1.0 - abs(sin(uv));
-    vec2 swv = abs(cos(uv));
-    wv = mix(wv, swv, wv);
-    // derivative of pow(1 - pow(wv.x*wv.y, 0.65), choppy) w.r.t. uv:
-    float h0 = 1.0 - pow(wv.x * wv.y, 0.65);
-    float dh = choppy * pow(h0, choppy - 1.0) * 0.65 * pow(wv.x * wv.y, -0.35);
-    // approximate gradient: sign of derivative from sin/cos mix
-    vec2 dwv = vec2(
-        (cos(uv.x) - sign(sin(uv.x)) * wv.x) * wv.y,
-        wv.x * (cos(uv.y) - sign(sin(uv.y)) * wv.y)
-    );
-    return dwv * dh;
-}
-// Rotation matrix matching Seascape octave_m = mat2(1.6,1.2,-1.2,1.6)
-const mat2 _octM = mat2(1.6, 1.2, -1.2, 1.6);
-
-// Returns a tangent-space normal perturbation (dx,dy) to add to the flat (0,0,1) normal.
+// ---- Gerstner wave sum: physically-based directional waves giving rolling swell crests.
+// Returns tangent-plane slope (dx, dy) -- the gradient of the surface displacement field.
 // p = camera-relative world-metres in the surface tangent plane, t = animation time.
 vec2 oceanWaveSlope(highp vec2 p, highp float t) {
-    // SEA_FREQ=0.16 in Seascape -- scale to our world-metres so ~6m dominant wavelength.
-    // WEBGL2_TERRAIN_R_M ~6360m -> tune freq so 2pi/freq ~ 6m: freq = 1.047.
-    // SEA_SPEED=0.8 in Seascape. SEA_HEIGHT=0.6 -> amplitude of slope contribution.
-    float freq   = 1.047;
-    float amp    = 0.60 * oceanAmp;
-    float choppy = max(oceanChoppy * 4.0, 0.5);   // SEA_CHOPPY=4 in Seascape
-    float sea_t  = t * 0.8;   // SEA_SPEED
-
     vec2 slope = vec2(0.0);
-    // 5 iterated octaves (ITER_FRAGMENT=5 in Seascape detail pass)
-    for (int i = 0; i < 5; i++) {
-        highp vec2 uv = p * freq;
-        // Two passes per octave (forward + backward travel direction) like Seascape:
-        slope += _seaOctaveSlope(uv + sea_t * freq, choppy) * amp;
-        slope += _seaOctaveSlope(uv - sea_t * freq, choppy) * amp;
-        p   = _octM * p;
-        freq   *= 1.9;
-        amp    *= 0.22;
-        choppy  = mix(choppy, 1.0, 0.2);
+    // 8 Gerstner waves: (direction, wavelength_m, speed_factor, steepness)
+    // Dominant swell ~20m, cross-swell, shorter chop. Steepness Q ~ amp*k controls crest peaking.
+    const int NW = 8;
+    vec2  gDir[8];
+    float gWL[8];   // wavelength metres
+    float gSpd[8];  // phase speed multiplier
+    float gQ[8];    // steepness (Gerstner Q parameter, 0=sine 1=sharp crest)
+
+    gDir[0]=vec2( 1.0,  0.0);  gWL[0]=20.0; gSpd[0]=1.0;  gQ[0]=0.9;
+    gDir[1]=vec2( 0.7,  0.7);  gWL[1]=15.0; gSpd[1]=0.9;  gQ[1]=0.7;
+    gDir[2]=vec2(-0.4,  0.9);  gWL[2]= 9.0; gSpd[2]=1.2;  gQ[2]=0.6;
+    gDir[3]=vec2( 0.9, -0.3);  gWL[3]= 6.0; gSpd[3]=1.4;  gQ[3]=0.5;
+    gDir[4]=vec2(-0.8, -0.5);  gWL[4]= 4.0; gSpd[4]=1.7;  gQ[4]=0.4;
+    gDir[5]=vec2( 0.3,  1.0);  gWL[5]= 2.5; gSpd[5]=2.0;  gQ[5]=0.35;
+    gDir[6]=vec2(-0.6,  0.4);  gWL[6]= 1.5; gSpd[6]=2.5;  gQ[6]=0.25;
+    gDir[7]=vec2( 0.5, -0.8);  gWL[7]= 0.8; gSpd[7]=3.2;  gQ[7]=0.18;
+
+    for (int i = 0; i < NW; i++) {
+        vec2 d = normalize(gDir[i]);
+        highp float k = 6.2831853 / gWL[i];          // wavenumber
+        highp float c = gSpd[i] * sqrt(9.81 / k);    // deep-water dispersion
+        highp float phase = k * dot(d, p) - c * t;
+        float steepAmp = gQ[i] * oceanAmp * (1.0 + 0.5 * oceanChoppy);
+        // Gerstner slope contribution: d(height)/d(tangent) = steepAmp * k * cos(phase)
+        slope += d * (steepAmp * k * cos(phase));
     }
-    return slope * 0.45;  // overall scale: keeps normals well-perturbed without going vertical
+    return slope;
 }
 
 // Procedural height+slope material ramp (placeholder until the OrthoProducer lands):
@@ -964,7 +938,7 @@ void main() {
         // wcol = sky reflection + sun specular + subsurface scatter tint.
 
         // REFRACTION: wave-normal UV shift on the scene-copy so the seabed shimmers.
-        float refractStrength = 0.14 * smoothstep(0.0, 2.0, depthM);
+        float refractStrength = 0.018 * smoothstep(0.0, 4.0, depthM);  // gentle shimmer, not scramble
         vec2 refractUV = gl_FragCoord.xy / uResolution;
         refractUV += slopeW * refractStrength;
         refractUV = clamp(refractUV, vec2(0.002), vec2(0.998));
