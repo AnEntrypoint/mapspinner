@@ -22,7 +22,8 @@
     "lab:heightmap": "node scripts/lab.mjs heightmap",
     "lab:build": "node scripts/lab.mjs build",
     "lab:parity": "node scripts/lab.mjs parity",
-    "ab": "node scripts/ab-elevation.mjs"
+    "ab": "node scripts/ab-elevation.mjs",
+    "perf-gate": "node scripts/perf-gate.mjs"
   },
   "repository": {
     "type": "git",

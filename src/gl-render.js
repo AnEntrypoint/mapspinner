@@ -112,16 +112,22 @@ export async function initMapspinnerRender(gl, opts = {}) {
   // poll COMPLETION_STATUS_KHR (true once the driver is done); without it we fall back to one
   // yield then the (blocking) status read. Throws on compile/link failure, same as before.
   async function awaitProgramLink(p, vs, fs, label){
+    // yield_ defers to rAF when the tab is visible, setTimeout(8) when hidden (background tabs
+    // throttle rAF to ~1/min -- the recurring stuck-at-init mechanism, 2026-06-12).
+    const yield_ = () => new Promise(res => (typeof requestAnimationFrame !== 'undefined'
+      && typeof document !== 'undefined' && !document.hidden
+      ? requestAnimationFrame(() => res()) : setTimeout(res, 8)));
     if (_parExt) {
-      // poll until the driver reports completion, yielding each tick. NOT rAF when the tab is hidden
-      // (2026-06-12: background tabs throttle rAF to ~1/min, so a backgrounded compile sat at 'init'
-      // for 10+ minutes -- the recurring stuck-at-init mechanism); setTimeout keeps polling at ~8ms.
-      const yield_ = () => new Promise(res => (typeof requestAnimationFrame !== 'undefined'
-        && typeof document !== 'undefined' && !document.hidden
-        ? requestAnimationFrame(() => res()) : setTimeout(res, 8)));
+      // poll until the driver reports completion without blocking the main thread.
       while (!gl.getProgramParameter(p, COMPLETION_STATUS_KHR)) { await yield_(); }
+    } else {
+      // No KHR_parallel_shader_compile: getProgramParameter(LINK_STATUS) blocks until the driver
+      // finishes (can be 30+ s on D3D11/FXC). Yield once so at minimum the event loop gets one
+      // tick (loading-state paint, input) before the stall, matching the comment's intent.
+      await yield_();
     }
-    // now the status reads return immediately (compile/link already finished)
+    // now the status reads return immediately (compile/link already finished, or the blocking
+    // stall above has resolved)
     if (vs && !gl.getShaderParameter(vs, gl.COMPILE_STATUS)) throw new Error(label+' vs: '+gl.getShaderInfoLog(vs));
     if (fs && !gl.getShaderParameter(fs, gl.COMPILE_STATUS)) throw new Error(label+' fs: '+gl.getShaderInfoLog(fs));
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(label+' link: '+gl.getProgramInfoLog(p));
@@ -791,6 +797,21 @@ export async function initMapspinnerRender(gl, opts = {}) {
   const upUScale = gl.getUniformLocation(upProg, 'uUvScale');
   const upVao = gl.createVertexArray();
   let _vdrsFbo = null, _vdrsColor = null, _vdrsDepth = null, _vdrsW = 0, _vdrsH = 0, _vdrsRsThisFrame = 0;
+  // Scene-copy texture: snapshot of the terrain pass color buffer read by the water FS for refraction.
+  // Allocated once (canvas size), updated each frame via copyTexSubImage2D (GPU blit, zero allocation).
+  let _sceneCopyTex = null, _sceneCopyW = 0, _sceneCopyH = 0;
+  function ensureSceneCopy(W, H) {
+    if (_sceneCopyTex && _sceneCopyW === W && _sceneCopyH === H) return;
+    if (_sceneCopyTex) gl.deleteTexture(_sceneCopyTex);
+    _sceneCopyTex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, _sceneCopyTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    _sceneCopyW = W; _sceneCopyH = H;
+  }
   function ensureVdrsTargets(W, H){
     if (_vdrsFbo && _vdrsW === W && _vdrsH === H) return;   // realloc ONLY on a real canvas-size change
     if (_vdrsColor) gl.deleteTexture(_vdrsColor);
@@ -1326,6 +1347,16 @@ export async function initMapspinnerRender(gl, opts = {}) {
       const _uw = camDist < R - 2.0;
       gl.uniform1f(U('uUnderwater'), _uw ? 1.0 : 0.0);
       gl.drawElementsInstanced(gl.TRIANGLES, indices.length, gl.UNSIGNED_INT, 0, n);
+      // SCENE-COPY for water refraction: snapshot the rendered terrain into _sceneCopyTex so the
+      // water FS can sample it with a wave-normal UV offset. copyTexSubImage2D is a GPU-side blit
+      // (no CPU readback, no allocation). Only done when a water draw will follow.
+      if (typeof window === 'undefined' || window.__waterSurface !== false) {
+        ensureSceneCopy(_vW, _vH);
+        gl.activeTexture(gl.TEXTURE9); gl.bindTexture(gl.TEXTURE_2D, _sceneCopyTex);
+        gl.copyTexSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 0, 0, _vW, _vH);
+        gl.uniform1i(U('uSceneTex'), 9);
+        gl.uniform2f(U('uResolution'), _vW, _vH);
+      }
       // SEPARATE WATER SURFACE (user 2026-06-11): second instanced draw with uIsWater=1 -- the VS
       // pins the mesh to sea level, the FS shades animated water and alpha-blends it over the
       // just-rendered seabed. Depth test keeps it behind land; depthMask off so the transparent

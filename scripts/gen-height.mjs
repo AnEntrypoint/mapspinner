@@ -26,7 +26,7 @@ const SRC = readFileSync(join(ROOT, 'src/shaders/terrain.glsl'), 'utf8')
 const HEIGHT_FNS = [
   'h3', 'snoise3',
   'value_fbm', 'value_fbm_scaled',
-  'value_ridged_fbm_rot', 'value_ridged_fbm_rot_scaled',
+  'rotate_domain', 'value_ridged_fbm_rot', 'value_ridged_fbm_rot_scaled',
   'eval_layer', 'sample_fractal_terrain',
   'prolandTerrainH', 'vhash', 'vnoise2', 'faceWarp',
   'composeHeight', 'continentalBias',
@@ -56,9 +56,9 @@ function tokenize(s) {
   const t = []
   let i = 0
   const re = {
-    ws: /\s+/y, num: /\d+\.\d+([eE][+-]?\d+)?|\.\d+([eE][+-]?\d+)?|\d+\.?([eE][+-]?\d+)?|0[xX][0-9a-fA-F]+/y,
+    ws: /\s+/y, num: /\d+\.\d+([eE][+-]?\d+)?|\.\d+([eE][+-]?\d+)?|\d+\.?([eE][+-]?\d+)?[uU]?|0[xX][0-9a-fA-F]+[uU]?/y,
     id: /[A-Za-z_]\w*/y,
-    op: /\+=|-=|\*=|\/=|%=|<<|>>|<=|>=|==|!=|&&|\|\||\+\+|--|[-+*/%<>=!&|^~?:.,;(){}\[\]]/y,
+    op: /\^=|\+=|-=|\*=|\/=|%=|<<|>>|<=|>=|==|!=|&&|\|\||\+\+|--|[-+*/%<>=!&|^~?:.,;(){}\[\]]/y,
   }
   while (i < s.length) {
     re.ws.lastIndex = i; let m = re.ws.exec(s); if (m && m.index === i) { i = re.ws.lastIndex; continue }
@@ -110,7 +110,7 @@ function sliceTopLevel(tokens) {
     }
     // const decl:  const TYPE name = ... ;
     if (at('kw', 'const')) {
-      const save = i; eat(); skipQual(); if (peek().k === 'type') { const type = eat().v; const name = eat().v; if (at('op', '=')) { eat(); const start = i; skipToSemi(); out.consts.push({ type, name, tokens: tokens.slice(start, i - 1) }); continue } }
+      const save = i; eat(); skipQual(); if (peek().k === 'type' || (peek().k === 'id' && STRUCTS[peek().v])) { const type = eat().v; const name = eat().v; if (at('op', '=')) { eat(); const start = i; skipToSemi(); out.consts.push({ type, name, tokens: tokens.slice(start, i - 1) }); continue } }
       i = save; skipToSemi(); continue
     }
     skipQual()
@@ -148,7 +148,7 @@ function sliceTopLevel(tokens) {
 
 // ---------- 4. expression + statement codegen (per function) ----------
 const BUILTIN = new Set(['floor', 'ceil', 'abs', 'fract', 'sign', 'sqrt', 'sin', 'cos', 'tan', 'exp', 'tanh', 'pow', 'min', 'max', 'mod', 'clamp', 'mix', 'smoothstep', 'step', 'dot', 'length', 'distance', 'normalize', 'cross', 'float', 'int'])
-const VEC_BUILTIN = new Set(['vec2', 'vec3', 'vec4', 'mat3'])
+const VEC_BUILTIN = new Set(['vec2', 'vec3', 'vec4', 'mat3', 'ivec2', 'ivec3', 'uvec2', 'uvec3'])
 const COMP_RANK = { float: 1, int: 1, uint: 1, bool: 1, vec2: 2, vec3: 3, vec4: 4 }
 const isVecT = (t) => t === 'vec2' || t === 'vec3' || t === 'vec4'
 
@@ -220,8 +220,8 @@ function genFunction(fn, fnReturnTypes) {
         // struct field or swizzle
         if (e.type in STRUCTS || (STRUCTS[e.type])) {
           e = { js: `${e.js}.${sel}`, type: structFieldType(e.type, sel) }
-        } else if (isVecT(e.type) && /^[xyzwrgbastpq]+$/.test(sel)) {
-          if (sel.length === 1) e = { js: `g.sw(${e.js}, '${sel}')`, type: 'float' }
+        } else if ((isVecT(e.type) || /^[ui]vec[234]$/.test(e.type)) && /^[xyzwrgbastpq]+$/.test(sel)) {
+          if (sel.length === 1) e = { js: `g.sw(${e.js}, '${sel}')`, type: /^[ui]vec/.test(e.type) ? 'uint' : 'float' }
           else e = { js: `g.sw(${e.js}, '${sel}')`, type: 'vec' + sel.length }
         } else throw new Error(`[${fn.name}] bad member .${sel} on ${e.type}`)
       } else break
@@ -236,7 +236,7 @@ function genFunction(fn, fnReturnTypes) {
   }
   function parsePrimary() {
     if (at('op', '(')) { eat(); const e = parseExpr(0); expect(')'); return e }
-    if (at('num')) { let v = eat().v; if (/^0[xX]/.test(v)) return { js: v, type: 'uint' }; if (!/[.eE]/.test(v)) v = v; return { js: v, type: /[.eE]/.test(v) ? 'float' : 'float' } }
+    if (at('num')) { let v = eat().v; const isU = /[uU]$/.test(v); if (isU) v = v.slice(0, -1); if (/^0[xX]/.test(v)) return { js: v, type: 'uint' }; return { js: v, type: isU ? 'uint' : /[.eE]/.test(v) ? 'float' : 'float' } }
     if (at('kw', 'true')) { eat(); return { js: 'true', type: 'bool' } }
     if (at('kw', 'false')) { eat(); return { js: 'false', type: 'bool' } }
     if (at('type') || at('id')) {
@@ -317,7 +317,7 @@ function genFunction(fn, fnReturnTypes) {
     } else i = save
     // expression statement / assignment
     const target = parseLValue()
-    if (at('op', '=') || at('op', '+=') || at('op', '-=') || at('op', '*=') || at('op', '/=')) {
+    if (at('op', '=') || at('op', '+=') || at('op', '-=') || at('op', '*=') || at('op', '/=') || at('op', '^=')) {
       const op = eat().v; const rhs = parseExpr(0); expect(';')
       lines.push(pad(depth) + emitAssign(target, op, rhs))
       return
@@ -385,7 +385,7 @@ function genFunction(fn, fnReturnTypes) {
     if (targetType === 'float' && e.type === 'int') return e.js   // numbers in JS
     return e.js
   }
-  function defaultInit(t) { return isVecT(t) ? `g.${t}(0)` : (t in STRUCTS ? 'null' : '0') }
+  function defaultInit(t) { return (isVecT(t) || VEC_BUILTIN.has(t)) ? `g.${t}(0)` : (t in STRUCTS ? 'null' : '0') }
 
   // generate the body
   while (i < toks.length) genStatement(1)
@@ -414,8 +414,13 @@ const CONST_TYPES = {}; for (const c of TOP.consts) CONST_TYPES[c.name] = c.type
 // build return-type map
 const fnReturnTypes = {}; for (const f of ALL_FNS) fnReturnTypes[f.name] = f.ret
 
-// emit consts (OCT_ROT etc.) referenced by the height fns
-const wantConsts = TOP.consts.filter(c => HEIGHT_FNS.some(n => ALL_FNS.find(f => f.name === n && f.bodyTokens.some(t => t.v === c.name))))
+// emit consts (OCT_ROT etc.) referenced by the height fns (+ transitive deps from const initializers)
+const _wantConstsBase = TOP.consts.filter(c => HEIGHT_FNS.some(n => ALL_FNS.find(f => f.name === n && f.bodyTokens.some(t => t.v === c.name))))
+const wantConstsSet = new Set(_wantConstsBase.map(c => c.name))
+// transitive: consts referenced inside the initializer tokens of already-wanted consts
+let changed = true
+while (changed) { changed = false; for (const c of TOP.consts) { if (wantConstsSet.has(c.name)) { for (const tok of c.tokens) { const dep = TOP.consts.find(d => d.name === tok.v); if (dep && !wantConstsSet.has(dep.name)) { wantConstsSet.add(dep.name); changed = true } } } } }
+const wantConsts = TOP.consts.filter(c => wantConstsSet.has(c.name))
 const constJs = wantConsts.map(c => {
   // const is a literal expression; transpile via a mini gen
   const fake = { name: '_const_' + c.name, params: [], bodyTokens: [...c.tokens, { k: 'op', v: ';' }], ret: c.type }
@@ -427,11 +432,21 @@ const constJs = wantConsts.map(c => {
 }).join('\n')
 
 function parseConstExpr(toks, type) {
-  // only need: mat3( numbers ), vecN( numbers ), or a number
+  // only need: mat3( numbers ), vecN( numbers ), struct( args ), or a number/const-ref
   let i = 0
   function val() {
     const t = toks[i]
-    if (t.k === 'type' && (t.v === 'mat3' || /^vec/.test(t.v))) { const name = toks[i++].v; if (toks[i].v !== '(') throw 0; i++; const args = []; while (toks[i].v !== ')') { if (toks[i].v === ',') { i++; continue } args.push(numTok()) } i++; return `g.${name}(${args.join(', ')})` }
+    // vec/mat constructor (built-in type)
+    if (t.k === 'type' && (t.v === 'mat3' || /^vec/.test(t.v))) { const name = toks[i++].v; if (toks[i].v !== '(') throw 0; i++; const args = []; while (toks[i].v !== ')') { if (toks[i].v === ',') { i++; continue } args.push(val()) } i++; return `g.${name}(${args.join(', ')})` }
+    // struct constructor: id '('
+    if (t.k === 'id' && STRUCTS[t.v] && toks[i + 1] && toks[i + 1].v === '(') {
+      const sname = toks[i++].v; i++ // skip '('
+      const fields = STRUCTS[sname]; const args = []; let fi = 0
+      while (toks[i].v !== ')') { if (toks[i].v === ',') { i++; continue } args.push(val()); fi++ } i++
+      return `{ ${fields.map((f, k) => `${f}: ${args[k]}`).join(', ')} }`
+    }
+    // const reference (e.g. LTYPE_FBM)
+    if (t.k === 'id' && CONST_TYPES[t.v]) { i++; return `C_${t.v}` }
     return numTok()
   }
   function numTok() { let s = ''; if (toks[i].v === '-') { s = '-'; i++ } const v = toks[i++].v; return s + v }
@@ -460,7 +475,7 @@ import * as g from './glsl-rt.js';
 const out = header + '\nexport function makeHeight(U, hpfSample) {\n' +
   constJs.split('\n').filter(Boolean).map(l => '  ' + l).join('\n') + '\n' +
   want.map(w => w.split('\n').map(l => '  ' + l).join('\n')).join('\n\n') + '\n' +
-  '\n  return { snoise3, broadShapeM, computeHCache, composeHeightC, detailFbm };\n}\n'
+  '\n  return { snoise3, composeHeight, continentalBias };\n}\n'
 
 writeFileSync(join(ROOT, 'src/height-gen.js'), out)
 console.log('[gen-height] wrote src/height-gen.js (' + want.length + ' fns, ' + out.length + ' bytes)')

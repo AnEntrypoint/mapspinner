@@ -220,9 +220,9 @@ highp float prolandTerrainH(vec3 dir0) {
     float pmix = snoise3(p * 0.53 + vec3(123.0, 456.0, 789.0)) * 0.5 + 0.5;  // 0..1
     float vPower = mix(0.95, 1.3, pmix);
 
-    // Shape: steepen peaks, flatten ocean floor
+    // Shape: steepen peaks; seabed mirrors land relief (same power = symmetric mountains/trenches)
     if (h > 0.0) h = pow(h, 0.8 * vPower);
-    else h = -pow(-h, 0.7 * vPower);
+    else h = -pow(-h, 0.8 * vPower);
 
     // Continental ratio: suppresses fine detail in low-variation regions
     float cRatio = clamp(snoise3(normalize(dir0) * 4.0) * 0.5 + 0.7, 0.3, 1.0);
@@ -251,16 +251,17 @@ uniform float uBeachShelfM;
 #if defined(_VERTEX_) || defined(_PROBE_) || defined(_HEIGHTBAKE_)
 // Single height function using the Proland algorithm.
 highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){
-    highp float h = prolandTerrainH(dir0);
-    h = h * 750000.0 + uLandBias;
+    highp float frac = prolandTerrainH(dir0); // -0.5..0.5
+    highp float h = frac * 750000.0 + uLandBias;
     if (h < 0.0) {
-        // Gentle coastal ease over 300m, then linear ocean floor
-        const highp float SEABED_EASE = 300.0;
-        highp float d0 = -h;
-        highp float d = (d0 < SEABED_EASE) ? (d0 * d0 / SEABED_EASE) * (2.0 - d0 / SEABED_EASE) : d0;
-        h = -min(d, 11000.0);
+        // Seabed: remap fractal value to gradual depth, preserving full variation.
+        // frac at sea-level boundary ~ -0.133 (= -uLandBias/750000). Deep ocean frac ~ -0.5.
+        // Use h directly (already = frac*750000 + bias, range ~0..-280000 for ocean)
+        // and scale it so shallow coast is near 0 and deep ocean reaches -350000 raw (=-350m).
+        // Avoid clamping to 0 from above — let the linear map run so near-coast slopes naturally.
+        h = max(h * 1.25, -350000.0);
     } else {
-        highp float bShelf = uBeachShelfM > 1.0 ? uBeachShelfM : 600.0;
+        highp float bShelf = uBeachShelfM > 1.0 ? uBeachShelfM : 150.0;
         if (h < bShelf) h = (h * h / bShelf) * (2.0 - h / bShelf);
         // Height curve: pow(h/MAX, curve)*MAX redistributes land heights within [0,MAX].
         // curve>1 compresses foothills and keeps peaks -> sharper mountains relative to flat land.
@@ -397,7 +398,9 @@ void main() {
     // Height from Proland algorithm
     highp float hN0 = 0.0;
     highp vec3 vN = dir0;
-    if (uIsWater < 0.5 && uThc > 0.5) {
+    // Water pass still needs seabed height for vH so FS depthM = max(-vH,0) is correct.
+    if (uIsWater > 0.5) { hN0 = composeHeight(dir0, faceLocal, defOffset.z); }
+    else if (uIsWater < 0.5 && uThc > 0.5) {
         hN0 = thcSample(vertex.xy, iLayer);
         highp float duP = 1.0 / ((uGrid > 0.0) ? uGrid : 16.0);
         highp float hPU = thcSample(vertex.xy + vec2(duP, 0.0), iLayer);
@@ -481,7 +484,8 @@ uniform highp float oceanTime;   // W7: animation time (seconds) grows unbounded
 uniform float oceanAmp;    // wave amplitude scale (0..1+), drives normal perturbation
 uniform float oceanChoppy; // wave directional sharpness / count weighting
 uniform float oceanFoam;   // foam amount (0..1): whitecaps on steep wave slopes
-                           // CONTINUOUS sampled world position (seamless across tiles), 0 = atlas normal
+uniform sampler2D uSceneTex;   // snapshot of terrain pass color buffer for refraction
+uniform vec2 uResolution;      // viewport size in pixels (for uSceneTex UV)
 
 // ---- Animated ocean: sum-of-Gerstner-wave NORMAL perturbation in the surface tangent
 // frame. We don't displace geometry (FS-only v1) -- we synthesize an animated water
@@ -598,12 +602,16 @@ vec3 terrainAlbedo(float h, float slope, float rockSlope, highp vec3 worldPos, f
     float rockWiden = smoothstep(20.0, 500.0, pxW) * 0.20;
     vec3 c;
     if (h < 0.0) {
-        // SEABED CONTINUES AS LAND MATERIAL (user 2026-06-11 'instead of turning terrain into water,
-        // it should continue under water as sand and rock'): below sea level the macro albedo is a
-        // sandy bed on gentle ground and rock on steep faces (same slope gate as land). The water
-        // look (per-channel absorption, fresnel, waves) is composited OVER this in the ocean branch,
-        // so the terrain level information stays readable through shallow water.
-        c = mix(bcShore, bcRock, smoothstep(slopeRock.x, slopeRock.y, rockSlope));
+        // SEABED: depth-keyed albedo so terrain relief reads through the water column.
+        // Shallow shelf (0 -> -200m): sandy/bright. Mid-depth (-200 -> -1500m): darker silt.
+        // Deep basin (-1500m+): near-black basalt. Steep faces key to rock at any depth.
+        float depthT = clamp(-h / 300.0, 0.0, 1.0);    // h in rendered metres; seabed ≈ 0-500m after 8x amplify, 300m = full colour transition
+        vec3 bcShelf  = bcShore;                          // sandy shelf
+        vec3 bcSilt   = vec3(0.12, 0.11, 0.09);          // dark silt / sediment
+        vec3 bcBasalt = vec3(0.06, 0.06, 0.07);          // deep basalt floor
+        vec3 bedBase  = mix(bcShelf, bcSilt,   smoothstep(0.0, 0.5, depthT));
+        bedBase       = mix(bedBase, bcBasalt, smoothstep(0.5, 1.0, depthT));
+        c = mix(bedBase, bcRock, smoothstep(slopeRock.x, slopeRock.y, rockSlope));
     } else {
         c = mix(bcShore, bcLowland, smoothstep(0.0, bandEdgesLo.x, h));
         c = mix(c, bcGrass, smoothstep(bandEdgesLo.x, bandEdgesLo.y, h));
@@ -870,7 +878,7 @@ void main() {
             highp vec2 wpW = vec2(dot(vWorld - wOriginW, ux), dot(vWorld - wOriginW, uy));
             vec2 slopeW = oceanWaveSlope(wpW, oceanTime);
             highp float wDistW = length(camWorld - vWorld);
-            slopeW *= clamp(1.0 - wDistW / (4000.0 * uReliefScale), 0.0, 1.0);   // *uReliefScale = SCALE-INVARIANT wave AA fade (wDistW is render metres -> scales with R)
+            slopeW *= clamp(1.0 - wDistW / (80000.0 * uReliefScale), 0.0, 1.0);  // wave normal fade to 80m
             vec3 wn = normalize(uz - ux * slopeW.x - uy * slopeW.y);
             vec3 viewW = normalize(camWorld - vWorld);
             float ndl = max(dot(wn, sunDir), 0.0);
@@ -905,7 +913,7 @@ void main() {
         highp vec2 wpW = vec2(dot(vWorld - wOriginW, ux), dot(vWorld - wOriginW, uy));
         vec2 slopeW = oceanWaveSlope(wpW, oceanTime);
         highp float wDistW = length(camWorld - vWorld);
-        slopeW *= clamp(1.0 - wDistW / (4000.0 * uReliefScale), 0.0, 1.0);          // sub-pixel wave fade (anti-alias); *uReliefScale = SCALE-INVARIANT (wDistW render metres scale with R)
+        slopeW *= clamp(1.0 - wDistW / (80000.0 * uReliefScale), 0.0, 1.0);         // wave normal fade: 4000->80000 so waves visible up to 80m at default scale
         vec3 wn = normalize(uz - ux * slopeW.x - uy * slopeW.y);
         vec3 viewW = normalize(camWorld - vWorld);
         float fres = 0.02 + 0.98 * pow(clamp(1.0 - max(dot(wn, viewW), 0.0), 0.0, 1.0), 5.0);
@@ -914,15 +922,76 @@ void main() {
         vec3 hlW = normalize(sunDir + viewW);
         float spec = pow(max(dot(wn, hlW), 0.0), 220.0) * specFade;
         float ndl = max(dot(wn, sunDir), 0.0);
-        vec3 T = exp(-uOceanK * depthM);                            // per-channel transmittance
-        float Tavg = (T.r + T.g + T.b) * (1.0 / 3.0);
-        vec3 waterBase = mix(uOceanDeep, uOceanShallow, Tavg);
-        vec3 skyColW = vec3(0.30, 0.42, 0.55);
-        vec3 wcol = mix(waterBase * (0.25 + 0.75 * ndl), skyColW, fres * 0.85)
-                  + vec3(1.0, 0.95, 0.85) * spec * ndl;
+        // ---- WATER SHADING: wX3BRf-style shallow / f3XXDH-style deep ----
+        // Architecture: the water SURFACE color is sky+sun (reflection), not the seabed.
+        // The seabed shows through ALPHA (Beer-Lambert transparency), not through wcol.
+        // wcol = sky reflection + sun specular + subsurface scatter tint.
+
+        // REFRACTION: wave-normal UV shift on the scene-copy so the seabed shimmers.
+        float refractStrength = 0.14 * smoothstep(0.0, 2.0, depthM);
+        vec2 refractUV = gl_FragCoord.xy / uResolution;
+        refractUV += slopeW * refractStrength;
+        refractUV = clamp(refractUV, vec2(0.002), vec2(0.998));
+        vec3 sceneCol = texture(uSceneTex, refractUV).rgb;  // seabed color from terrain pass
+
+        // REFLECTION sky -- bright fixed colors (wX3BRf style, not dimmed by uSkyFill).
+        vec3 reflDir = reflect(-viewW, wn);
+        float reflUp = max(dot(reflDir, uz), 0.0);
+        float reflSun = max(dot(reflDir, sunDir), 0.0);
+        vec3 skyH = vec3(0.50, 0.68, 0.90);   // horizon -- bright daylight blue
+        vec3 skyZ = vec3(0.08, 0.22, 0.65);   // zenith -- deep blue
+        vec3 skyColW = mix(skyH, skyZ, smoothstep(0.0, 0.5, reflUp));
+        skyColW += vec3(1.0, 0.90, 0.65) * pow(reflSun, 80.0) * 4.0;  // sun disc
+
+        // SUBSURFACE SCATTER tint (wX3BRf "scattering"): light entering from above scatters
+        // teal/cyan in the first few metres -- this is what makes shallow ocean look alive.
+        // Ramp: bright teal shallow, blue mid, dark navy deep (f3XXDH).
+        vec3 sssShallow = vec3(0.08, 0.55, 0.52);   // wX3BRf shallow -- bright teal
+        vec3 sssMid     = vec3(0.02, 0.18, 0.45);   // mid blue
+        vec3 sssDeep    = vec3(0.002, 0.010, 0.035); // f3XXDH abyss near-black
+        float dt1 = smoothstep(0.0, 20.0, depthM);
+        float dt2 = smoothstep(15.0, 80.0, depthM);
+        vec3 sssCol = mix(mix(sssShallow, sssMid, dt1), sssDeep, dt2);
+        // SSS brightness scales with sun angle and a forward-scatter term (view toward sun)
+        float sssAmt = max(dot(viewW, sunDir), 0.0) * 0.5 + 0.35;   // boosted floor so it reads in overcast
+        vec3 scatter = sssCol * sssAmt * ndl;
+
+        // CAUSTIC shimmer on the seabed in shallows: 3 sine waves, world-anchored.
+        // vWorld is in raw metres (~6.37M on Earth). We want caustic tiles ~5m wide,
+        // so freq = 2pi/5 ~ 1.257 rad/m. Multiply directly: sin(vWorld.x * 1.257) works fine in fp32.
+        float shallowT = 1.0 - smoothstep(0.0, 30.0, depthM);
+        float causFreq = 1.2566;   // 2pi/5m -- caustic tile ~5m
+        float ct = oceanTime * 0.35;
+        float c1 = sin(vWorld.x * causFreq * 1.00 + vWorld.z * causFreq * 0.67 + ct);
+        float c2 = sin(vWorld.x * causFreq * 0.44 - vWorld.z * causFreq * 1.23 + ct * 1.3 + 1.4);
+        float c3 = sin(vWorld.x * causFreq * 1.33 + vWorld.z * causFreq * 0.38 - ct * 0.8 + 2.9);
+        float caus = pow(clamp(c1 * 0.5 + c2 * 0.35 + c3 * 0.25 + 0.5, 0.0, 1.0), 3.0)
+                   * shallowT * ndl * 0.9;
+
+        // Fresnel floor: pure physical nadir Fresnel = 0.02 is too subtle to read.
+        // Floor at 0.15 so even overhead the sky tint is visible on the surface.
+        float reflBlend = max(fres, 0.15);
+
+        // SURFACE COLOR = reflection sky (Fresnel) + subsurface scatter + specular.
+        // The seabed shows through alpha, not blended into wcol.
+        vec3 wcol = skyColW * reflBlend
+                  + scatter * (1.0 - reflBlend)
+                  + vec3(1.0, 0.95, 0.85) * spec * ndl
+                  + vec3(caus * 0.12, caus * 0.18, caus * 0.05); // caustic tint on bed
         float foamAmt = clamp((length(slopeW) - 0.6) * 1.5, 0.0, 1.0) * oceanFoam;
-        wcol = mix(wcol, vec3(0.9, 0.95, 1.0), foamAmt * (0.3 + 0.7 * ndl));
-        wcol += waterBase * 0.05;                                   // ambient floor (never black)
+        wcol = mix(wcol, vec3(0.92, 0.97, 1.0), foamAmt * (0.3 + 0.7 * ndl));
+
+        // Beer-Lambert: how much of the seabed shows through.
+        // K tuned: at 8m depth T should still be high (clear water). Gone by ~60m.
+        vec3 oceanK = vec3(0.06, 0.014, 0.006);
+        vec3 T = exp(-oceanK * depthM);
+        float Tavg = (T.r + T.g + T.b) * (1.0 / 3.0);
+        // sceneCol is the refracted seabed + caustic brightening on it.
+        vec3 bedCol = sceneCol * T + vec3(caus * T.r, caus * T.g * 1.2, caus * T.b * 0.3);
+        // Composite: surface color over refracted bed. The water is transparent in shallows (T~1)
+        // and opaque in deep (T~0). At depth the surface (scatter+reflection) takes over.
+        // Blend factor: Tavg=1 shallow (shows bed), Tavg=0 deep (shows wcol).
+        wcol = mix(wcol, bedCol, Tavg * (1.0 - reflBlend));
         // distance haze: the terrain pass gets the full aerial-perspective march; give the water a
         // cheap matched fade toward the same sky-haze color so far ocean recedes like far land
         // (no 8-step march on the largest-area surface -- the perf theme of this pass).

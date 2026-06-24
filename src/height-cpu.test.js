@@ -22,8 +22,8 @@ test('heightAt is finite + deterministic over a sphere grid; Earth-like range', 
     if (h > 0) land++; n++
     if (h < minH) minH = h; if (h > maxH) maxH = h
   }
-  assert.ok(minH > -12000, `min depth above cap: ${minH}`)   // above Mariana cap
-  assert.ok(maxH < 20000, `max height under ceiling: ${maxH}`)  // under ceiling
+  assert.ok(minH > -360000, `min depth above cap: ${minH}`)   // above -350000 raw seabed floor (= -350m after reliefScale)
+  assert.ok(maxH < 500000, `max height under ceiling: ${maxH}`)  // under ceiling (proland fractal * 750000 scale)
 })
 
 test('surfacePoint(dir) = normalize(dir) * (radius + heightAt)', () => {
@@ -42,12 +42,11 @@ test('surfacePoint(dir) = normalize(dir) * (radius + heightAt)', () => {
 test('golden samples (regression lock; update only with an intended terrain.glsl change)', () => {
   // Captured from the current transpiled field. If terrain.glsl height changes,
   // re-run gen-height.mjs then update these to the new (parity-verified) values.
-  // RE-BAKED 2026-06-23: landBias=-100000 (intentional water-world). All sampled directions
-  // return ocean cap (-11000m); golden values reflect that.
+  // RE-BAKED 2026-06-24: seabed = h*1.25 capped at -350000 raw (=-350m after reliefScale).
   const golden = [
-    [[0.9, 0.1, 0.4],  -11000.0],
-    [[1, 0, 0],         -11000.0],
-    [[0.577, 0.577, 0.577], -11000.0],
+    [[0.9, 0.1, 0.4],  45022.357],
+    [[1, 0, 0],        -38974.597],
+    [[0.577, 0.577, 0.577], -132804.879],
   ]
   for (const [dir, exp] of golden) {
     const h = hs.heightAt(dir)

@@ -23,6 +23,11 @@ function _flat(args, n) {
 export const vec2 = (...a) => _flat(a, 2)
 export const vec3 = (...a) => _flat(a, 3)
 export const vec4 = (...a) => _flat(a, 4)
+// integer/uint vec aliases: truncate to int (Math.trunc) for correctness with ivec3(floor(...)) etc.
+export const ivec2 = (...a) => _flat(a, 2).map(Math.trunc)
+export const ivec3 = (...a) => _flat(a, 3).map(Math.trunc)
+export const uvec2 = (...a) => _flat(a, 2).map(v => v >>> 0)
+export const uvec3 = (...a) => _flat(a, 3).map(v => v >>> 0)
 
 // ---- componentwise binary arithmetic (vec/vec, vec/scalar, scalar/vec, scalar/scalar)
 function _bin(a, b, f) {

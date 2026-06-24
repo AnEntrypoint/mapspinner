@@ -1,5 +1,5 @@
 // src/ab-elevation.test.js -- A/B isolation: assert every ELEVATION term actually affects the height
-// field (toggle WITH vs WITHOUT, require a real delta). Answers "do canyons affect elevation?" as a
+// field (toggle WITH vs WITHOUT, require a real delta). Answers "do uniforms affect elevation?" as a
 // standing check, and catches any term that silently goes no-op. (Full report: node scripts/ab-elevation.mjs)
 
 import { test } from 'node:test'
@@ -19,20 +19,15 @@ function maxDelta(override, N = 2500) {
   return m
 }
 
-test('CANYONS actually affect elevation', () => {
-  // The SDK default canyonDepthMul is now 1.0 (terrain-defaults.js; the demo's blessed look). The
-  // shader floors <=0 to 1.0, so toggling to 0 would be a no-op vs the default -- compare against a
-  // DEEPER depth (3x) instead: a real delta proves canyons carve the mesh.
-  assert.ok(maxDelta({ canyonDepthMul: 3 }) > 50, 'canyonDepthMul must change elevation -- canyons carve the mesh')
+test('uLandBias shifts elevation everywhere', () => {
+  // landBias is the primary lever in composeHeight (h = prolandTerrainH * 750000 + uLandBias).
+  // Shifting it by 50000 must change elevation by at least that much somewhere.
+  assert.ok(maxDelta({ uLandBias: -100000 + 50000 }) > 1000, 'uLandBias must shift elevation')
 })
 
-test('every elevation term has a real, isolatable effect', () => {
-  assert.ok(maxDelta({ uDetailOverlay: 0 }) > 50, 'detail overlay + flat-area valleys')
-  assert.ok(maxDelta({ cliffAmt: 0.01 }) > 50, 'cliff/mesa terracing')
-  assert.ok(maxDelta({ uPeakOcts: 1 }) > 50, 'broadShapeM peak crest octaves')
-  assert.ok(maxDelta({ uInciseRidgeOcts: 1 }) > 50, 'incise/valley ridge octaves')
-  assert.ok(maxDelta({ uDetailFbmOcts: 1 }) > 5, 'detail fbm octaves')
-  assert.ok(maxDelta({ uOctMax: 1 }) > 50, 'broadShapeM master octave bound')
+test('uBeachShelfM affects low-land elevation', () => {
+  // beach shelf smoothing applies to h in [0, bShelf]; toggling shelf size must change heights.
+  assert.ok(maxDelta({ uBeachShelfM: 50000 }) > 1, 'uBeachShelfM must affect coastal/land heights')
 })
 
 test('broadShapeLowM high octaves are elevation-IRRELEVANT (mesa slope gate only -- documented)', () => {

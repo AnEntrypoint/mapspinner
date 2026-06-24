@@ -97,8 +97,7 @@ export function createHeightSampler(opts = {}) {
   // faceLocal/tileM are inert (vtxDisplace returns 0), passed as dummies.
   function heightAt(dir) {
     const d = g.normalize(dir)
-    const C = H.computeHCache(d)
-    return H.composeHeightC(d, [0, 0], 100, C, false) * reliefScale
+    return H.composeHeight(d, [0, 0], 100) * reliefScale
   }
   // World-space surface point for a direction: dir * (radius + height).
   function surfacePoint(dir) { const d = g.normalize(dir); return g.mul(d, radius + heightAt(d)) }

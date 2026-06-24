@@ -533,7 +533,7 @@ function frameLoop(){
   // floor keeps a usable speed right at the deck, and the punch-through guard is now a hard clamp to a
   // generous fraction of the surface-gap that NEVER crawls (it only catches an extreme single-frame jump).
   let moveStep = dt * cam.speed * altKmAbove * 1.0;
-  moveStep = Math.max(moveStep, dt * cam.speed * 8.0);          // fixed near-ground floor (km/frame @ slider) -> no crawl (2.0->8.0, user 2026-06-09: deck crawl during close-ground work; 4x faster floor, speed slider still scales on top)
+  moveStep = Math.max(moveStep, dt * cam.speed * 0.05);         // floor = 50m/frame at speed=1 -> no deck crawl, no low-alt speed surge
   moveStep = Math.min(moveStep, Math.hypot(...cam.pos) - RADIUS*(1.0 + altSurfElev) + 0.5); // hard anti-tunnel guard only
   if (keys['w']) { cam.pos[0]+=forward[0]*moveStep; cam.pos[1]+=forward[1]*moveStep; cam.pos[2]+=forward[2]*moveStep; }
   if (keys['s']) { cam.pos[0]-=forward[0]*moveStep; cam.pos[1]-=forward[1]*moveStep; cam.pos[2]-=forward[2]*moveStep; }
