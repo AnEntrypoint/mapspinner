@@ -1103,8 +1103,16 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // vdrs stays off when THC is active. No canvas realloc happens here -> dialing __vdrsScale is hitch-free.
     const _vW = gl.drawingBufferWidth, _vH = gl.drawingBufferHeight;
     let _vrs = 0;
-    if (typeof window !== 'undefined' && window.__vdrs === true && !thcActive()) {
-      _vrs = Math.min(1.0, Math.max(0.3, +window.__vdrsScale || 1.0));
+    // HALF-RES WATER needs to blit the scene DEPTH into its half-res buffer, but blitFramebuffer cannot
+    // read DEPTH from the DEFAULT framebuffer (WebGL2) -- doing so silently fails -> garbage half-res
+    // depth -> occluded water draws OVER terrain (user 2026-06-24 'occluded water drawing over the
+    // terrain', witnessed as a horizon line over a ridge; forcing the vdrs FBO made it vanish). So when
+    // half-res water is active, render the scene into _vdrsFbo (a real depth-renderbuffer FBO) at full
+    // scale; the existing VDRS upscale tail composites it to the canvas. _aboveWater guards underwater.
+    const _hrwActive = (typeof window==='undefined' || window.__halfResWater!==false) && (camDist >= R - 2.0);
+    const _vdrsOn = (typeof window!=='undefined' && window.__vdrs === true) || _hrwActive;
+    if (_vdrsOn && !thcActive()) {
+      _vrs = (typeof window!=='undefined' && window.__vdrs === true) ? Math.min(1.0, Math.max(0.3, +window.__vdrsScale || 1.0)) : 1.0;
       ensureVdrsTargets(_vW, _vH);
       gl.bindFramebuffer(gl.FRAMEBUFFER, _vdrsFbo);
       gl.viewport(0, 0, Math.max(1, Math.round(_vW*_vrs)), Math.max(1, Math.round(_vH*_vrs)));
@@ -1451,7 +1459,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
         gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 1, gl.FLOAT, false, STRIDE, 4 * 4); gl.vertexAttribDivisor(2, 1);
         // HALF-RES WATER: redirect the water draw into a half-res FBO (gated, default on above water --
         // the underwater up-view is a thin ceiling, render it full-res to keep Snell's-window crisp).
-        const _sceneFbo = (typeof window!=='undefined' && window.__vdrs===true && !thcActive()) ? _vdrsFbo : null;
+        const _sceneFbo = (_vdrsRsThisFrame > 0) ? _vdrsFbo : null;   // scene target this frame (vdrs FBO when half-res water forced it on)
         const _hrw = (typeof window==='undefined' || window.__halfResWater!==false) && !_uw;
         let _hrwVW=0, _hrwVH=0;
         if (_hrw) {
