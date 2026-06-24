@@ -493,9 +493,8 @@ uniform vec2 uResolution;      // viewport size in pixels (for uSceneTex UV)
 // tint. wave dirs are 2D in the local (ux,uy) tangent plane; phase advances with time.
 // Returns a tangent-space normal perturbation (dx,dy) to add to the flat (0,0,1) normal.
 vec2 oceanWaveSlope(highp vec2 p, highp float t) {   // W7: p = camera-relative wave coord, t = unbounded oceanTime -> highp phase
-    // a handful of directional waves with varied freq/dir/speed (kept cheap)
+    // Gerstner swell base: 5 directional waves (raised slope multiplier 0.06->0.28 so normals perturb visible angles)
     vec2 slope = vec2(0.0);
-    // (dir.xy, wavelength_m, speed, steepness)
     const int N = 5;
     vec2 dirs[5];   float wl[5];  float spd[5];  float amp[5];
     dirs[0]=vec2( 1.0, 0.0);  wl[0]=520.0; spd[0]=1.10; amp[0]=1.0;
@@ -505,13 +504,22 @@ vec2 oceanWaveSlope(highp vec2 p, highp float t) {   // W7: p = camera-relative 
     dirs[4]=vec2(-0.7,-0.6);  wl[4]= 47.0; spd[4]=2.80; amp[4]=0.22;
     for (int i=0;i<N;i++){
         vec2 d = normalize(dirs[i]);
-        highp float k = 6.2831853 / wl[i];                 // W7: highp wave number
-        highp float phase = k*dot(d,p) + t*spd[i]*k*8.0;   // W7: highp accumulated phase (unbounded t)
-        // slope contribution: derivative of a sine height field -> cosine, weighted by
-        // amplitude and choppiness. amp[i] tapers the higher-freq waves.
+        highp float k = 6.2831853 / wl[i];
+        highp float phase = k*dot(d,p) + t*spd[i]*k*8.0;
         float a = amp[i] * oceanAmp * (1.0 + oceanChoppy);
-        slope += d * (cos(phase) * a * 0.06);
+        slope += d * (cos(phase) * a * 0.28);   // raised from 0.06 -- was too subtle to see
     }
+    // Seascape-style choppy noise cap: abs(sin) warp on fine octaves for visible choppiness.
+    // Keeps freq in world metres (p is camera-relative metres); use snoise3 with a 0-elevation probe.
+    float chopScale = oceanAmp * oceanChoppy * 0.55;
+    vec2 q = p * 0.0028 + vec2(t * 0.18, t * 0.11);     // ~360m feature tiles
+    vec2 wv = 1.0 - abs(sin(q));                          // Seascape abs(sin) chop pattern
+    wv = mix(wv, abs(cos(q)), wv);
+    slope += (wv - 0.5) * chopScale;
+    vec2 q2 = p * 0.0052 + vec2(-t * 0.14, t * 0.21);   // ~190m tiles -- higher freq detail
+    vec2 wv2 = 1.0 - abs(sin(q2));
+    wv2 = mix(wv2, abs(cos(q2)), wv2);
+    slope += (wv2 - 0.5) * chopScale * 0.5;
     return slope;
 }
 
@@ -924,7 +932,7 @@ void main() {
         highp float camAltW = length(camWorld) - terrainR;
         float specFade = clamp(1.0 - camAltW / 150000.0, 0.0, 1.0); // orbit glint fade (kept)
         vec3 hlW = normalize(sunDir + viewW);
-        float spec = pow(max(dot(wn, hlW), 0.0), 220.0) * specFade;
+        float spec = pow(max(dot(wn, hlW), 0.0), 80.0) * specFade * 2.0;   // exponent 220->80 + boosted for visible glint
         float ndl = max(dot(wn, sunDir), 0.0);
         // ---- WATER SHADING: wX3BRf-style shallow / f3XXDH-style deep ----
         // Architecture: the water SURFACE color is sky+sun (reflection), not the seabed.
@@ -938,14 +946,14 @@ void main() {
         refractUV = clamp(refractUV, vec2(0.002), vec2(0.998));
         vec3 sceneCol = texture(uSceneTex, refractUV).rgb;  // seabed color from terrain pass
 
-        // REFLECTION sky -- bright fixed colors (wX3BRf style, not dimmed by uSkyFill).
+        // REFLECTION sky -- Seascape-style: bright gradient + prominent sun disc.
         vec3 reflDir = reflect(-viewW, wn);
         float reflUp = max(dot(reflDir, uz), 0.0);
         float reflSun = max(dot(reflDir, sunDir), 0.0);
-        vec3 skyH = vec3(0.50, 0.68, 0.90);   // horizon -- bright daylight blue
-        vec3 skyZ = vec3(0.08, 0.22, 0.65);   // zenith -- deep blue
-        vec3 skyColW = mix(skyH, skyZ, smoothstep(0.0, 0.5, reflUp));
-        skyColW += vec3(1.0, 0.90, 0.65) * pow(reflSun, 80.0) * 4.0;  // sun disc
+        vec3 skyH = vec3(0.58, 0.76, 0.96);   // horizon -- bright daylight blue
+        vec3 skyZ = vec3(0.06, 0.18, 0.58);   // zenith -- deep blue
+        vec3 skyColW = mix(skyH, skyZ, smoothstep(0.0, 0.6, reflUp));
+        skyColW += vec3(1.0, 0.93, 0.70) * pow(reflSun, 48.0) * 10.0;  // strong sun disc (was pow80 * 4)
 
         // SUBSURFACE SCATTER tint (wX3BRf "scattering"): light entering from above scatters
         // teal/cyan in the first few metres -- this is what makes shallow ocean look alive.
@@ -972,9 +980,8 @@ void main() {
         float caus = pow(clamp(c1 * 0.5 + c2 * 0.35 + c3 * 0.25 + 0.5, 0.0, 1.0), 3.0)
                    * shallowT * ndl * 0.9;
 
-        // Fresnel floor: pure physical nadir Fresnel = 0.02 is too subtle to read.
-        // Floor at 0.15 so even overhead the sky tint is visible on the surface.
-        float reflBlend = max(fres, 0.15);
+        // Fresnel floor: raised to 0.30 (was 0.15) so overhead the sky reflection reads clearly.
+        float reflBlend = max(fres, 0.30);
 
         // SURFACE COLOR = reflection sky (Fresnel) + subsurface scatter + specular.
         // The seabed shows through alpha, not blended into wcol.
