@@ -990,11 +990,12 @@ void main() {
 
         // Surface: mix waterCol and sky reflection by Fresnel (exact ref formula)
         vec3 wcol = mix(waterCol, skyColW, fresBlend);
-        wcol += vec3(1.0, 0.95, 0.85) * ggxSpec * NoL * 7.0;  // GGX sun specular
-        wcol += vec3(1.0, 0.95, 0.85) * glint;                 // tight glint
+        wcol += vec3(1.0, 0.95, 0.85) * min(ggxSpec * NoL * 3.0, vec3(2.0));  // GGX sun specular, capped
+        wcol += vec3(1.0, 0.95, 0.85) * min(glint, 2.0);                       // tight glint, capped
 
-        // Beer-Lambert seabed transparency (sigma tuned: clear tropical water)
-        vec3 sigma = vec3(0.08, 0.025, 0.010);   // less aggressive than ref so shallows stay vivid
+        // Beer-Lambert: open ocean blue water. Sigma controls optical depth.
+        // r=0.45 absorbs red fast -> blue/green at depth. g=0.04 keeps mid. b=0.01 blue penetrates deep.
+        vec3 sigma = vec3(0.45, 0.04, 0.010);
         vec3 T = exp(-sigma * depthM);
         float Tavg = (T.r + T.g + T.b) * (1.0 / 3.0);
 
@@ -1029,7 +1030,9 @@ void main() {
         // depth ramp so thin water shows the bed regardless of view angle; foam + Beer-Lambert depth
         // opacity stay so deep/foamy water still reads solid.
         float shallowClear = smoothstep(0.0, 6.0, depthM);   // 0 in thin water -> clear; 1 by ~6m -> full fresnel
-        float alphaW = clamp(1.0 - Tavg, 0.0, 1.0);
+        // Use green-channel opacity (red absorbed fast, green=20m optical depth for ocean)
+        float depthOpacity = clamp(1.0 - T.g, 0.0, 1.0);    // approaches 1 at ~50m+ depth
+        float alphaW = depthOpacity;
         alphaW = max(alphaW, fresBlend * 0.9 * shallowClear);
         alphaW = max(alphaW, foamAmt * 0.8);
         // SHALLOW-SURFACE FLOOR (2026-06-11, found by the coast witness after the shelf landed):
