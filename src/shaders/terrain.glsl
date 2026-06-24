@@ -487,39 +487,64 @@ uniform float oceanFoam;   // foam amount (0..1): whitecaps on steep wave slopes
 uniform sampler2D uSceneTex;   // snapshot of terrain pass color buffer for refraction
 uniform vec2 uResolution;      // viewport size in pixels (for uSceneTex UV)
 
-// ---- Animated ocean: sum-of-Gerstner-wave NORMAL perturbation in the surface tangent
-// frame. We don't displace geometry (FS-only v1) -- we synthesize an animated water
-// normal from a few directional waves and shade it with fresnel + sun glint + a depth
-// tint. wave dirs are 2D in the local (ux,uy) tangent plane; phase advances with time.
+// ---- Seascape-style ocean wave normal (TDM 2014, adapted to world-metres tangent plane).
+// hash + value noise for UV displacement, abs(sin)/cos choppy octaves iterated with a
+// rotation matrix -- this is what makes Seascape look organic vs plain sine waves.
+float _wHash(vec2 p) {
+    float h = dot(p, vec2(127.1, 311.7));
+    return fract(sin(h) * 43758.5453123);
+}
+float _wNoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return -1.0 + 2.0 * mix(
+        mix(_wHash(i + vec2(0.0, 0.0)), _wHash(i + vec2(1.0, 0.0)), u.x),
+        mix(_wHash(i + vec2(0.0, 1.0)), _wHash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+// Returns slope (dx,dy) of one choppy sea octave at uv with given choppy sharpness.
+vec2 _seaOctaveSlope(vec2 uv, float choppy) {
+    uv += _wNoise(uv);                  // organic displacement -- the Seascape secret
+    vec2 wv = 1.0 - abs(sin(uv));
+    vec2 swv = abs(cos(uv));
+    wv = mix(wv, swv, wv);
+    // derivative of pow(1 - pow(wv.x*wv.y, 0.65), choppy) w.r.t. uv:
+    float h0 = 1.0 - pow(wv.x * wv.y, 0.65);
+    float dh = choppy * pow(h0, choppy - 1.0) * 0.65 * pow(wv.x * wv.y, -0.35);
+    // approximate gradient: sign of derivative from sin/cos mix
+    vec2 dwv = vec2(
+        (cos(uv.x) - sign(sin(uv.x)) * wv.x) * wv.y,
+        wv.x * (cos(uv.y) - sign(sin(uv.y)) * wv.y)
+    );
+    return dwv * dh;
+}
+// Rotation matrix matching Seascape octave_m = mat2(1.6,1.2,-1.2,1.6)
+const mat2 _octM = mat2(1.6, 1.2, -1.2, 1.6);
+
 // Returns a tangent-space normal perturbation (dx,dy) to add to the flat (0,0,1) normal.
-vec2 oceanWaveSlope(highp vec2 p, highp float t) {   // W7: p = camera-relative wave coord, t = unbounded oceanTime -> highp phase
-    // Gerstner swell base: 5 directional waves (raised slope multiplier 0.06->0.28 so normals perturb visible angles)
+// p = camera-relative world-metres in the surface tangent plane, t = animation time.
+vec2 oceanWaveSlope(highp vec2 p, highp float t) {
+    // SEA_FREQ=0.16 in Seascape -- scale to our world-metres so ~6m dominant wavelength.
+    // WEBGL2_TERRAIN_R_M ~6360m -> tune freq so 2pi/freq ~ 6m: freq = 1.047.
+    // SEA_SPEED=0.8 in Seascape. SEA_HEIGHT=0.6 -> amplitude of slope contribution.
+    float freq   = 1.047;
+    float amp    = 0.60 * oceanAmp;
+    float choppy = max(oceanChoppy * 4.0, 0.5);   // SEA_CHOPPY=4 in Seascape
+    float sea_t  = t * 0.8;   // SEA_SPEED
+
     vec2 slope = vec2(0.0);
-    const int N = 5;
-    vec2 dirs[5];   float wl[5];  float spd[5];  float amp[5];
-    dirs[0]=vec2( 1.0, 0.0);  wl[0]=2.6; spd[0]=1.10; amp[0]=1.0;
-    dirs[1]=vec2( 0.6, 0.8);  wl[1]=1.6; spd[1]=1.35; amp[1]=0.7;
-    dirs[2]=vec2(-0.4, 0.9);  wl[2]=0.9; spd[2]=1.60; amp[2]=0.5;
-    dirs[3]=vec2( 0.9,-0.3);  wl[3]=0.5; spd[3]=2.10; amp[3]=0.35;
-    dirs[4]=vec2(-0.7,-0.6);  wl[4]=0.25; spd[4]=2.80; amp[4]=0.22;
-    for (int i=0;i<N;i++){
-        vec2 d = normalize(dirs[i]);
-        highp float k = 6.2831853 / wl[i];
-        highp float phase = k*dot(d,p) + t*spd[i]*k*8.0;
-        float a = amp[i] * oceanAmp * (1.0 + oceanChoppy);
-        slope += d * (cos(phase) * a * 0.28);
+    // 5 iterated octaves (ITER_FRAGMENT=5 in Seascape detail pass)
+    for (int i = 0; i < 5; i++) {
+        highp vec2 uv = p * freq;
+        // Two passes per octave (forward + backward travel direction) like Seascape:
+        slope += _seaOctaveSlope(uv + sea_t * freq, choppy) * amp;
+        slope += _seaOctaveSlope(uv - sea_t * freq, choppy) * amp;
+        p   = _octM * p;
+        freq   *= 1.9;
+        amp    *= 0.22;
+        choppy  = mix(choppy, 1.0, 0.2);
     }
-    // Seascape-style choppy noise: abs(sin) on fine octaves. ~18m and ~11m tiles.
-    float chopScale = oceanAmp * oceanChoppy * 0.55;
-    vec2 q = p * 0.55 + vec2(t * 0.18, t * 0.11);     // ~1.8m feature tiles
-    vec2 wv = 1.0 - abs(sin(q));
-    wv = mix(wv, abs(cos(q)), wv);
-    slope += (wv - 0.5) * chopScale;
-    vec2 q2 = p * 0.90 + vec2(-t * 0.14, t * 0.21);   // ~1.1m tiles
-    vec2 wv2 = 1.0 - abs(sin(q2));
-    wv2 = mix(wv2, abs(cos(q2)), wv2);
-    slope += (wv2 - 0.5) * chopScale * 0.5;
-    return slope;
+    return slope * 0.45;  // overall scale: keeps normals well-perturbed without going vertical
 }
 
 // Procedural height+slope material ramp (placeholder until the OrthoProducer lands):
@@ -931,7 +956,7 @@ void main() {
         highp float camAltW = length(camWorld) - terrainR;
         float specFade = clamp(1.0 - camAltW / 150000.0, 0.0, 1.0); // orbit glint fade (kept)
         vec3 hlW = normalize(sunDir + viewW);
-        float spec = pow(max(dot(wn, hlW), 0.0), 80.0) * specFade * 2.0;   // exponent 220->80 + boosted for visible glint
+        float spec = pow(max(dot(wn, hlW), 0.0), 600.0) * specFade * 8.0;  // Seascape-matched tight sun glint
         float ndl = max(dot(wn, sunDir), 0.0);
         // ---- WATER SHADING: wX3BRf-style shallow / f3XXDH-style deep ----
         // Architecture: the water SURFACE color is sky+sun (reflection), not the seabed.
@@ -949,17 +974,17 @@ void main() {
         vec3 reflDir = reflect(-viewW, wn);
         float reflUp = max(dot(reflDir, uz), 0.0);
         float reflSun = max(dot(reflDir, sunDir), 0.0);
-        vec3 skyH = vec3(0.58, 0.76, 0.96);   // horizon -- bright daylight blue
-        vec3 skyZ = vec3(0.06, 0.18, 0.58);   // zenith -- deep blue
-        vec3 skyColW = mix(skyH, skyZ, smoothstep(0.0, 0.6, reflUp));
-        skyColW += vec3(1.0, 0.93, 0.70) * pow(reflSun, 48.0) * 10.0;  // strong sun disc (was pow80 * 4)
+        // Seascape getSkyColor formula: (1-y)^2, 1-y, 0.6+(1-y)*0.4 -- warm greenish horizon
+        float ey = clamp((max(reflUp, 0.0) * 0.8 + 0.2) * 0.8, 0.0, 1.0);
+        vec3 skyColW = vec3(pow(1.0 - ey, 2.0), 1.0 - ey, 0.6 + (1.0 - ey) * 0.4) * 1.1;
+        skyColW += vec3(1.0, 0.93, 0.70) * pow(reflSun, 200.0) * 20.0;  // tight bright sun disc in reflection
 
         // SUBSURFACE SCATTER tint (wX3BRf "scattering"): light entering from above scatters
         // teal/cyan in the first few metres -- this is what makes shallow ocean look alive.
         // Ramp: bright teal shallow, blue mid, dark navy deep (f3XXDH).
-        vec3 sssShallow = vec3(0.08, 0.55, 0.52);   // wX3BRf shallow -- bright teal
-        vec3 sssMid     = vec3(0.02, 0.18, 0.45);   // mid blue
-        vec3 sssDeep    = vec3(0.002, 0.010, 0.035); // f3XXDH abyss near-black
+        vec3 sssShallow = vec3(0.04, 0.32, 0.22);   // Seascape SEA_WATER_COLOR * diffuse shallow
+        vec3 sssMid     = vec3(0.01, 0.10, 0.20);   // Seascape SEA_BASE mid
+        vec3 sssDeep    = vec3(0.0,  0.05, 0.10);   // Seascape SEA_BASE deep
         float dt1 = smoothstep(0.0, 20.0, depthM);
         float dt2 = smoothstep(15.0, 80.0, depthM);
         vec3 sssCol = mix(mix(sssShallow, sssMid, dt1), sssDeep, dt2);
