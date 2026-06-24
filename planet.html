@@ -281,11 +281,16 @@ let oceanTime=0;
 // Per-frame diag stream: POST JSON line every diagInterval frames to
 // /diag (server keeps the last 200 lines in a ring, GET /diag/tail). Skipped if fetch absent.
 const diagInterval = 60;
+// DEV-SERVER DETECTION (2026-06-24): the /diag + /cmd endpoints only exist on the local node server.js.
+// On static hosting (GitHub Pages) they 404/405 every frame -> a console flood. Probe /cmd/next ONCE; if
+// it isn't a dev server (network error or non-2xx), disable the diag poller + postDiag entirely. A real
+// dev server flips __devServer=true and polling proceeds as before.
+let __devServer = null;   // null=unknown, true=dev server, false=static host
 function postDiag(event) {
-  if (typeof fetch === 'undefined') return;
+  if (typeof fetch === 'undefined' || __devServer === false) return;
   try {
     fetch('/diag', {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({t: Date.now(), ...event}), keepalive: true});
+      body: JSON.stringify({t: Date.now(), ...event}), keepalive: true}).catch(()=>{});
   } catch(_) {}
 }
 // AGENT COMMAND CHANNEL POLLER (2026-06-07, user: 'maximize live code execution + hot reloading').
@@ -295,19 +300,23 @@ function postDiag(event) {
 // window.__agentCmd!==false so it can be disabled. ~twice/sec.
 let __cmdBusy = false;
 async function pollCmd() {
-  if (__cmdBusy || typeof fetch === 'undefined' || window.__agentCmd === false) return;
+  if (__cmdBusy || typeof fetch === 'undefined' || window.__agentCmd === false || __devServer === false) return;
   __cmdBusy = true;
   try {
-    const r = await fetch('/cmd/next'); const cmd = await r.json();
+    const r = await fetch('/cmd/next');
+    if (!r.ok) { __devServer = false; return; }   // 404 on static host -> not a dev server, stop polling
+    __devServer = true;
+    const cmd = await r.json();
     if (cmd && cmd.js) {
       let result;
       try { result = await (async () => { return eval(cmd.js); })(); }
       catch (e) { result = { error: String(e && e.message || e) }; }
       postDiag({ kind: 'cmd-result', id: cmd.id, result });
     }
-  } catch (_) {} finally { __cmdBusy = false; }
+  } catch (_) { __devServer = false; }   // network error (no server) -> static host, stop polling
+  finally { __cmdBusy = false; }
 }
-setInterval(pollCmd, 500);
+let __cmdTimer = setInterval(pollCmd, 500);
 // The mapspinner WebGL2 terrain is the renderer.
 if (window.__useWebGL2Terrain === undefined) window.__useWebGL2Terrain = true;
 const stats=document.getElementById('stats');
