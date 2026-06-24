@@ -940,56 +940,65 @@ void main() {
         refractUV = clamp(refractUV, vec2(0.002), vec2(0.998));
         vec3 sceneCol = texture(uSceneTex, refractUV).rgb;  // seabed color from terrain pass
 
-        // REFLECTION sky -- Seascape-style: bright gradient + prominent sun disc.
+        // Sky colour function matching both references: zenith/horizon lerp + mie glow + sun disc
+        // Used for both the direct sky and the reflected sky.
         vec3 reflDir = reflect(-viewW, wn);
-        float reflUp = max(dot(reflDir, uz), 0.0);
+        float reflUp  = max(dot(reflDir, uz), 0.0);
         float reflSun = max(dot(reflDir, sunDir), 0.0);
-        // Sky seen in reflection: blue zenith, bright horizon, sun disc
-        float ey = clamp(reflUp * 0.8 + 0.05, 0.0, 1.0);
-        vec3 skyZenith  = vec3(0.10, 0.25, 0.65);
+        vec3 skyZenith  = vec3(0.15, 0.45, 0.95);
         vec3 skyHorizon = vec3(0.55, 0.75, 1.00);
-        vec3 skyColW = mix(skyZenith, skyHorizon, pow(1.0 - ey, 3.0) * 0.5 + 0.0);
-        skyColW = mix(skyColW, skyHorizon, pow(1.0 - ey, 3.0) * 0.5);
-        skyColW += vec3(1.0, 0.95, 0.85) * pow(reflSun, 512.0) * 4.0;   // tight sun disc
-        skyColW += vec3(1.0, 0.85, 0.55) * pow(reflSun, 16.0) * 0.4;    // wide glow
+        float reflH = pow(1.0 - reflUp, 3.0);
+        vec3 skyColW = mix(skyZenith, skyHorizon, reflH);
+        skyColW += vec3(1.0, 0.90, 0.70) * pow(reflSun, 8.0) * 0.8;    // mie glow
+        skyColW += vec3(1.0, 0.95, 0.85) * pow(reflSun, 512.0) * 4.0;  // sun disc (ref: pow 1200*40, toned down for HDR range)
+        skyColW += vec3(1.0, 0.85, 0.55) * pow(reflSun, 16.0) * 0.4;   // wide limb
 
-        // GGX specular (reference wX3BRf D_GGX + G_Smith + F_Schlick, roughness 0.02)
-        vec3 hVec  = normalize(sunDir + viewW);
-        float NoH  = max(dot(wn, hVec), 0.0);
-        float NoV  = max(dot(wn, viewW), 0.0);
-        float NoL  = max(dot(wn, sunDir), 0.0);
-        float VoH  = max(dot(viewW, hVec), 0.0);
+        // GGX BRDF -- exact reference wX3BRf (D_GGX + G_Smith + F_Schlick pow 0.85, roughness 0.02)
+        vec3 hVec = normalize(sunDir + viewW);
+        float NoH = max(dot(wn, hVec), 0.0);
+        float NoV = max(dot(wn, viewW), 0.0);
+        float NoL = max(dot(wn, sunDir), 0.0);
+        float VoH = max(dot(viewW, hVec), 0.0);
         const float rough = 0.02;
         float a2 = rough * rough;
-        float denom = (NoH * NoH) * (a2 - 1.0) + 1.0;
-        float D = a2 / (3.14159 * denom * denom);
-        float k = (rough + 1.0) * (rough + 1.0) / 8.0;
-        float Gv = NoV / (NoV * (1.0 - k) + k);
-        float Gl = NoL / (NoL * (1.0 - k) + k);
+        float Dd = (NoH * NoH) * (a2 - 1.0) + 1.0;
+        float D = a2 / (3.14159 * Dd * Dd);
+        float kk = (rough + 1.0) * (rough + 1.0) / 8.0;
+        float Gv = NoV / (NoV * (1.0 - kk) + kk);
+        float Gl = NoL / (NoL * (1.0 - kk) + kk);
         float G  = Gv * Gl;
-        vec3  F0 = vec3(0.04);
-        vec3  F  = F0 + (1.0 - F0) * pow(1.0 - VoH, 5.0);
-        vec3  ggxSpec = (D * G * F) / max(4.0 * NoV * NoL, 0.001) * specFade;
+        vec3 F0 = vec3(0.04);
+        vec3 F  = pow(F0 + (1.0 - F0) * pow(1.0 - VoH, 5.0), vec3(0.85));  // ref uses pow(...,0.85)
+        vec3 ggxSpec = (D * G * F) / max(4.0 * NoV * NoL, 0.001) * specFade;
 
-        // Sun glint: very tight highlight (reference: pow(300)*15)
+        // Schlick Fresnel for reflection blend (NoV angle, not VoH)
+        vec3 Fschlick = F0 + (1.0 - F0) * pow(1.0 - NoV, 5.0);
+        float fresBlend = mix(0.02, 1.0, Fschlick.x);  // matches ref: mix(0.02, 1.0, fresnel)
+
+        // Glint: tight point highlight (ref: pow(300)*15)
         float glint = pow(max(dot(reflect(-sunDir, wn), viewW), 0.0), 300.0) * 15.0 * specFade;
 
-        // Schlick Fresnel for sky reflection blend
-        vec3 Fschlick = F0 + (1.0 - F0) * pow(1.0 - NoV, 5.0);
-        float fresBlend = Fschlick.x;  // single-channel for the mix
+        // Water body colour: SEA_BASE + diff shading (ref getSeaColor waterCol)
+        float diff = NoL;
+        vec3 seaBase  = vec3(0.0, 0.09, 0.18);   // SEA_BASE
+        vec3 seaWater = vec3(0.8, 0.9, 0.6);      // SEA_WATER_COLOR
+        vec3 waterCol = seaBase + diff * vec3(0.05, 0.10, 0.12);
 
-        // Absorption (reference wX3BRf sigma): exp(-sigma*depth) -> scatter = deepColor*(1-absorb)
-        // sigma = vec3(0.18, 0.06, 0.03) matches warm-tinted deep water
-        vec3 sigma  = vec3(0.18, 0.06, 0.03);
-        vec3 absorb = exp(-sigma * depthM);
-        vec3 deepColor = vec3(0.02, 0.18, 0.28);  // wX3BRf deep color
-        vec3 scatter = deepColor * (1.0 - absorb);
+        // SSS forward scatter (ref: pow(dot(dir,-sun),4)*(1-dot(n,-dir))*0.4 * SEA_WATER_COLOR*0.3)
+        float sssFwd = pow(max(dot(-viewW, -sunDir), 0.0), 4.0) * (1.0 - NoV) * 0.4;
+        waterCol += seaWater * sssFwd * 0.3;
 
-        // SSS forward scatter (reference: pow(dot(view,-sun),4) * (1-NoV) * 0.4)
-        float sssFwd = pow(max(dot(viewW, -sunDir), 0.0), 4.0) * (1.0 - NoV) * 0.4;
-        scatter += vec3(0.8, 0.9, 0.6) * sssFwd * 0.3;  // SEA_WATER_COLOR tint
+        // Surface: mix waterCol and sky reflection by Fresnel (exact ref formula)
+        vec3 wcol = mix(waterCol, skyColW, fresBlend);
+        wcol += vec3(1.0, 0.95, 0.85) * ggxSpec * NoL * 7.0;  // GGX sun specular
+        wcol += vec3(1.0, 0.95, 0.85) * glint;                 // tight glint
 
-        // CAUSTIC shimmer on seabed in shallows
+        // Beer-Lambert seabed transparency (sigma tuned: clear tropical water)
+        vec3 sigma = vec3(0.08, 0.025, 0.010);   // less aggressive than ref so shallows stay vivid
+        vec3 T = exp(-sigma * depthM);
+        float Tavg = (T.r + T.g + T.b) * (1.0 / 3.0);
+
+        // Caustic shimmer on the seabed in shallows
         float shallowT = 1.0 - smoothstep(0.0, 30.0, depthM);
         float causFreq = 1.2566;
         float ct = oceanTime * 0.35;
@@ -998,28 +1007,19 @@ void main() {
         float c3 = sin(vWorld.x * causFreq * 1.33 + vWorld.z * causFreq * 0.38 - ct * 0.8 + 2.9);
         float caus = pow(clamp(c1 * 0.5 + c2 * 0.35 + c3 * 0.25 + 0.5, 0.0, 1.0), 3.0)
                    * shallowT * NoL * 0.9;
-
-        // Beer-Lambert transparency for seabed composite
-        vec3 T = exp(-sigma * depthM);
-        float Tavg = (T.r + T.g + T.b) * (1.0 / 3.0);
         vec3 bedCol = sceneCol * T + vec3(caus * T.r, caus * T.g * 1.2, caus * T.b * 0.3);
 
-        // Compose: absorption scatter + sky reflection (Fresnel) -- reference wX3BRf
-        vec3 wcol = scatter * (1.0 - Fschlick) + skyColW * Fschlick * 1.2;
-        wcol += ggxSpec * NoL * 7.0;              // GGX sun specular
-        wcol += vec3(1.0, 0.95, 0.85) * glint;   // tight glint
-        // Show seabed through shallow water
+        // Composite surface over seabed: shallow water is transparent (T~1 shows bed), deep opaque
         wcol = mix(wcol, bedCol, Tavg * (1.0 - fresBlend));
 
         // Foam at wave crests
         float foamAmt = clamp((length(slopeW) - 0.6) * 1.5, 0.0, 1.0) * oceanFoam;
         wcol = mix(wcol, vec3(0.92, 0.97, 1.0), foamAmt * (0.3 + 0.7 * NoL));
 
-        // Distance fog (reference: exp(-0.018 * dist)), scale-invariant
-        float fogDist = wDistW / (terrainR * 0.001);   // normalised so fog kicks in at same visual distance
-        float fogW = 1.0 - exp(-0.018 * fogDist) * uHazeMul;
-        vec3 fogCol = uSkyFill * vec3(0.40, 0.55, 0.78) * 1.6;
-        wcol = mix(wcol, fogCol, fogW * 0.7);
+        // Distance fog -- ref: exp(-0.012*t) fog to sky; scale to planet world-metres
+        float fogW = (1.0 - exp(-wDistW * 0.012 / max(terrainR * 0.001, 1.0))) * uHazeMul;
+        vec3 directSkyUp = max(dot(viewW, uz), 0.0) * skyZenith + (1.0 - max(dot(viewW, uz), 0.0)) * skyHorizon;
+        wcol = mix(wcol, directSkyUp * 0.5, fogW * 0.7);
         // day/night + tonemap chain kept consistent with the terrain pass so the two surfaces match.
         vec3 mappedW = waterTonemapped(wcol, uz);
         // coverage: optically thick water -> opaque; first metres see-through; grazing fresnel and
