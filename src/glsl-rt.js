@@ -12,6 +12,15 @@
 // is trivially auditable and matches GLSL semantics 1:1.
 
 const isArr = Array.isArray
+// FLOAT32 PARITY: the GPU evaluates terrain.glsl in float32 (GLSL highp single); this JS runtime would
+// otherwise accumulate the many-octave fractal in float64 (double) and diverge from the rendered surface
+// by metres (the CPU physics collider + veg/grass placement float/sink vs the GPU terrain). Rounding every
+// scalar op result to float32 (Math.fround) makes the per-statement accumulation track the GPU's single
+// precision -- the dominant divergence source is the octave SUM, captured by frounding the _bin/_u op
+// results below. (Per-op fround is a close heuristic, not bit-exact across GPU vendors/FMA; measured to
+// cut the anchor gap ~2.5m -> ~0.1-0.7m. Frounding the dot/normalize accumulators too OVERSHOT, so they
+// are intentionally left in f64 -- the GPU uses wider intermediates there.)
+const _fr = Math.fround
 
 // ---- constructors (GLSL flexible args: vec3(x), vec3(x,y,z), vec3(v2,z), vec3(v4))
 function _flat(args, n) {
@@ -32,10 +41,10 @@ export const uvec3 = (...a) => _flat(a, 3).map(v => v >>> 0)
 // ---- componentwise binary arithmetic (vec/vec, vec/scalar, scalar/vec, scalar/scalar)
 function _bin(a, b, f) {
   const av = isArr(a), bv = isArr(b)
-  if (!av && !bv) return f(a, b)
-  if (av && bv) { const o = new Array(a.length); for (let i = 0; i < a.length; i++) o[i] = f(a[i], b[i]); return o }
-  if (av) { const o = new Array(a.length); for (let i = 0; i < a.length; i++) o[i] = f(a[i], b); return o }
-  const o = new Array(b.length); for (let i = 0; i < b.length; i++) o[i] = f(a, b[i]); return o
+  if (!av && !bv) return _fr(f(a, b))
+  if (av && bv) { const o = new Array(a.length); for (let i = 0; i < a.length; i++) o[i] = _fr(f(a[i], b[i])); return o }
+  if (av) { const o = new Array(a.length); for (let i = 0; i < a.length; i++) o[i] = _fr(f(a[i], b)); return o }
+  const o = new Array(b.length); for (let i = 0; i < b.length; i++) o[i] = _fr(f(a, b[i])); return o
 }
 export const add = (a, b) => _bin(a, b, (x, y) => x + y)
 export const sub = (a, b) => _bin(a, b, (x, y) => x - y)
@@ -44,7 +53,7 @@ export const div = (a, b) => _bin(a, b, (x, y) => x / y)
 export const neg = (a) => isArr(a) ? a.map(x => -x) : -a
 
 // ---- componentwise unary / GLSL math (scalar or vec)
-const _u = (a, f) => isArr(a) ? a.map(f) : f(a)
+const _u = (a, f) => isArr(a) ? a.map(x => _fr(f(x))) : _fr(f(a))
 export const floor = (a) => _u(a, Math.floor)
 export const ceil = (a) => _u(a, Math.ceil)
 export const absf = (a) => _u(a, Math.abs)

@@ -33,9 +33,11 @@ test('surfacePoint(dir) = normalize(dir) * (radius + heightAt)', () => {
     const sp = hs.surfacePoint(dir)
     const expected = hs.radius + h
     assert.ok(Math.abs(Math.hypot(...sp) - expected) < 1e-3, `|surfacePoint| ${Math.hypot(...sp)} != R+h ${expected}`)
-    // points along the same unit direction
+    // points along the same unit direction. Tolerance 1e-4 (not 1e-9): glsl-rt now rounds op results
+    // to float32 for GPU parity, so surfacePoint = mul(d, radius+h) carries float32 (~1e-7 relative)
+    // rounding -- the old 1e-9 lock assumed float64 ops. Colinearity within float32 epsilon is correct.
     const u = g.normalize(sp)
-    assert.ok(Math.abs(u[0] - d[0]) < 1e-9 && Math.abs(u[1] - d[1]) < 1e-9 && Math.abs(u[2] - d[2]) < 1e-9, 'colinear with dir')
+    assert.ok(Math.abs(u[0] - d[0]) < 1e-4 && Math.abs(u[1] - d[1]) < 1e-4 && Math.abs(u[2] - d[2]) < 1e-4, 'colinear with dir')
   }
 })
 
@@ -43,6 +45,9 @@ test('golden samples (regression lock; update only with an intended terrain.glsl
   // Captured from the current transpiled field. If terrain.glsl height changes,
   // re-run gen-height.mjs then update these to the new (parity-verified) values.
   // RE-BAKED 2026-06-24: seabed = h*1.25 capped at -350000 raw (=-350m after reliefScale).
+  // RE-BLESSED (float32 parity): glsl-rt now rounds each op result to float32 (Math.fround) so the
+  // CPU fractal accumulation tracks the GPU's single-precision render -- the goldens shifted from the
+  // old float64 values to these float32 ones. This is the intended re-bless, NOT a terrain.glsl change.
   //
   // The golden locks the RAW transpiled field (the thing gen-height.mjs produces from
   // terrain.glsl) -- so it must sample with reliefScale=1, NOT the runtime default
@@ -53,9 +58,9 @@ test('golden samples (regression lock; update only with an intended terrain.glsl
   // commit 1ce6ea3 changed the default reliefScale without an intended terrain.glsl edit).
   const goldenSampler = createHeightSampler({ reliefScale: 1 })
   const golden = [
-    [[0.9, 0.1, 0.4],  45022.357],
-    [[1, 0, 0],        -38974.597],
-    [[0.577, 0.577, 0.577], -132804.879],
+    [[0.9, 0.1, 0.4],  47419.928],
+    [[1, 0, 0],        -37085.242],
+    [[0.577, 0.577, 0.577], -131079.953],
   ]
   for (const [dir, exp] of golden) {
     const h = goldenSampler.heightAt(dir)
