@@ -43,13 +43,22 @@ test('golden samples (regression lock; update only with an intended terrain.glsl
   // Captured from the current transpiled field. If terrain.glsl height changes,
   // re-run gen-height.mjs then update these to the new (parity-verified) values.
   // RE-BAKED 2026-06-24: seabed = h*1.25 capped at -350000 raw (=-350m after reliefScale).
+  //
+  // The golden locks the RAW transpiled field (the thing gen-height.mjs produces from
+  // terrain.glsl) -- so it must sample with reliefScale=1, NOT the runtime default
+  // (radius/63600000), which is a per-consumer DISPLAY scale, not a property of the
+  // transpiled height. The default-reliefScale sampler `hs` multiplies heightAt by ~1e-4
+  // (radius 6360 / 63600000), which would make this transpiler-regression lock track a
+  // render knob instead of terrain.glsl (it caused a false 10x/10000x golden break when
+  // commit 1ce6ea3 changed the default reliefScale without an intended terrain.glsl edit).
+  const goldenSampler = createHeightSampler({ reliefScale: 1 })
   const golden = [
     [[0.9, 0.1, 0.4],  45022.357],
     [[1, 0, 0],        -38974.597],
     [[0.577, 0.577, 0.577], -132804.879],
   ]
   for (const [dir, exp] of golden) {
-    const h = hs.heightAt(dir)
+    const h = goldenSampler.heightAt(dir)
     assert.ok(Math.abs(h - exp) < 0.5, `heightAt(${dir}) = ${h.toFixed(2)}, golden ${exp}`)
   }
 })
