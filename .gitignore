@@ -2,10 +2,6 @@
 node_modules/
 capture/stream.ndjson
 capture/diag.ndjson
-emsdk/
-emsdk-meta/
-proland-cmake/
-build-wasm/
 *.log
 *.png
 .gm/browser-profile/
@@ -16,9 +12,7 @@ build-wasm/
 !.claude/workflows/
 .claude/workflows/*
 !.claude/workflows/*.js
-vendor/proland-build/
 .gm/pw-sock-*/
-wasm/terrain-cli/out/
 
 # GLSL tooling: glslang validator binary is fetched via scripts/fetch-glslang.mjs (not committed)
 tools/glslang/bin/

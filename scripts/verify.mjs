@@ -1,4 +1,4 @@
-// verify.mjs -- TV8 permanent make-sure-it-works runner (2026-06-11 policy: every render/shader
+// verify.mjs -- permanent make-sure-it-works runner (2026-06-11 policy: every render/shader
 // fix is verified against the LIVE page before commit; compile-clean alone never ships).
 //
 // Drives the in-page witness suite (window.__diag.verifyAll / coastWitness / materialWitness /

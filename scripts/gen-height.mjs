@@ -28,7 +28,7 @@ const HEIGHT_FNS = [
   'value_fbm', 'value_fbm_scaled',
   'rotate_domain', 'value_ridged_fbm_rot', 'value_ridged_fbm_rot_scaled',
   'eval_layer', 'sample_fractal_terrain',
-  'prolandTerrainH', 'vhash', 'vnoise2', 'faceWarp',
+  'fractalTerrainH', 'vhash', 'vnoise2', 'faceWarp',
   'composeHeight', 'continentalBias',
 ]
 // Uniforms referenced by the height path -> read from a runtime `U` object. The

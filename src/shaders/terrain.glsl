@@ -114,8 +114,8 @@ highp vec4 hpfSample(vec3 dir) {   // W7: R=seaBias is metres (~1600) -> highp s
     return vec4(se.x, se.y, th.x, th.y);
 }
 
-// ---- PROLAND NOISE PRIMITIVES (ported from nervtech.org noise.wgsl) ----
-// PCG integer hash -> [-1,1]. Uses the exact same algorithm as the Proland WGSL hash(p: vec3i).
+// ---- FRACTAL NOISE PRIMITIVES ----
+// PCG integer hash -> [-1,1].
 // W7 highp: lattice coords reach freq*dir ~1.4e4 -> ALL noise args are highp.
 // Hash: fract-sine, robust across all WebGL2 implementations.
 highp float h3(highp vec3 p) {
@@ -156,7 +156,7 @@ highp vec3 rotate_domain(highp vec3 pos, float angle) {
     float c=cos(angle), s=sin(angle);
     return vec3(c*pos.x-s*pos.z, pos.y, s*pos.x+c*pos.z);
 }
-// Ridged FBM with per-octave rotation (value_ridged_fbm_rot_scaled from noise.wgsl).
+// Ridged FBM with per-octave rotation.
 float value_ridged_fbm_rot(highp vec3 x_in, float gain, int numOctaves, float offset, float exponent) {
     float v=0.0, w=1.0, norm=0.0, a=1.0;
     highp vec3 p=x_in;
@@ -174,18 +174,18 @@ float value_ridged_fbm_rot(highp vec3 x_in, float gain, int numOctaves, float of
 float value_ridged_fbm_rot_scaled(highp vec3 x, float gain, int numOctaves, float offset, float exponent, float lo, float hi) {
     return lo + (hi-lo) * (value_ridged_fbm_rot(x,gain,numOctaves,offset,exponent)*0.5+0.5);
 }
-// Proland terrain constants (from upsample.wgsl noiseDesc + terrainDesc).
+// Terrain noise layer constants.
 // Layer types: 0=FBM, 1=ridged FBM.
 const int LTYPE_FBM = 0;
 const int LTYPE_RIDGED = 1;
-struct ProlandLayer { int ltype; int numOct; float gain; float ridgeOffset; float ridgeExp; float warpStr; float hmin; float hmax; };
-// noiseDesc: the outer rotated base layer (ridged, 23 octaves).
-const ProlandLayer noiseLayerBase = ProlandLayer(LTYPE_RIDGED, 23, 0.5, 1.064, 1.665, 0.45, 0.0, 1.0);
-// terrainDesc layers: layer0 ridged 10oct, layer1 FBM 18oct, layer2 ridged 18oct.
-const ProlandLayer noiseLayer0 = ProlandLayer(LTYPE_RIDGED, 10, 0.5, 1.064, 1.005, 1.6, 0.0, 1.0);
-const ProlandLayer noiseLayer1 = ProlandLayer(LTYPE_FBM,    18, 0.5, 1.064, 1.665, 2.6, -2.0, 2.0);
-const ProlandLayer noiseLayer2 = ProlandLayer(LTYPE_RIDGED, 18, 0.5, 1.064, 1.1,   0.9, -2.0, 2.0);
-float eval_layer(highp vec3 pos, ProlandLayer L) {
+struct NoiseLayer { int ltype; int numOct; float gain; float ridgeOffset; float ridgeExp; float warpStr; float hmin; float hmax; };
+// the outer rotated base layer (ridged, 23 octaves).
+const NoiseLayer noiseLayerBase = NoiseLayer(LTYPE_RIDGED, 23, 0.5, 1.064, 1.665, 0.45, 0.0, 1.0);
+// terrain layers: layer0 ridged 10oct, layer1 FBM 18oct, layer2 ridged 18oct.
+const NoiseLayer noiseLayer0 = NoiseLayer(LTYPE_RIDGED, 10, 0.5, 1.064, 1.005, 1.6, 0.0, 1.0);
+const NoiseLayer noiseLayer1 = NoiseLayer(LTYPE_FBM,    18, 0.5, 1.064, 1.665, 2.6, -2.0, 2.0);
+const NoiseLayer noiseLayer2 = NoiseLayer(LTYPE_RIDGED, 18, 0.5, 1.064, 1.1,   0.9, -2.0, 2.0);
+float eval_layer(highp vec3 pos, NoiseLayer L) {
     float raw;
     float t;
     if (L.ltype == LTYPE_FBM) {
@@ -208,15 +208,15 @@ float sample_fractal_terrain(highp vec3 pCoords) {
 }
 const float PI = 3.14159265;
 // Planet terrain height. Returns approx [-0.6,0.6]; sea level at 0.
-highp float prolandTerrainH(vec3 dir0) {
+highp float fractalTerrainH(vec3 dir0) {
     highp vec3 p = normalize(dir0) * 3.0;
 
-    // Use the full Proland ridged+FBM layer stack (46 octaves, domain-warped) for sharp ridges and detail.
+    // Use the full ridged+FBM layer stack (46 octaves, domain-warped) for sharp ridges and detail.
     // sample_fractal_terrain returns roughly [-1.33, 1.67]; normalise to [-1,1] by subtracting centre ~0.17 then dividing.
     float raw = sample_fractal_terrain(p);
     float h = (raw - 0.17) * 0.6;   // centre and compress to ~[-0.6,0.6]
 
-    // Spatially varying power exponent (TerrainView8 pipeline step 5)
+    // Spatially varying power exponent
     float pmix = snoise3(p * 0.53 + vec3(123.0, 456.0, 789.0)) * 0.5 + 0.5;  // 0..1
     float vPower = mix(0.95, 1.3, pmix);
 
@@ -249,9 +249,9 @@ uniform float uLandBias;
 uniform float uBeachShelfM;
 
 #if defined(_VERTEX_) || defined(_PROBE_) || defined(_HEIGHTBAKE_)
-// Single height function using the Proland algorithm.
+// Single height function using the fractal terrain algorithm.
 highp float composeHeight(vec3 dir0, highp vec2 faceLocal, float tileM){
-    highp float frac = prolandTerrainH(dir0); // -0.5..0.5
+    highp float frac = fractalTerrainH(dir0); // -0.5..0.5
     highp float h = frac * 750000.0 + uLandBias;
     if (h < 0.0) {
         // Seabed: remap fractal value to gradual depth, preserving full variation.
@@ -372,7 +372,6 @@ highp float continentalBias(vec3 dir) { return hpfSample(dir).r; }   // W7: R = 
 // meanDiv 0.02-0.08 vs cascade 0.52). Because it is a pure function of world dir it is:
 //   - LOD-invariant  -> identical in zf and zc, so CLOD blend is automatically smooth
 //   - C0 across tile AND cube-face boundaries -> seamless by construction (no seam probe needed)
-// The wasm cascade is demoted (g_noiseAmp L0-6 ~0) so it only adds fine sub-silhouette detail.
 // (shash3/snoise3 are defined in the SHARED preamble above so the FS riverMask can use them too.)
 // broad+mid fBm of unit world dir -> metres. ONE field sampled IDENTICALLY at every LOD: a finer
 // LOD is a denser SAMPLE of the SAME function, so consecutive LODs are maximally similar BY
@@ -418,7 +417,7 @@ void main() {
     vec3 dir0 = normalize(defLocalToWorld * vec3(faceLocal, defRadius));  // W7: faceWarp/defRadius highp -> pre-normalize ~6.4e6 stays highp
     highp vec4 hpf0 = hpfSample(dir0);    // (seaBias, elevAmp, temp, humid) -- used for vClimate
 
-    // Height from Proland algorithm
+    // Height from the fractal terrain algorithm
     highp float hN0 = 0.0;
     highp vec3 vN = dir0;
     // Water pass still needs seabed height for vH so FS depthM = max(-vH,0) is correct.
@@ -711,8 +710,8 @@ vec3 terrainAlbedo(float h, float slope, float rockSlope, highp vec3 worldPos, h
 // warm+dry reads arid tan, and cold reads pale/desaturated with an earlier snow line --
 // instead of a pure height ramp. Sea unchanged. temp,humid in [0,1].
 // BIOME PALETTE: each biome a DISTINCT recognizable color, blended by soft temp/humidity
-// thresholds (mirrors wasm/terrain-cli/biome-climate-tune.mjs which CLI-validated 7 distinct
-// classes, entropy 2.59). World-continuous (pure fn of climate -> seam-safe).
+// thresholds (CLI-validated 7 distinct classes, entropy 2.59).
+// World-continuous (pure fn of climate -> seam-safe).
 // biomeColor() (climate temp/humid -> biome material palette) REMOVED with the anchor-point biome system
 // (user 2026-06-18 'get rid of anchorpoint biomes to make the system more performant'). It was called only
 // from the uBiomeClimate-gated FS block (default off -> branch-skipped), so removing it is visually neutral

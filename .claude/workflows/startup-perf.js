@@ -1,6 +1,6 @@
 export const meta = {
   name: 'startup-perf',
-  description: 'Find + attack TV8 startup bottlenecks: map init cost, attribute by cold-compile proxy, cut, verify',
+  description: 'Find + attack mapspinner startup bottlenecks: map init cost, attribute by cold-compile proxy, cut, verify',
   whenToUse: 'When page startup/load time regresses, or before stepping up shader detail. Re-runs the measure->attribute->cut->verify loop.',
   phases: [
     { title: 'Map',       detail: 'parallel readers over gl-render.js / planet-orchestrator.js / terrain.glsl init paths' },
@@ -11,7 +11,7 @@ export const meta = {
 }
 
 // ----------------------------------------------------------------------------
-// TV8 startup-perf workflow. The cold bottleneck is the ANGLE/HLSL translation of the giant terrain
+// mapspinner startup-perf workflow. The cold bottleneck is the ANGLE/HLSL translation of the giant terrain
 // FS (~188s first-load on AMD; warm <0.1s, driver-cached). The driver cache is the only persistence
 // (no getProgramBinary on ANGLE-AMD), so the only lever is the unrolled INSTRUCTION COUNT, proxied by
 // WEBGL_debug_shaders getTranslatedShaderSource().length. This workflow maps init, ranks sections by
@@ -52,7 +52,7 @@ const SECTION_SCHEMA = {
 phase('Map')
 const maps = await parallel(INIT_FILES.map(f => () =>
   agent(
-    `Read ${f.path} in the TV8 repo and map every startup-init cost it carries (focus: ${f.lens}). ` +
+    `Read ${f.path} in the mapspinner repo and map every startup-init cost it carries (focus: ${f.lens}). ` +
     `For each cost section return name, file, costKind (cold-compile|js-init|both), proxyMetric, a concrete cutIdea, ` +
     `and regressionRisk with the gate that proves no-regression. Do NOT edit anything; this is a read+map pass.`,
     { label: `map:${f.path.split('/').pop()}`, phase: 'Map', schema: SECTION_SCHEMA }
@@ -62,7 +62,7 @@ const sections = maps.filter(Boolean).flatMap(m => m.sections)
 
 phase('Attribute')
 const ranking = await agent(
-  `Rank these TV8 startup-init sections by how much they cost the COLD shader compile + JS init, using the ` +
+  `Rank these mapspinner startup-init sections by how much they cost the COLD shader compile + JS init, using the ` +
   `cold-compile proxy = translated-HLSL instruction count (scales with unrolled snoise3 taps + branch count) ` +
   `and, for JS, the sampleUV call count. Cheapest-to-cut-with-highest-payoff first; flag any whose cut has ` +
   `medium/high regression risk so it is gated behind the lab. Sections:\n${JSON.stringify(sections, null, 2)}`,
@@ -83,7 +83,7 @@ phase('Cut')
 const cuts = await pipeline(
   ranking.ranked.sort((a, b) => a.rank - b.rank),
   sec => agent(
-    `Propose the concrete code edit for TV8 startup section "${sec.name}" (expected saving ${sec.expectedSaving}). ` +
+    `Propose the concrete code edit for mapspinner startup section "${sec.name}" (expected saving ${sec.expectedSaving}). ` +
     `Give the exact file, the old snippet, the new snippet, and the WITNESS that proves it (translated-HLSL ` +
     `size delta via WEBGL_debug_shaders, OR a lab gate maxElev/landFrac/hypsometry unchanged, OR node --check). ` +
     `Gate: ${sec.gate}. Do not break the lit/shape path; if risk is high, say so and require the lab gate.`,
@@ -95,7 +95,7 @@ const cuts = await pipeline(
         }, required: ['file', 'witness', 'safe'] } }
   ),
   (proposal, sec) => agent(
-    `Adversarially verify this TV8 startup cut proposal for "${sec.name}". Could it change the rendered terrain ` +
+    `Adversarially verify this mapspinner startup cut proposal for "${sec.name}". Could it change the rendered terrain ` +
     `(shape/biome/lighting), break a uniform, or fail to compile? Default to safe=false if uncertain. ` +
     `Proposal:\n${JSON.stringify(proposal, null, 2)}`,
     { label: `verify:${sec.name}`, phase: 'Verify', schema: {

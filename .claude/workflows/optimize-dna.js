@@ -151,7 +151,7 @@ phase('Verify')
 const verified = await pipeline(
   live,
   f => agent(
-    'Adversarially verify this TV8 optimization finding. (1) Is it REAL -- not a false positive, not already handled, not a measured-dead lever (FS source-shrink for cold compile, a per-tile broadShapeM fade, a second mirror copy)? (2) Does fixing it REGRESS another optimization axis -- a simplification that costs perf, a perf cut that adds correctness risk or a seam, a dep that net-GROWS the surface, an architecture change that breaks a public default? Default real=false / regresses=true if uncertain. Finding:\n' + JSON.stringify(f, null, 2),
+    'Adversarially verify this mapspinner optimization finding. (1) Is it REAL -- not a false positive, not already handled, not a measured-dead lever (FS source-shrink for cold compile, a per-tile broadShapeM fade, a second mirror copy)? (2) Does fixing it REGRESS another optimization axis -- a simplification that costs perf, a perf cut that adds correctness risk or a seam, a dep that net-GROWS the surface, an architecture change that breaks a public default? Default real=false / regresses=true if uncertain. Finding:\n' + JSON.stringify(f, null, 2),
     { label: 'verify:' + (f.axis || '?') + ':' + (f.title || '').slice(0, 24), phase: 'Verify', schema: {
         type: 'object',
         properties: { real: { type: 'boolean' }, regressesOtherAxis: { type: 'boolean' }, reason: { type: 'string' } },
@@ -165,7 +165,7 @@ log('confirmed ' + confirmed.length + '/' + live.length + ' after adversarial ve
 // --- Arbitrate (P11 crucible / P2+P9+P12: ONE budget across all axes) ------------------------
 phase('Arbitrate')
 const ranking = confirmed.length ? await agent(
-  'You are arbitrating the TV8 whole-project optimization budget across ALL axes (correctness, speed, simplification, architecture, jank) as ONE ranked plan, through the synthesized-engineering-DNA lens. Rank the CONFIRMED findings below highest-payoff first, applying the principle order P1>P2>...>P12 (earlier principles win conflicts) weighted by P12 human-value (a thing a user FEELS continuously outranks an internal nicety). ' +
+  'You are arbitrating the mapspinner whole-project optimization budget across ALL axes (correctness, speed, simplification, architecture, jank) as ONE ranked plan, through the synthesized-engineering-DNA lens. Rank the CONFIRMED findings below highest-payoff first, applying the principle order P1>P2>...>P12 (earlier principles win conflicts) weighted by P12 human-value (a thing a user FEELS continuously outranks an internal nicety). ' +
   'Resolve every CROSS-AXIS conflict explicitly: when two findings touch the same code or trade against each other (a simplification vs a perf lever, a correctness guardrail vs subtractive removal), state which wins and cite the principle. Prefer the change that REMOVES surface (P2) and helps the WORST case (P9). Confirmed findings:\n' + JSON.stringify(confirmed, null, 2),
   { label: 'arbitrate', phase: 'Arbitrate', schema: {
       type: 'object',

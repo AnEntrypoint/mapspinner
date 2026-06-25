@@ -6,7 +6,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 8080;
 // Static file server for the GPU one-fractal planet (planet.html + src/*.js + shaders/*.glsl).
-// No C++/wasm binary, no capture/diag sinks (the old GPU-capture pipeline is deleted).
+// No native binary, no capture/diag sinks (the old GPU-capture pipeline is deleted).
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -81,7 +81,7 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify(cmd));
     return;
   }
-  // Root IS the GPU planet (planet.html): one-fractal terrain on WebGL, no wasm. /rewrite.html
+  // Root IS the GPU planet (planet.html): one-fractal terrain on WebGL. /rewrite.html
   // kept as an alias. Everything else falls through to a static file (src/, shaders, etc.).
   let filepath;
   if (urlPath === '/' || urlPath === '/index.html' || urlPath === '/rewrite.html' || urlPath === '/rewrite') {

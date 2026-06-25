@@ -1,6 +1,6 @@
 export const meta = {
   name: 'fps-perf',
-  description: 'Find + attack TV8 runtime FPS bottlenecks: measure the GPU VS/FS split on a headed browser, rank the lever, cut, re-measure, verify no visual regression',
+  description: 'Find + attack mapspinner runtime FPS bottlenecks: measure the GPU VS/FS split on a headed browser, rank the lever, cut, re-measure, verify no visual regression',
   whenToUse: 'When the live frame rate is low (close-approach / low-alt especially). Runs the measure-first loop: __diag.gpuTimer attributes frame ms to VS (per-vertex 14-oct broadShapeM x3/vertex) vs FS (per-pixel shade) vs CPU emit, ranks the most-performant lever, proposes the cut, and re-measures. Needs a headed browser (EXT_disjoint_timer_query_webgl2 is absent in headless node-gl).',
   phases: [
     { title: 'Map',     detail: 'parallel readers over the runtime frame path: gl-render.js draw/emit, planet-orchestrator.js LOD/cull, terrain.glsl VS displace + FS shade' },
@@ -12,7 +12,7 @@ export const meta = {
 }
 
 // ----------------------------------------------------------------------------
-// TV8 fps-perf workflow. The BEHIND-LIMB cull (planet-orchestrator.js limb cull + forward-cone
+// mapspinner fps-perf workflow. The BEHIND-LIMB cull (planet-orchestrator.js limb cull + forward-cone
 // rescue) already removes ~50-80% of generated leaves, and frustum cull is intentionally OFF (it
 // mis-culled bulged on-screen quads). So the remaining runtime cost is the KEPT VISIBLE quads x the
 // per-vertex work. The known prime lever: terrain.glsl's lit-normal FD runs TWO extra full broadShapeM
@@ -57,7 +57,7 @@ const COST_SCHEMA = {
 phase('Map')
 const maps = await parallel(FRAME_FILES.map(f => () =>
   agent(
-    `Read ${f.path} in the TV8 repo and map every per-frame RUNTIME cost it carries (focus: ${f.lens}). ` +
+    `Read ${f.path} in the mapspinner repo and map every per-frame RUNTIME cost it carries (focus: ${f.lens}). ` +
     `For each cost return name, file, stage (VS|FS|CPU-emit|LOD-quad-count), perWhat, a concrete cutIdea, ` +
     `whether it keeps broadShapeM LOD-invariant (no seam), and regressionRisk with the witness that proves no-regression. ` +
     `Do NOT edit anything; this is a read+map pass.`,
@@ -85,7 +85,7 @@ log(measured
 
 phase('Rank')
 const ranking = await agent(
-  `Rank these TV8 per-frame runtime costs to pick the SINGLE most-performant FPS lever. ` +
+  `Rank these mapspinner per-frame runtime costs to pick the SINGLE most-performant FPS lever. ` +
   `Context: behind-limb cull already removes ~50-80% of leaves; frustum cull is intentionally OFF; the ` +
   `prime known cost is the VS running 3x full broadShapeM/vertex (displace + 2 FD taps) over 676 verts/quad. ` +
   (measured ? `MEASURED gpuTimer split (authoritative): ${JSON.stringify(measured, null, 2)}. ` : `No live measurement; weight the VS triple-fractal prior. `) +
@@ -108,7 +108,7 @@ phase('Cut')
 const cuts = await pipeline(
   ranking.ranked.sort((a, b) => a.rank - b.rank),
   sec => agent(
-    `Propose the concrete code edit for TV8 FPS lever "${sec.name}" (expected saving ${sec.expectedSaving}). ` +
+    `Propose the concrete code edit for mapspinner FPS lever "${sec.name}" (expected saving ${sec.expectedSaving}). ` +
     `Give the exact file, the old snippet, the new snippet, and the WITNESS that proves it: the re-measured ` +
     `__diag.gpuTimer fullMs/fsMs delta AND the visual invariant (continuous normals across a tile boundary, ` +
     `no seam/popping, glError 0). Gate: ${sec.gate}. broadShapeM MUST stay a pure LOD-invariant world-dir fn ` +
@@ -121,7 +121,7 @@ const cuts = await pipeline(
         }, required: ['file', 'witness', 'safe'] } }
   ),
   (proposal, sec) => agent(
-    `Adversarially verify this TV8 FPS cut for "${sec.name}". Could it reintroduce a tile-edge seam, break ` +
+    `Adversarially verify this mapspinner FPS cut for "${sec.name}". Could it reintroduce a tile-edge seam, break ` +
     `LOD invariance, change the rendered terrain (shape/biome/lighting), break a uniform, or fail to compile? ` +
     `Default to safe=false if uncertain. Proposal:\n${JSON.stringify(proposal, null, 2)}`,
     { label: `verify:${sec.name}`, phase: 'Verify', schema: {

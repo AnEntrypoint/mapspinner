@@ -1,4 +1,4 @@
-// scripts/lab.mjs -- TV8 CLI testing lab.
+// scripts/lab.mjs -- mapspinner CLI testing lab.
 //
 // Builds BOTH height representations from the single source of truth (src/shaders/terrain.glsl):
 //   - CPU: src/height-cpu.js (transpiled via scripts/gen-height.mjs -> src/height-gen.js), pure
@@ -220,7 +220,7 @@ async function withHeadless(fn) {
       procs.push(srv)
       await waitFor(serverUp, 15000)
     }
-    const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'tv8-lab-'))
+    const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'mapspinner-lab-'))
     const cr = spawn(chrome, ['--headless=new', '--use-angle=' + (process.env.LAB_ANGLE || 'swiftshader'), '--use-gl=angle',
       '--disable-gpu-sandbox', '--no-sandbox', '--remote-debugging-port=0',
       '--user-data-dir=' + profile, 'about:blank'], { stdio: 'ignore' })
@@ -409,7 +409,7 @@ async function cmdParity(args) {
 }
 
 function cmdHelp() {
-  console.log(`TV8 CLI testing lab (scripts/lab.mjs)
+  console.log(`mapspinner CLI testing lab (scripts/lab.mjs)
 
   heightmap [--res N=256] [--center lat,lon] [--span deg=20] [--radius m=6360000]
             [--hillshade] [--seed N] [--out file.png]

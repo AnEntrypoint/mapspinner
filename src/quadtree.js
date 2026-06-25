@@ -1,7 +1,7 @@
 // quadtree.js -- the cube-face terrain quadtree LOD selection.
-// terrain shape is the single GPU fractal (broadShapeM in terrain.glsl), evaluated per-vertex.
+// terrain shape is the single GPU fractal (fractalTerrainH in terrain.glsl), evaluated per-vertex.
 //
-// Pure JS, no wasm, no allocation per frame beyond the leaf array. One Quadtree instance per
+// Pure JS, no allocation per frame beyond the leaf array. One Quadtree instance per
 // run; call setConfig once, computeSplitDist when viewport/fov change, updateQuadtree per frame
 // with the camera in LOCAL (undeformed cube-face) space -> returns leaf quads [{level,tx,ty,ox,oy,l}].
 

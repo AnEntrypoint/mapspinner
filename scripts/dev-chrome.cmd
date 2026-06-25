@@ -1,5 +1,5 @@
 @echo off
-rem TV8 dev Chrome launcher -- kills the 150s cold shader compile (measured 2026-06-10).
+rem mapspinner dev Chrome launcher -- kills the 150s cold shader compile (measured 2026-06-10).
 rem
 rem The ~150s cold compile of terrain.glsl is the ANGLE D3D11 backend's FXC
 rem HLSL-optimize pass (default Chrome on Windows). Switching the ANGLE backend

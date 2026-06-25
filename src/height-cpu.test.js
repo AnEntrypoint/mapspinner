@@ -23,7 +23,7 @@ test('heightAt is finite + deterministic over a sphere grid; Earth-like range', 
     if (h < minH) minH = h; if (h > maxH) maxH = h
   }
   assert.ok(minH > -360000, `min depth above cap: ${minH}`)   // above -350000 raw seabed floor (= -350m after reliefScale)
-  assert.ok(maxH < 500000, `max height under ceiling: ${maxH}`)  // under ceiling (proland fractal * 750000 scale)
+  assert.ok(maxH < 500000, `max height under ceiling: ${maxH}`)  // under ceiling (fractal * 750000 scale)
 })
 
 test('surfacePoint(dir) = normalize(dir) * (radius + heightAt)', () => {

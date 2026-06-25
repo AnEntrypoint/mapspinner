@@ -233,11 +233,11 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
   // suspect). Uses performance.now() where available, Date.now() otherwise.
   const _now = () => (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
   const _t = { start: _now() };
-  // No producer/wasm: terrain shape is the per-vertex GPU fractal (broadShapeM in terrain.glsl).
+  // No producer: terrain shape is the per-vertex GPU fractal (fractalTerrainH in terrain.glsl).
   const render = await initMapspinnerRender(gl, { radius: R, gridMeshSize, reliefScale: opts.reliefScale });
   _t.shaderCompileMs = +(_now() - _t.start).toFixed(0);
-  // JS quadtree (replaces the deleted wasm PL.updateQuadtree/computeSplitDist/setConfig). Pure
-  // geometry LOD selection; terrain shape is the GPU fractal, so no wasm is needed for the mesh.
+  // Pure-JS quadtree: geometry LOD selection only; terrain shape is the GPU fractal, so the mesh
+  // needs no external height producer.
   const qt = new Quadtree(R);   // SCALE-INVARIANT: LOD quadtree root half-extent = configured radius (was hardcoded 6360000)
 
   // ---- HIERARCHICAL PARAMETER FIELD (HPF) ----------------------------------------
@@ -472,7 +472,7 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
     // configure the quadtree once (meter units; root l=2R).
     // splitFactor is LIVE-TUNABLE via window.__splitFactor so the px/poly target
     // (4-50 px per triangle edge) can be calibrated in-browser with one dispatch
-    // (no wasm rebuild / reload) -- the efficiency analog of __diag.setGen. A SMALLER
+    // (no rebuild / reload) -- the efficiency analog of __diag.setGen. A SMALLER
     // splitFactor => smaller splitDist => quads split only when much closer => COARSER
     // mesh => MORE px per poly (the baseline measured px/poly median 0.73-1.56, far
     // below the 4-50 band: the terrain was over-subdivided ~5-20x, which also saturated
@@ -640,11 +640,11 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
     let fallbackCount = 0, maxFallbackLevel = -1, frontFallback = 0, culledCount = 0;
     let frontFace = pickFace(camWorldPos);
     // LOD-CENTER: the deepest LOD must land where the user is LOOKING, not at nadir.
-    // getCameraDist (wasm) measures lateral distance from g_localCam.x/y = the camera's
+    // getCameraDist measures lateral distance from g_localCam.x/y = the camera's
     // PROJECTED (nadir) position, so the finest quads cluster directly under the camera. When
     // the camera looks forward/oblique, the screen-centre ground point is FORWARD of nadir, so
     // the user "sees detail increasing in front of us" (the high-LOD patch is below the view).
-    // FIX (JS-only, no wasm rebuild): feed the quadtree a LOD-REFERENCE position whose
+    // FIX (JS-only): feed the quadtree a LOD-REFERENCE position whose
     // DIRECTION is shifted toward the aim ground point but whose MAGNITUDE stays == camDist, so
     // the altitude term (g_camAlt = |localCam| - R) is unchanged while the lateral term now
     // measures distance from the AIM point. At nadir-look this is identity (aimDir == camDir).

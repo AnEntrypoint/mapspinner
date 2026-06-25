@@ -6,7 +6,7 @@ SDK changes must be validated against the test suite and verified in both the de
 
 ## Architecture (GPU one-fractal)
 - LIVE height path = **procedural `composeHeight` per-vertex in the VS** (`terrain.glsl`): every vertex
-  evaluates broadShapeM + carves directly. There is NO baked height pool on the default path.
+  evaluates fractalTerrainH + carves directly. There is NO baked height pool on the default path.
 - THC height pool (OPTIONAL, **default-OFF** behind `window.__thc`): **R32F**, **130-texel tiles**,
   **512 layers** (`THC_BAKE_RES`/`THC_POOL_LAYERS`, `gl-render.js`). An O(1) baked-tile fetch that
   replaces composeHeight when enabled. MEASURED NET-NEGATIVE at the deck (cuts VS but pushes the cost to
@@ -17,7 +17,7 @@ SDK changes must be validated against the test suite and verified in both the de
   in fp16 scrambled the lattice at close range, and chasing per-site highp islands kept missing sites.
   highp-default kills the whole class in one line; the explicit highp islands left in the shader are now
   redundant-but-harmless. int + sampler2DArray stay highp. fp16 on a planet-scale value collapses geometry.
-- Reduced octaves: `broadShapeM` 14→12, `vtxDisplace` 9→6, single-octave rock detail; tanh ceiling
+- Reduced octaves: `fractalTerrainH` 14→12, `vtxDisplace` 9→6, single-octave rock detail; tanh ceiling
   `tanh(x/8000)` gives pointed peaks (CLI `shapeReport allGatesPass`). Distance-gated cheap FS far path.
   Tightened LOD (`planet-orchestrator` splitFactor + near-radius). Dead atlas apparatus deleted.
 - The two new FS/VS uniforms `uHeightPoolTexSize` (=tile res) and `uFloatLinearOK` (=half-float-linear
@@ -35,7 +35,7 @@ camera you can't aim. Use the DATA diagnostics — `__diag.pxPerPoly()` (on-scre
 
 Earth-scale terrain SDK, WebGL2, served at `http://localhost:8080/` (entry `planet.html`, `server.js`).
 GPU one-fractal: no tile producer, no atlas. A finer
-LOD is a denser sample of the SAME field. The procedural broadShapeM fractal is the ONLY render
+LOD is a denser sample of the SAME field. The procedural fractalTerrainH fractal is the ONLY render
 path. (The baked-atlas apparatus was REMOVED in prior work — only historical comments remain across
 src/; any AGENTS history describing an opt-in atlas / `__toggleAtlas` / `atlas-bake.mjs` is stale
 doc-drift, corrected 2026-06-15. Recall "tv8-reliable-visual-witness-method-2026-06-03".)
@@ -63,7 +63,7 @@ Data flow, each stage names its one file:
    drops `vertex.z>0.5` verts radially below the surface) hiding LOD T-junction cracks. The outer
    ring is LOAD-BEARING — do not "just not draw it".
 3. HEIGHT assembled per-vertex in the VS (`src/shaders/terrain.glsl`): `h = cbias + bShape +
-   vDisp(land) + lake/river/canyon carves`. `bShape = broadShapeM(worldDir,reliefMul,ridgeMul)` =
+   vDisp(land) + lake/river/canyon carves`. `bShape = fractalTerrainH(worldDir,reliefMul,ridgeMul)` =
    THE shape (one continuous 14-oct world-dir fBm, LOD-invariant by construction). `cbias` = anchor
    continental swell (`src/anchor-field.js`); `vDisp` = LOD-invariant micro-relief; carves via
    `inciseRidgeField`. Collision = a GPU `_PROBE_` variant of the SAME shader (1px readback,
@@ -187,8 +187,8 @@ PRIMARY ROOT = ANGLE D3D11/FXC MIS-TRANSLATION OF THE UNROLLED FRACTAL (default 
 = d3d11 backend = FXC). Proven by backend split on the SAME AMD GPU: vulkan renders correctly,
 d3d11 renders the triad (blotchy rocks on flat ground + relief normals gone + shading reads as
 height); the GPU/driver is innocent. FXC fully unrolls constant-bound loops and reorders math
-across the unrolled 12-octave broadShapeM body. THE FIX (THE SOLUTION, do not regress it):
-broadShapeM's octave loop is RUNTIME-BOUNDED -- `uniform int uOctMax` (set 12 by
+across the unrolled 12-octave fractalTerrainH body. THE FIX (THE SOLUTION, do not regress it):
+fractalTerrainH's octave loop is RUNTIME-BOUNDED -- `uniform int uOctMax` (set 12 by
 gl-render setComposeHeightUniforms; shader guards <=0 -> 12) so FXC CANNOT unroll. Side proof the
 de-unroll engages: d3d11 cold shaderCompileMs 152379 -> 63259. If this triad ever returns on
 default Chrome/AMD: check the loop is still runtime-bounded FIRST. Never reintroduce a constant
@@ -206,7 +206,7 @@ The recurring "rocks everywhere + normals gone + dark daylit ground, AMD/default
 is FXC SHADER MIS-TRANSLATION, never the GPU/driver (vulkan on the same AMD silicon renders
 correctly). Two proven mechanisms + their fixes (commits f062365 + d56a202):
 1. CONSTANT-BOUND LOOPS get fully unrolled + cross-iteration reordered -> `uniform int uOctMax`
-   runtime-bounds the broadShapeM octave loop (side effect: cold compile 152s -> 63s).
+   runtime-bounds the fractalTerrainH octave loop (side effect: cold compile 152s -> 63s).
 2. PER-CALLSITE INLINING: composeHeight inlined at separate call sites gets optimized DIFFERENTLY
    per copy -- the lit-normal FD taps then disagree by tens of metres on FLAT ground (fake slope ->
    rock material + slope-AO dark + dead normals, in patches). Fix: ALL FD taps evaluate through ONE
@@ -248,7 +248,7 @@ ONE FRACTAL PER CARVE (user hard rule): every carve = ONE world-dir field fn cal
 geometry carve AND any FS mask at `normalize(worldPos)`; never a divergent FS inline loop — recall
 "TV8 one fractal per carve invariant 2026-06-02".
 
-FP32 PRECISION + GRAZING-AA + per-pixel-moire + SHARED-PREAMBLE (snoise3/carves/broadShapeM must be
+FP32 PRECISION + GRAZING-AA + per-pixel-moire + SHARED-PREAMBLE (snoise3/carves/fractalTerrainH must be
 outside `#ifdef _VERTEX_` so the FS + `_PROBE_` program link) — recall "TV8 glsl fp32 grazing moire
 invariants 2026-06-02".
 

@@ -1,6 +1,6 @@
 export const meta = {
   name: 'speed-dna',
-  description: 'Optimize every part of TV8 speed (cold compile + FPS) through the 12-principle synthesized-engineering-DNA lens: measure-first, subtract before adding, physics-first constraints, empirical cross-axis arbitration, adversarial verify. Fans out subagents; composes the fps-perf + startup-perf workflows as sub-steps.',
+  description: 'Optimize every part of mapspinner speed (cold compile + FPS) through the 12-principle synthesized-engineering-DNA lens: measure-first, subtract before adding, physics-first constraints, empirical cross-axis arbitration, adversarial verify. Fans out subagents; composes the fps-perf + startup-perf workflows as sub-steps.',
   whenToUse: 'When the user wants a holistic speed pass over BOTH cold-compile time AND runtime FPS, ranked and arbitrated as one budget rather than two independent passes. Honours the measured-dead-lever record (FS source-shrink is dead; atlas activation is the only real compile lever) so it does not re-chase refuted work.',
   phases: [
     { title: 'Constraints', detail: 'P5 physics-first: enumerate the hard speed constraints (ANGLE cold-HLSL translation cost is intrinsic + driver-cached; no getProgramBinary; VS 14-oct broadShapeM x3/vertex; behind-limb cull on, frustum off; measured-dead levers from recall) before any agent proposes a cut' },
@@ -112,7 +112,7 @@ log(compile  ? ('compile numbers provided: ' + JSON.stringify(compile))
 phase('Map')
 const maps = await parallel(SPEED_FILES.map(f => () =>
   agent(
-    'Read ' + f.path + ' in the TV8 repo and map every SPEED cost it carries across BOTH axes (focus: ' + f.lens + '). ' +
+    'Read ' + f.path + ' in the mapspinner repo and map every SPEED cost it carries across BOTH axes (focus: ' + f.lens + '). ' +
     'Judge each cost through the synthesized-engineering-DNA lens:\n' + DNA.map(d => '  - ' + d).join('\n') + '\n' +
     'For each cost return name, file, axis (compile|fps|both), stage, perWhat, a concrete cutIdea, the dnaPrinciple that most justifies attacking it, ' +
     'measuredDead (true for FS source-shrink as a cold-compile lever and any other refuted lever), crossAxisRisk (does cutting it regress the other axis?), ' +
@@ -130,7 +130,7 @@ log('mapped ' + costs.length + ' speed costs (' + live.length + ' live, ' + dead
 // --- Arbitrate (P2 + P9 + P12) -- one budget across both axes, cross-axis conflicts resolved -
 phase('Arbitrate')
 const ranking = await agent(
-  'You are arbitrating the TV8 speed budget across BOTH axes (cold-compile time AND runtime FPS) as ONE ranked plan, ' +
+  'You are arbitrating the mapspinner speed budget across BOTH axes (cold-compile time AND runtime FPS) as ONE ranked plan, ' +
   'through the synthesized-engineering-DNA lens. Rank the LIVE levers below into a single ordered list, highest-payoff first, ' +
   'applying:\n' +
   '  - P2 subtractive: a lever that REMOVES a cost outright outranks one that merely speeds it.\n' +
@@ -162,7 +162,7 @@ phase('Cut')
 const cuts = await pipeline(
   ranking.ranked.sort((a, b) => a.rank - b.rank),
   sec => agent(
-    'Propose the concrete code edit for TV8 speed lever "' + sec.name + '" (axis ' + sec.axis + ', expected saving ' + sec.expectedSaving + ', principle ' + (sec.dnaPrinciple || 'n/a') + '). ' +
+    'Propose the concrete code edit for mapspinner speed lever "' + sec.name + '" (axis ' + sec.axis + ', expected saving ' + sec.expectedSaving + ', principle ' + (sec.dnaPrinciple || 'n/a') + '). ' +
     'Give the exact file, the old snippet, the new snippet, and the WITNESS that proves it with no regression on EITHER axis: ' +
     'for FPS -> re-measured __diag.gpuTimer fullMs/fsMs delta AND continuous normals across a tile boundary (no seam/popping) AND glError 0; ' +
     'for compile -> translated-HLSL size delta via WEBGL_debug_shaders OR a lab gate (maxElev/landFrac/hypsometry unchanged) OR node --check, AND a note that it does NOT regress FPS. ' +
@@ -176,7 +176,7 @@ const cuts = await pipeline(
         }, required: ['file', 'witness', 'safe'] } }
   ),
   (proposal, sec) => agent(
-    'Adversarially verify this TV8 speed cut for "' + sec.name + '" (axis ' + sec.axis + '). Could it: reintroduce a tile-edge seam, break LOD invariance, ' +
+    'Adversarially verify this mapspinner speed cut for "' + sec.name + '" (axis ' + sec.axis + '). Could it: reintroduce a tile-edge seam, break LOD invariance, ' +
     'change the rendered terrain (shape/biome/lighting), break a uniform, fail to compile, OR REGRESS THE OTHER SPEED AXIS (an FPS cut that bloats compile, or a compile cut that adds per-pixel/per-vertex work)? ' +
     'Is it a measured-dead lever (FS source-shrink for cold compile) dressed up? Default to safe=false if uncertain. Proposal:\n' + JSON.stringify(proposal, null, 2),
     { label: 'verify:' + sec.name, phase: 'Cut', schema: {

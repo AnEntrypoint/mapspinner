@@ -20,7 +20,7 @@ function maxDelta(override, N = 2500) {
 }
 
 test('uLandBias shifts elevation everywhere', () => {
-  // landBias is the primary lever in composeHeight (h = prolandTerrainH * 750000 + uLandBias).
+  // landBias is the primary lever in composeHeight (h = fractalTerrainH * 750000 + uLandBias).
   // Shifting it by 50000 must change elevation by at least that much somewhere.
   assert.ok(maxDelta({ uLandBias: -100000 + 50000 }) > 1000, 'uLandBias must shift elevation')
 })

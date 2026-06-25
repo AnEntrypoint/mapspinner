@@ -480,8 +480,8 @@ export async function initMapspinnerRender(gl, opts = {}) {
   // Diagnostics-only readout (NOT a branch): exposes the float-linear probe outcome for a witness/CLI.
   try { if (typeof window !== 'undefined') window.__terrainConfig = { floatLinearOK: _halfFloatLinearOK }; } catch(_){}
 
-  // ALTITUDE-DRIVEN OCTAVE CLAMP (ff-tv8-planet-opt / vp-tv8-terrain-perf, 2026-06-19). The dominant
-  // GPU cost is VERTEX-bound: broadShapeM (12 octaves) runs ~5x/vertex (the inline geometry height +
+  // ALTITUDE-DRIVEN OCTAVE CLAMP (2026-06-19). The dominant
+  // GPU cost is VERTEX-bound: the fractal (12 octaves) runs ~5x/vertex (the inline geometry height +
   // 4 FD normal taps, terrain.glsl:1102-1109) across GRID^2 verts/tile x ~500-900 visible tiles. The
   // finest broadShapeM octaves (o>=6) have absolute world wavelengths of a few km; at high altitude
   // every visible tile spans many km/pixel so those octaves are GLOBALLY sub-pixel and contribute
@@ -1076,7 +1076,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     const _fBlend = Math.min(1.0, Math.max(0.0, (alt - 500000.0) / 4500000.0));
     const farGround = Math.max(horizon, alt * 8.0);
     const far = farGround * (1.0 - _fBlend) + camDist * _fBlend;
-    // ALTITUDE OCTAVE CLAMP (ff-tv8-planet-opt): drive the per-frame broadShapeM octave count from camera
+    // ALTITUDE OCTAVE CLAMP: drive the per-frame fractal octave count from camera
     // altitude (see _clampOcts). Scaled by R/Earth so a small-radius consumer planet gets the same RELATIVE
     // cut. Read by setComposeHeightUniforms(U) below; the probe/bake leave _octClampAlt at 0 (full octaves)
     // so near-ground collision never diverges from the rendered surface. window.__altOctClamp===false rolls back.

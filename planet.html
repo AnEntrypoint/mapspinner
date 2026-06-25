@@ -191,7 +191,7 @@ function rotAxis(v,k,a){
 const keys={};
 window.__keys = keys;   // expose so __diag.flyForward can drive the REAL W-key motion path
 
-// VIEWPOINTS (tv8-viewpoints): Ctrl+V jumps to a high-elevation overlook; Space
+// VIEWPOINTS: Ctrl+V jumps to a high-elevation overlook; Space
 // resets to the space view. With the basis camera we just SET pos + aim fwd/up
 // directly (no yaw/pitch tween -- the per-frame up-alignment + free-fly handles
 // orientation). Kept simple and instant.
@@ -645,7 +645,7 @@ function frameLoop(){
     const mspfInstant = Math.max(0.001, frameMs);
     emaMspf = (emaMspf === 0) ? mspfInstant : (emaMspf * 0.9 + mspfInstant * 0.1);
     const fps = 1000 / emaMspf;
-    document.title = `TerrainView8 - fps: ${fps.toFixed(6)}, mspf: ${emaMspf.toFixed(6)}`;
+    document.title = `mapspinner - fps: ${fps.toFixed(6)}, mspf: ${emaMspf.toFixed(6)}`;
     frame++;
     // ---- DYNAMIC RESOLUTION (2026-06-16/17, "144fps PROPERLY space->deck, no transfer spikes"): hold the
     // target framerate by dialing the HITCH-FREE viewport-DRS (gl-render __vdrsScale) -- NEVER by dropping
@@ -1160,7 +1160,7 @@ window.__diag = {
   // (G) full report at the current view -- one call answers all three issues.
   async report(){ return { view:{alt:+window.__dbg.altKm().toFixed(1), sunDotUp:this.sunDotUp()},
     census:this.quadCensus(), litVsAlbedo:await this.litVsAlbedo(), blackEdge:await this.blackEdge() }; },
-  // (gen tuning lives in window.__gen now; the old wasm setGen/getGen/densitySweep helpers
+  // (gen tuning lives in window.__gen now; the old setGen/getGen/densitySweep helpers
   // are gone with the deleted cascade producer.)
 
   // =========================================================================
@@ -2158,8 +2158,8 @@ window.__diag = {
       return { landFrac:+(land/Math.max(land+sea,1)).toFixed(3), discPixels:land+sea }; },
     // __biomeAt(dir): classify the anchor climate at a world dir into a DISCRETE biome name +
     // the raw temp/humid/seaBias. Mirrors the GLSL biomeClassColor (terrain.glsl displayMode 9)
-    // so the live classification and the rendered biome map agree. seaBias>0 ~ land (the wasm
-    // cascade also shifts h, so this is the anchor-level class, not the per-pixel elevation).
+    // so the live classification and the rendered biome map agree. seaBias>0 ~ land (the fractal
+    // height also shifts h, so this is the anchor-level class, not the per-pixel elevation).
     biomeAt(dir){ const f=this._f(); if(!f) return {err:'no-hpf'};
       const L=Math.hypot(dir[0],dir[1],dir[2])||1; const d=[dir[0]/L,dir[1]/L,dir[2]/L];
       const s=f.sampleDir(d); const t=s.temp, h=s.humidity, sea=s.seaBias;

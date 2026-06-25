@@ -1,4 +1,4 @@
-// anchor-field.js -- the Hierarchical Parameter Field (HPF) that drives TV8 terrain
+// anchor-field.js -- the Hierarchical Parameter Field (HPF) that drives the terrain
 // generation from a stack of fixed, spatially-indexed anchor quadtrees.
 //
 // DESIGN (user directive): a HIERARCHY of parameters across scale bands, each band its
@@ -262,7 +262,7 @@ const BANDS = [
 ];
 
 // the parameter keys the field accumulates (sum across bands for additive ones, the field's
-// contract with the wasm bias hook + the shader material).
+// contract with the shader material).
 const PARAM_KEYS = ['seaBias', 'elevAmp', 'temp', 'humidity', 'erosion', 'roughness'];
 const K = PARAM_KEYS.length;
 const PIDX = Object.create(null); PARAM_KEYS.forEach((k, i) => PIDX[k] = i);

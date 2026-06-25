@@ -1,6 +1,6 @@
 export const meta = {
   name: 'shader-bottleneck-dna',
-  description: 'Profile + eliminate every possible bottleneck in the TV8 shaders (terrain.glsl VS+FS, water path, probe variant) through the synthesized-engineering-DNA lens: physics-first constraints, measure-first, subtract-before-add, adversarial refute-by-default verify. Fans out per-surface finders + web-research agents; outputs a ranked, witness-bearing cut plan.',
+  description: 'Profile + eliminate every possible bottleneck in the mapspinner shaders (terrain.glsl VS+FS, water path, probe variant) through the synthesized-engineering-DNA lens: physics-first constraints, measure-first, subtract-before-add, adversarial refute-by-default verify. Fans out per-surface finders + web-research agents; outputs a ranked, witness-bearing cut plan.',
   whenToUse: 'When the user wants an exhaustive shader-only bottleneck sweep (runtime ALU/varying/branch cost AND FXC/ANGLE compile shape), honouring the refuted-lever record (VS no-loss frontier, FS source-shrink dead, atlas faceting) so no dead lever is re-chased.',
   phases: [
     { title: 'Constraints', detail: 'P5 physics-first: fix the hard priors as data -- VS-bound (96%), FD 3-tap irreducible at no-loss, FXC uOctMax/fdIters invariants, refuted-lever list' },
@@ -108,7 +108,7 @@ phase('Find')
 const found = await pipeline(
   SURFACES,
   s => agent(
-    'TV8 shader bottleneck finder, surface "' + s.key + '". Read src/shaders/terrain.glsl (and src/gl-render.js for uniform/varying wiring) and enumerate EVERY cost on this lens: ' + s.lens + '\n' +
+    'mapspinner shader bottleneck finder, surface "' + s.key + '". Read src/shaders/terrain.glsl (and src/gl-render.js for uniform/varying wiring) and enumerate EVERY cost on this lens: ' + s.lens + '\n' +
     'Judge through the DNA lens:\n' + DNA.map(d => '  - ' + d).join('\n') + '\n' +
     'HARD CONSTRAINTS (violating proposals are auto-dead):\n' + CONSTRAINTS.map(c => '  - ' + c).join('\n') + '\n' +
     (measured ? 'MEASURED gpuTimer split: ' + JSON.stringify(measured) + '\n' : 'No fresh measurement passed -- flag every estSaving UNMEASURED.\n') +
@@ -121,7 +121,7 @@ const found = await pipeline(
     return parallel(live.map(f => () =>
       parallel(['fidelity-correctness', 'fxc-invariant', 'measurability'].map(lens => () =>
         agent(
-          'Adversarially REFUTE this TV8 shader cut candidate via the ' + lens + ' lens. ' +
+          'Adversarially REFUTE this mapspinner shader cut candidate via the ' + lens + ' lens. ' +
           (lens === 'fidelity-correctness' ? 'Could it visibly change terrain shape/material/lighting, seam at tile edges, or break LOD invariance? Read the actual code at the cited location.' :
            lens === 'fxc-invariant' ? 'Does it reintroduce a constant-bound fractal loop, difference composeHeight across call sites, drop a highp island, or otherwise risk the FXC d3d11 mis-translation class? Read the cited code.' :
            'Is the claimed saving actually measurable with the named witness, and plausibly non-noise given the VS-bound 96% prior? An FS-only cut at the deck is likely noise.') +
@@ -144,7 +144,7 @@ log('candidates: ' + all.length + ' -> confirmed ' + confirmed.length + ', refut
 // --- Rank (single budget) --------------------------------------------------------------------
 phase('Rank')
 const ranking = confirmed.length ? await agent(
-  'Rank these CONFIRMED TV8 shader cuts into ONE ordered plan (highest payoff first) through the DNA lens: ' +
+  'Rank these CONFIRMED mapspinner shader cuts into ONE ordered plan (highest payoff first) through the DNA lens: ' +
   'P2 removal>speedup, P9 worst-rung (deck FPS, d3d11 path) first, P12 per-frame>once-cold, P7 measured>estimated. ' +
   'Batch note: all terrain.glsl edits ship as ONE reload. Confirmed cuts:\n' + JSON.stringify(confirmed.map(c => c.finding), null, 2),
   { label: 'rank', phase: 'Rank', schema: { type: 'object', properties: {

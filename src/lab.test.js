@@ -22,7 +22,7 @@ test('sampleField: deterministic + Earth-like elevation range', () => {
   for (let i = 0; i < a.elev.length; i++) assert.equal(a.elev[i], b.elev[i])   // byte-identical = deterministic
   assert.ok(Number.isFinite(a.min) && Number.isFinite(a.max))
   assert.ok(a.max > a.min, 'has relief')
-  // Range widened 2026-06-24: proland fractal (sample_fractal_terrain * 750000) produces peaks up to ~280km;
+  // Range widened 2026-06-24: the fractal (sample_fractal_terrain * 750000) produces peaks up to ~280km;
   // landBias=-100000 pushes many directions to ocean cap. finite + deterministic is the key invariant.
   assert.ok(a.min > -360000 && a.max < 500000, `Earth-like range, got [${a.min},${a.max}]`)
   assert.ok(a.landFrac >= 0 && a.landFrac <= 1)

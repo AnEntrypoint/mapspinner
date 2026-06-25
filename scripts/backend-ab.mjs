@@ -74,7 +74,7 @@ async function measure(name, port) {
 }
 
 for (const cfg of CFG) {
-  spawn(CHROME, [`--user-data-dir=C:/dev/tv8/.gm/tmp/ab-${cfg.name}`, `--remote-debugging-port=${cfg.port}`,
+  spawn(CHROME, [`--user-data-dir=${process.cwd()}/.gm/tmp/ab-${cfg.name}`, `--remote-debugging-port=${cfg.port}`,
     '--no-first-run', '--no-default-browser-check', ...cfg.args, 'http://localhost:8080/planet.html'],
     { detached: true, stdio: 'ignore' }).unref();
 }

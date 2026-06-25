@@ -3,10 +3,9 @@
 // globals the render reads per-frame; HPF band scales go through the anchor field; biome colors
 // are read live by gl-render.
 //
-// After the C++/wasm + cascade/producer deletion (GPU one-fractal), the old elevation noiseAmp
-// cascade + material ortho-noise tables are GONE: they fed the deleted wasm PL.setNoiseAmp/
-// setSeaBias/setOrthoNoiseAmp setters, which no longer exist. Only the params below still drive
-// anything, so the panel shows only live knobs.
+// After the cascade/producer deletion (GPU one-fractal), the old elevation noiseAmp cascade +
+// material ortho-noise tables are GONE: they fed setters that no longer exist. Only the params
+// below still drive anything, so the panel shows only live knobs.
 //
 // __gen.defaults  - canonical default for every field (exact reset).
 // __gen.state     - current values (mutated by sliders / set()).

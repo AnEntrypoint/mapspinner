@@ -106,7 +106,7 @@ export function makeHeight(U, hpfSample) {
     return (((h0 + h1) + h2) / 3.0);
   }
 
-  function prolandTerrainH(dir0) {
+  function fractalTerrainH(dir0) {
     let p = g.mul(g.normalize(dir0), 3.0);
     let raw = sample_fractal_terrain(p);
     let h = ((raw - 0.17) * 0.6);
@@ -150,7 +150,7 @@ export function makeHeight(U, hpfSample) {
   }
 
   function composeHeight(dir0, faceLocal, tileM) {
-    let frac = prolandTerrainH(dir0);
+    let frac = fractalTerrainH(dir0);
     let h = ((frac * 750000.0) + U.uLandBias);
     if ((h < 0.0)) {
       h = g.max((h * 1.25), (-350000.0));

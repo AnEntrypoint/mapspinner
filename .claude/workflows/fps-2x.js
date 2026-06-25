@@ -1,6 +1,6 @@
 export const meta = {
   name: 'fps-2x',
-  description: 'Exhaustive TV8 FPS-doubling sweep: fan out per-surface finders for VISUAL-NEUTRAL frame-time cuts, adversarially verify each preserves the render byte-for-byte, arbitrate into one ranked cut plan toward a ~2x target.',
+  description: 'Exhaustive mapspinner FPS-doubling sweep: fan out per-surface finders for VISUAL-NEUTRAL frame-time cuts, adversarially verify each preserves the render byte-for-byte, arbitrate into one ranked cut plan toward a ~2x target.',
   whenToUse: 'When the user wants every possible FPS win with ZERO visual change (the "double the fps, do not touch the look" ask). Broader + more adversarial than fps-perf: covers VS-vertex-throughput, FS, CPU-frame, draw-state, LOD/quad-count, memory/bandwidth, AND dead-code, and every candidate must carry a same-pose visual-neutrality witness (reliefSD/albedoSD/shadingSD + screenshot) or it is dropped. Needs a headed browser for __diag.gpuTimer (EXT_disjoint_timer_query_webgl2 is absent in headless node-gl); the chain feeds measured numbers in via args.measured.',
   phases: [
     { title: 'Map',       detail: 'parallel readers map every per-frame runtime cost across 7 surfaces' },
@@ -12,7 +12,7 @@ export const meta = {
 }
 
 // ----------------------------------------------------------------------------
-// TV8 fps-2x. The DOCTRINE this workflow is built on (all LIVE-MEASURED, ANGLE AMD D3D11,
+// mapspinner fps-2x. The DOCTRINE this workflow is built on (all LIVE-MEASURED, ANGLE AMD D3D11,
 // oblique 6km deck, 537 quads, GRID 11):
 //   - fullMs 21.1 = vsRasterMs 17.2 (81%) + fsMs 3.9 (19%). VS+raster is the budget.
 //   - The bottleneck is VERTEX/TRIANGLE THROUGHPUT (vertex count x raster), NOT per-vertex ALU:
@@ -61,7 +61,7 @@ const COST_SCHEMA = {
 phase('Map')
 const maps = await parallel(SURFACES.map(s => () =>
   agent(
-    `Read the relevant TV8 files for the "${s.key}" surface (${s.path}) and map every per-frame RUNTIME cost it carries. Lens: ${s.lens}\n\n` +
+    `Read the relevant mapspinner files for the "${s.key}" surface (${s.path}) and map every per-frame RUNTIME cost it carries. Lens: ${s.lens}\n\n` +
     `HARD CONSTRAINT: the goal is ~2x FPS with ZERO visual change. For each cost give name, surface="${s.key}", stage, perWhat, a concrete cutIdea, visualNeutral (true ONLY if it cannot change the rendered image), the exact visualWitness that proves it, expectedSaving, regressionRisk.\n` +
     `DOCTRINE (live-measured, do not contradict without measurement): bottleneck is vertex/triangle THROUGHPUT not ALU; octave/THC/ALU cuts are DEAD (fullMs flat); FS is ~19%; GRID 11->8 needs per-pixel biome first; forward-normal + analytic-derivative + baked-octa normals are REFUTED. Do NOT propose those. Do NOT edit anything; read+map only.`,
     { label: `map:${s.key}`, phase: 'Map', schema: COST_SCHEMA }
@@ -73,7 +73,7 @@ phase('Rank')
 const measured = (typeof args === 'object' && args && args.measured) ? args.measured : null
 log(measured ? `measured gpuTimer split: ${JSON.stringify(measured)}` : 'no args.measured passed; ranking from the live-measured doctrine baseline (full 21.1 / vs 17.2 / fs 3.9 @ deck)')
 const ranking = await agent(
-  `Arbitrate these TV8 per-frame costs into a ranked FPS-doubling plan (target ~2x, ZERO visual change). ` +
+  `Arbitrate these mapspinner per-frame costs into a ranked FPS-doubling plan (target ~2x, ZERO visual change). ` +
   (measured ? `MEASURED split (authoritative): ${JSON.stringify(measured)}. ` : `Baseline doctrine: full 21.1ms = vs 17.2 (81%) + fs 3.9 (19%) @ oblique 6km deck. `) +
   `Drop any candidate that is not visualNeutral or contradicts the dead-lever record (ALU/octave/THC/forward-normal/analytic-derivative). ` +
   `Weight by expectedSaving x confidence. The headline lever (per-pixel biome -> GRID 11->8) and FS-deadwork + CPU/draw cuts likely dominate. Costs:\n${JSON.stringify(costs, null, 2)}`,
@@ -91,7 +91,7 @@ phase('Propose')
 const cuts = await pipeline(
   ranking.ranked.sort((a, b) => a.rank - b.rank),
   sec => agent(
-    `Propose the concrete code edit for TV8 FPS lever "${sec.name}" (${sec.surface}, expected ${sec.expectedSaving}). ` +
+    `Propose the concrete code edit for mapspinner FPS lever "${sec.name}" (${sec.surface}, expected ${sec.expectedSaving}). ` +
     `Give file, exact oldSnippet, newSnippet, the re-measured __diag.gpuTimer fullMs delta to expect, and the VISUAL-NEUTRALITY witness (${sec.visualWitness}): same-pose reliefSD/albedoSD/shadingSD within tolerance + screenshot identical + glError 0. If the edit could change ANY pixel, say safe=false.`,
     { label: `propose:${sec.name}`, phase: 'Propose', schema: { type: 'object', properties: {
       file: { type: 'string' }, oldSnippet: { type: 'string' }, newSnippet: { type: 'string' },
@@ -99,7 +99,7 @@ const cuts = await pipeline(
     }, required: ['file', 'visualWitness', 'safe'] } }
   ),
   (proposal, sec) => agent(
-    `Adversarially REFUTE this TV8 FPS cut for "${sec.name}". Could it change the rendered image (any pixel), reintroduce a tile-edge seam, break LOD invariance, alter biome/lighting/shape, break a uniform, regress a refuted lever, or fail to compile? Default real=false/safe=false if ANY doubt. Proposal:\n${JSON.stringify(proposal, null, 2)}`,
+    `Adversarially REFUTE this mapspinner FPS cut for "${sec.name}". Could it change the rendered image (any pixel), reintroduce a tile-edge seam, break LOD invariance, alter biome/lighting/shape, break a uniform, regress a refuted lever, or fail to compile? Default real=false/safe=false if ANY doubt. Proposal:\n${JSON.stringify(proposal, null, 2)}`,
     { label: `verify:${sec.name}`, phase: 'Verify', schema: { type: 'object', properties: {
       real: { type: 'boolean' }, safe: { type: 'boolean' }, visualRisk: { type: 'string' }, reason: { type: 'string' },
     }, required: ['real', 'safe', 'reason'] } }
