@@ -799,6 +799,19 @@ export async function initMapspinnerRender(gl, opts = {}) {
   if(!gl.getProgramParameter(upProg, gl.LINK_STATUS)) throw new Error('upscale link: '+gl.getProgramInfoLog(upProg));
   const upUTex = gl.getUniformLocation(upProg, 'uTex');
   const upUScale = gl.getUniformLocation(upProg, 'uUvScale');
+  // SHARED-DEPTH write program: stamp the planet depth (_vdrsDepth) into the bound (default/MSAA)
+  // framebuffer via gl_FragDepth so a consumer scene (e.g. a THREE world) is OCCLUDED by the terrain.
+  // A single-sample -> MSAA blitFramebuffer of DEPTH is GL_INVALID_OPERATION (the canvas is commonly
+  // MSAA), so the previous blit silently failed and nothing was occluded -- this shader pass writes
+  // per-fragment depth and is MSAA-safe. uDepthBias pushes depth away to avoid z-fight with geometry ON
+  // the surface. Full-screen triangle reuses upVsSrc (vUv).
+  const dwFsSrc = '#version 300 es\nprecision highp float;\nuniform highp sampler2D uDepth;\nuniform float uDepthBias;\nin vec2 vUv;\nout vec4 fragColor;\nvoid main(){ gl_FragDepth = min(1.0, texture(uDepth, vUv).r + uDepthBias); fragColor = vec4(0.0); }';
+  const dwProg = gl.createProgram();
+  gl.attachShader(dwProg, rawShader(gl.VERTEX_SHADER, upVsSrc));
+  gl.attachShader(dwProg, rawShader(gl.FRAGMENT_SHADER, dwFsSrc));
+  gl.linkProgram(dwProg);
+  const dwUDepth = gl.getUniformLocation(dwProg, 'uDepth');
+  const dwUBias = gl.getUniformLocation(dwProg, 'uDepthBias');
   // PREMULTIPLIED-ALPHA composite for the half-res water (perf 2026-06-24): the half-res FBO clears to
   // (0,0,0,0); at the waterline a straight-alpha LINEAR upsample mixes water-rgb toward the cleared
   // BLACK as alpha falls 1->0, then a SRC_ALPHA blend lays partial-black over land = a black fringe
@@ -1580,18 +1593,23 @@ export async function initMapspinnerRender(gl, opts = {}) {
       gl.bindVertexArray(null);
       gl.enable(gl.DEPTH_TEST);
       // SHARED-DEPTH (window.__planetDepthToCanvas===true, opt-in): the half-res-water / VDRS path renders
-      // the planet into _vdrsFbo (full-res, with the _vdrsDepth DEPTH_COMPONENT24 texture attachment) and
-      // upscales COLOR-only to the canvas -- so a consumer (e.g. a THREE scene) drawn on top has NO planet
-      // depth to test against and its geometry draws OVER the terrain instead of being occluded by it. With
-      // the flag on, blit the planet DEPTH from _vdrsFbo (1:1, full-res) into the canvas/default framebuffer
-      // so the consumer scene depth-tests against the rendered terrain. Guarded + best-effort.
-      if (typeof window !== 'undefined' && window.__planetDepthToCanvas === true && _vdrsFbo) {
-        try {
-          gl.bindFramebuffer(gl.READ_FRAMEBUFFER, _vdrsFbo);
-          gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
-          gl.blitFramebuffer(0, 0, _vdrsW, _vdrsH, 0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight, gl.DEPTH_BUFFER_BIT, gl.NEAREST);
-        } catch (_) { /* keep color-only fallback */ }
+      // the planet into _vdrsFbo (full-res, _vdrsDepth DEPTH texture) and upscales COLOR-only to the canvas
+      // -- so a consumer scene drawn on top has NO planet depth to test against and draws OVER the terrain
+      // instead of being occluded by it. Write the planet depth into the canvas depth buffer via a SHADER
+      // PASS (gl_FragDepth from _vdrsDepth), color-masked off, depthFunc ALWAYS to stamp every planet texel.
+      // (A single-sample->MSAA blitFramebuffer of DEPTH is GL_INVALID_OPERATION -- the canvas is commonly
+      // MSAA -- so the prior blit silently failed and nothing was occluded. This shader pass is MSAA-safe.)
+      if (typeof window !== 'undefined' && window.__planetDepthToCanvas === true && _vdrsDepth) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+        gl.colorMask(false, false, false, false);
+        gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.depthFunc(gl.ALWAYS);
+        gl.disable(gl.BLEND); gl.disable(gl.CULL_FACE);
+        gl.useProgram(dwProg);
+        gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, _vdrsDepth); gl.uniform1i(dwUDepth, 0);
+        gl.uniform1f(dwUBias, (typeof window.__planetDepthBias === 'number') ? window.__planetDepthBias : 0.0);
+        gl.bindVertexArray(upVao); gl.drawArrays(gl.TRIANGLES, 0, 3); gl.bindVertexArray(null);
+        gl.colorMask(true, true, true, true); gl.depthFunc(gl.LESS);
       }
       gl.useProgram(_activeProg);   // restore the terrain program for the next frame's uniform sets
     }
