@@ -403,7 +403,11 @@ export async function initMapspinnerRender(gl, opts = {}) {
       resRead: BU('uBakeRes')?gl.getUniform(bakeProg, BU('uBakeRes')):null }; }catch(e){ dbg={err:String(e)}; }
     return { heights: out, res: THC_BAKE_RES, dbg };
   }
-  if (typeof window !== 'undefined') { window.__thcBakeReadback = bakeTileReadback; window.__thcEnsureBake = ensureBake; }
+  // Expose on globalThis (covers BOTH window and a Web Worker's self) so a headless/worker consumer --
+  // e.g. a physics collider baking patches off the GPU in the singleplayer/host worker, which has
+  // OffscreenCanvas WebGL2 but NO `window` -- can reach the THC bake. (Was `window`-only -> undefined in
+  // a Worker, so the worker collider couldn't bake.)
+  if (typeof globalThis !== 'undefined') { globalThis.__thcBakeReadback = bakeTileReadback; globalThis.__thcEnsureBake = ensureBake; }
 
   // ===== THC HEIGHT POOL + LRU (the VS-sample consumer; the FPS win) =====
   // The VS samples a baked per-tile height (O(1) texture fetch) instead of composeHeight 5x/vertex,
@@ -1575,6 +1579,20 @@ export async function initMapspinnerRender(gl, opts = {}) {
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       gl.bindVertexArray(null);
       gl.enable(gl.DEPTH_TEST);
+      // SHARED-DEPTH (window.__planetDepthToCanvas===true, opt-in): the half-res-water / VDRS path renders
+      // the planet into _vdrsFbo (full-res, with the _vdrsDepth DEPTH_COMPONENT24 texture attachment) and
+      // upscales COLOR-only to the canvas -- so a consumer (e.g. a THREE scene) drawn on top has NO planet
+      // depth to test against and its geometry draws OVER the terrain instead of being occluded by it. With
+      // the flag on, blit the planet DEPTH from _vdrsFbo (1:1, full-res) into the canvas/default framebuffer
+      // so the consumer scene depth-tests against the rendered terrain. Guarded + best-effort.
+      if (typeof window !== 'undefined' && window.__planetDepthToCanvas === true && _vdrsFbo) {
+        try {
+          gl.bindFramebuffer(gl.READ_FRAMEBUFFER, _vdrsFbo);
+          gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+          gl.blitFramebuffer(0, 0, _vdrsW, _vdrsH, 0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight, gl.DEPTH_BUFFER_BIT, gl.NEAREST);
+        } catch (_) { /* keep color-only fallback */ }
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      }
       gl.useProgram(_activeProg);   // restore the terrain program for the next frame's uniform sets
     }
     return 0;   // glError is checked via checkGlError() once per frame after quadtree (CPU/GPU pipelining)
