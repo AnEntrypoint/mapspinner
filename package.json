@@ -11,6 +11,8 @@
     "./height-gen": "./src/height-gen.js",
     "./planet-orchestrator": "./src/planet-orchestrator.js",
     "./quadtree": "./src/quadtree.js",
+    "./patch-baker": "./src/patch-baker.js",
+    "./heightfield-codec": "./src/heightfield-codec.js",
     "./*": "./src/*"
   },
   "type": "module",
