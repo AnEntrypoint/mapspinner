@@ -20,9 +20,13 @@ function writeBaseline(data) {
   console.log(JSON.stringify(data, null, 2));
 }
 
+// glsl-check now emits {ok, compiled, probe, vendor, pageErr} (no shaderCompileMs).
+// The perf-cost it gates is the headless compile+warm wall time, so MEASURE that here
+// and assert compiled===true with a finite probe (the shader actually built and ran).
 async function runGlslCheck() {
   console.log('[perf-gate] running lab.mjs glsl-check ...');
   let stdout = '', stderr = '';
+  const t0 = Date.now();
   try {
     const r = await exec(process.execPath, ['scripts/lab.mjs', 'glsl-check'], {
       cwd: new URL('..', import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'),
@@ -34,13 +38,21 @@ async function runGlslCheck() {
     console.error('[perf-gate] glsl-check failed:\n', stderr || e.message);
     process.exit(1);
   }
+  const glslCheckMs = Date.now() - t0;
   const combined = stdout + '\n' + stderr;
-  const m = combined.match(/shaderCompileMs[:\s]+(\d+)/i);
-  if (!m) {
-    console.error('[perf-gate] could not parse shaderCompileMs from output:\n', combined.slice(0, 1000));
+  const jm = combined.match(/\{[\s\S]*?"compiled"[\s\S]*?\}/);
+  let parsed = null;
+  if (jm) { try { parsed = JSON.parse(jm[0]); } catch { /* fall through */ } }
+  if (!parsed || parsed.compiled !== true) {
+    console.error('[perf-gate] glsl-check did not report compiled:true:\n', combined.slice(0, 1000));
     process.exit(1);
   }
-  return parseInt(m[1], 10);
+  if (typeof parsed.probe !== 'number' || !Number.isFinite(parsed.probe)) {
+    console.error(`[perf-gate] glsl-check probe is not a finite number (got ${JSON.stringify(parsed.probe)}); shader compiled but did not run.`);
+    process.exit(1);
+  }
+  console.log(`[perf-gate] compiled=true probe=${parsed.probe} vendor=${parsed.vendor}`);
+  return glslCheckMs;
 }
 
 async function runParity() {
@@ -58,11 +70,11 @@ async function runParity() {
 }
 
 async function main() {
-  const shaderCompileMs = await runGlslCheck();
-  console.log(`[perf-gate] shaderCompileMs = ${shaderCompileMs}`);
+  const glslCheckMs = await runGlslCheck();
+  console.log(`[perf-gate] glslCheckMs = ${glslCheckMs}`);
 
   if (UPDATE) {
-    writeBaseline({ shaderCompileMs });
+    writeBaseline({ glslCheckMs });
     await runParity();
     console.log('[perf-gate] baseline updated. PASS');
     process.exit(0);
@@ -73,12 +85,18 @@ async function main() {
     console.error('[perf-gate] no baseline found. Run with --update-baseline to create one.');
     process.exit(1);
   }
+  // accept the legacy shaderCompileMs key as the glsl-check wall-time baseline (same gate).
+  const baseMs = baseline.glslCheckMs != null ? baseline.glslCheckMs : baseline.shaderCompileMs;
+  if (baseMs == null) {
+    console.error('[perf-gate] baseline missing glslCheckMs. Run with --update-baseline to refresh.');
+    process.exit(1);
+  }
 
-  const limit = Math.round(baseline.shaderCompileMs * THRESHOLD);
-  console.log(`[perf-gate] baseline=${baseline.shaderCompileMs}ms  limit=${limit}ms (+10%)  measured=${shaderCompileMs}ms`);
+  const limit = Math.round(baseMs * THRESHOLD);
+  console.log(`[perf-gate] baseline=${baseMs}ms  limit=${limit}ms (+10%)  measured=${glslCheckMs}ms`);
 
-  if (shaderCompileMs > limit) {
-    console.error(`[perf-gate] REGRESSION: ${shaderCompileMs}ms > ${limit}ms (${((shaderCompileMs/baseline.shaderCompileMs-1)*100).toFixed(1)}% over baseline)`);
+  if (glslCheckMs > limit) {
+    console.error(`[perf-gate] REGRESSION: ${glslCheckMs}ms > ${limit}ms (${((glslCheckMs/baseMs-1)*100).toFixed(1)}% over baseline)`);
     process.exit(1);
   }
 

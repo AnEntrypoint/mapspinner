@@ -27,10 +27,18 @@ function _flat(args, n) {
   const out = []
   for (const a of args) { if (isArr(a)) { for (const c of a) out.push(c) } else out.push(a) }
   if (out.length === 1) { while (out.length < n) out.push(out[0]) }      // vecN(scalar) -> splat
-  return out.slice(0, n)
+  return out.length === n ? out : out.slice(0, n)
+}
+// vec3 is the hottest constructor (every snoise3 builds many); fast-path the two
+// dominant call shapes -- vec3(x,y,z) scalars and vec3(scalar) splat -- and fall
+// back to _flat for vec/mixed args. Same result as _flat(a,3).
+export const vec3 = (...a) => {
+  const l = a.length
+  if (l === 3) { const x = a[0], y = a[1], z = a[2]; if (!isArr(x) && !isArr(y) && !isArr(z)) return [x, y, z] }
+  else if (l === 1) { const x = a[0]; if (!isArr(x)) return [x, x, x] }
+  return _flat(a, 3)
 }
 export const vec2 = (...a) => _flat(a, 2)
-export const vec3 = (...a) => _flat(a, 3)
 export const vec4 = (...a) => _flat(a, 4)
 // integer/uint vec aliases: truncate to int (Math.trunc) for correctness with ivec3(floor(...)) etc.
 export const ivec2 = (...a) => _flat(a, 2).map(Math.trunc)
@@ -46,14 +54,41 @@ function _bin(a, b, f) {
   if (av) { const o = new Array(a.length); for (let i = 0; i < a.length; i++) o[i] = _fr(f(a[i], b)); return o }
   const o = new Array(b.length); for (let i = 0; i < b.length; i++) o[i] = _fr(f(a, b[i])); return o
 }
-export const add = (a, b) => _bin(a, b, (x, y) => x + y)
-export const sub = (a, b) => _bin(a, b, (x, y) => x - y)
-export const mul = (a, b) => _bin(a, b, (x, y) => x * y)
-export const div = (a, b) => _bin(a, b, (x, y) => x / y)
+// add/sub/mul/div are the inner-loop arithmetic; inline each (no closure call per
+// element) since they dominate the fractal octave loops. Identical result to
+// _bin(a,b,op): per-element Math.fround, full vec/vec, vec/scalar, scalar/vec, scalar/scalar.
+export const add = (a, b) => {
+  const av = isArr(a), bv = isArr(b)
+  if (!av && !bv) return _fr(a + b)
+  if (av && bv) { const n = a.length, o = new Array(n); for (let i = 0; i < n; i++) o[i] = _fr(a[i] + b[i]); return o }
+  if (av) { const n = a.length, o = new Array(n); for (let i = 0; i < n; i++) o[i] = _fr(a[i] + b); return o }
+  const n = b.length, o = new Array(n); for (let i = 0; i < n; i++) o[i] = _fr(a + b[i]); return o
+}
+export const sub = (a, b) => {
+  const av = isArr(a), bv = isArr(b)
+  if (!av && !bv) return _fr(a - b)
+  if (av && bv) { const n = a.length, o = new Array(n); for (let i = 0; i < n; i++) o[i] = _fr(a[i] - b[i]); return o }
+  if (av) { const n = a.length, o = new Array(n); for (let i = 0; i < n; i++) o[i] = _fr(a[i] - b); return o }
+  const n = b.length, o = new Array(n); for (let i = 0; i < n; i++) o[i] = _fr(a - b[i]); return o
+}
+export const mul = (a, b) => {
+  const av = isArr(a), bv = isArr(b)
+  if (!av && !bv) return _fr(a * b)
+  if (av && bv) { const n = a.length, o = new Array(n); for (let i = 0; i < n; i++) o[i] = _fr(a[i] * b[i]); return o }
+  if (av) { const n = a.length, o = new Array(n); for (let i = 0; i < n; i++) o[i] = _fr(a[i] * b); return o }
+  const n = b.length, o = new Array(n); for (let i = 0; i < n; i++) o[i] = _fr(a * b[i]); return o
+}
+export const div = (a, b) => {
+  const av = isArr(a), bv = isArr(b)
+  if (!av && !bv) return _fr(a / b)
+  if (av && bv) { const n = a.length, o = new Array(n); for (let i = 0; i < n; i++) o[i] = _fr(a[i] / b[i]); return o }
+  if (av) { const n = a.length, o = new Array(n); for (let i = 0; i < n; i++) o[i] = _fr(a[i] / b); return o }
+  const n = b.length, o = new Array(n); for (let i = 0; i < n; i++) o[i] = _fr(a / b[i]); return o
+}
 export const neg = (a) => isArr(a) ? a.map(x => -x) : -a
 
 // ---- componentwise unary / GLSL math (scalar or vec)
-const _u = (a, f) => isArr(a) ? a.map(x => _fr(f(x))) : _fr(f(a))
+const _u = (a, f) => { if (!isArr(a)) return _fr(f(a)); const n = a.length, o = new Array(n); for (let i = 0; i < n; i++) o[i] = _fr(f(a[i])); return o }
 export const floor = (a) => _u(a, Math.floor)
 export const ceil = (a) => _u(a, Math.ceil)
 export const absf = (a) => _u(a, Math.abs)
@@ -93,8 +128,11 @@ export const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * 
 
 // ---- swizzle read: sw([x,y,z],'xz') -> [x,z]; sw(v,'x') -> scalar
 const _SI = { x: 0, y: 1, z: 2, w: 3, r: 0, g: 1, b: 2, a: 3, s: 0, t: 1, p: 2, q: 3 }
+// single-char swizzle is the hot path (snoise3/h3 read .x/.y/.z thousands of times);
+// switch on the char avoids a megamorphic keyed object load. Same mapping as _SI.
+const _si1 = (c) => { switch (c) { case 'x': case 'r': case 's': return 0; case 'y': case 'g': case 't': return 1; case 'z': case 'b': case 'p': return 2; default: return 3 } }
 export function sw(v, sel) {
-  if (sel.length === 1) return v[_SI[sel]]
+  if (sel.length === 1) return v[_si1(sel)]
   const o = new Array(sel.length); for (let i = 0; i < sel.length; i++) o[i] = v[_SI[sel[i]]]; return o
 }
 
