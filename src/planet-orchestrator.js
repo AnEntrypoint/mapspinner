@@ -455,7 +455,11 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
     if (!moved) {
       const cam2 = { eye: camWorldPos, center: camTarget, up: camUp, fovy, displayMode, surfElev };
       render.render(c.quads, cam2, sun, time);
-      const glError = render.checkGlError();
+      // gl.getError() forces a full GPU pipeline flush/sync; this STATIC-frame branch runs every frame
+      // the camera holds still (the planet caches its quad set), so an unconditional check stalled ~5.5%
+      // of frame time in a settled profile. Gate it behind window.__glCheck exactly like the moved-frame
+      // path below (line ~912) -- diagnostics opt in, production pays nothing.
+      const glError = (typeof window !== 'undefined' && window.__glCheck) ? render.checkGlError() : 0;
       // Phase 2 fix: also re-draw vegetation on STATIC frames (the GPU instance buffer is
       // still valid from the last rebuild). Without this, trees vanished whenever the
       // camera held still (the static branch returned before the veg draw).
