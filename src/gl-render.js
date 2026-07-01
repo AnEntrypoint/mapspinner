@@ -1570,6 +1570,33 @@ export async function initMapspinnerRender(gl, opts = {}) {
           gl.drawArrays(gl.TRIANGLES, 0, 3);
           gl.disable(gl.BLEND); gl.depthMask(true); gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE);
           gl.useProgram(prog);
+          // SHARED-DEPTH FOR WATER (fix: 'objects draw over water even when under it'): the half-res water
+          // pass composites COLOR-only, so the water surface has NO representation in _vdrsDepth (the depth
+          // texture the __planetDepthToCanvas writeback stamps to the canvas). A consumer (three) scene then
+          // tests only against TERRAIN depth and any object BELOW the water surface draws OVER the water.
+          // Fix: re-draw the water mesh DEPTH-ONLY into _vdrsFbo (colorMask off, depthTest LESS, depthMask on)
+          // so _vdrsDepth gains the sea-level water-surface depth wherever water is in front of terrain; the
+          // existing writeback then carries water depth to the canvas and submerged consumer geometry is
+          // occluded. VS pins the mesh to sea level (uIsWater=1); the FS's vH>1 discard drops water directly
+          // under land so land-fronting terrain still wins. Gated on the consumer opting into shared depth.
+          // (Depth-only, no color, no blend -> cheap; reuses the coarse water mesh already resident.)
+          if (typeof window !== 'undefined' && window.__planetDepthToCanvas === true && window.__waterDepthShareOff !== true && _vdrsDepth) {
+            gl.bindFramebuffer(gl.FRAMEBUFFER, _vdrsFbo);
+            gl.viewport(0, 0, Math.max(1, Math.round(_vW*_vrs)), Math.max(1, Math.round(_vH*_vrs)));
+            gl.colorMask(false, false, false, false);
+            gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LESS); gl.depthMask(true); gl.disable(gl.BLEND);
+            gl.enable(gl.CULL_FACE); gl.cullFace(gl.FRONT); gl.frontFace(gl.CCW);
+            gl.uniform1f(U('uIsWater'), 1.0);
+            gl.uniform1f(U('uOccludeDepth'), 0.0);   // no FS scene-depth occlusion in this depth-only pass
+            gl.bindBuffer(gl.ARRAY_BUFFER, wvbo); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, wibo);
+            gl.drawElementsInstanced(gl.TRIANGLES, waterIndices.length, gl.UNSIGNED_INT, 0, wn);
+            gl.bindBuffer(gl.ARRAY_BUFFER, vbo); gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+            gl.uniform1f(U('uIsWater'), 0.0);
+            gl.colorMask(true, true, true, true);
+            if (typeof window !== 'undefined') window.__waterDepthShared = (window.__waterDepthShared|0) + 1;
+          }
         }
         if (typeof window !== 'undefined') window.__lastWaterQuads = wn;
       }
