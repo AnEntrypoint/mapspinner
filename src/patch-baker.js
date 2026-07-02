@@ -161,5 +161,30 @@ export function createPatchHeightFn({ baker, frame, maxLevel = 11, offsetY = 0, 
     const r2 = x * x + z * z, s = r2 / (R * R), sq = Math.sqrt(1 + s), drop = r2 / R / ((sq + 1) * sq)
     return (abs - aH) - drop + offsetY
   }
-  return { heightFn, patchSpan, res, spacing: visualSpacing, maxLevel }
+  // PREFETCH (2026-07-02, non-blocking-fallback follow-up): heightFn's non-blocking bakeTileAsync path
+  // always misses (falls back to the CPU fractal) the FIRST time a patch cell is entered, since the bake
+  // is only ISSUED on that call and harvested on a later one. During sustained movement the player keeps
+  // entering never-before-seen cells, so misses recur continuously rather than being a one-time cost.
+  // prefetchAround(x,z) issues bakes for the 3x3 patch neighborhood around a position (skipping the
+  // center cell, which heightFn's own call already covers) BEFORE the player's next placement/render
+  // lookup needs them -- call once per frame from the moving entity's (or camera's) position. Each issue
+  // is a single bakeTileAsync call (immediate return, no wait); a cell already cached is skipped, and
+  // re-issuing an already-in-flight cell just re-marks the same in-flight key (cheap, not wrong -- see
+  // bakeTileAsync's single _asyncTileKey slot). blocking:true bakers (server/host collider) never need
+  // this -- prefetch only pays off the async miss cost, which only exists on the non-blocking path.
+  function prefetchAround(x, z) {
+    const d = frame.localToDir(x, z)
+    const { face, ox, oy } = baker.dirToFace(d)
+    const pi0 = Math.floor(ox / patchSpan), pj0 = Math.floor(oy / patchSpan)
+    for (let dj = -1; dj <= 1; dj++) {
+      for (let di = -1; di <= 1; di++) {
+        if (di === 0 && dj === 0) continue
+        const pi = pi0 + di, pj = pj0 + dj
+        const key = face + ':' + pi + ':' + pj
+        if (cache.has(key)) continue
+        if (typeof baker.bakeTileAsync === 'function') baker.bakeTileAsync(face, pi * patchSpan, pj * patchSpan, patchSpan, 0)
+      }
+    }
+  }
+  return { heightFn, prefetchAround, patchSpan, res, spacing: visualSpacing, maxLevel }
 }
