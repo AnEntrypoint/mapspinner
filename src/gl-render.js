@@ -375,6 +375,23 @@ export async function initMapspinnerRender(gl, opts = {}) {
   const bakeVao = gl.createVertexArray();
   // bake ONE tile into bakeTex + read it back (Float32Array of THC_BAKE_RES^2 heights). Returns null
   // until the program is built (lazy). NON-DESTRUCTIVE: does not touch the live render path.
+  //
+  // PBO+FENCE READBACK (2026-07-02, fps-drop investigation): a plain gl.readPixels here was measured as
+  // the single dominant live-frame cost (~3.3ms/frame, ~48% of the 6.94ms 144Hz budget) -- it is a FULL
+  // CPU<-GPU pipeline stall exactly like the sampleGroundM probe was before its 2026-06-16 async fix (see
+  // that fix's comment above). This callsite CANNOT go fully async the same way (return null immediately,
+  // harvest next call) without a caller-side rewrite: patch-baker.js's bakeTile() retry-loops up to 12x
+  // synchronously with NO yield between attempts, so a null-then-poll pattern here would just busy-spin
+  // GL calls instead of stalling on one -- same wall-clock cost, worse (12x draw+bindFramebuffer calls).
+  // Correctness constraint: the deterministic bake must stay byte-identical for server/client collider +
+  // placement parity, so a stale/wrong-tile heights array is not acceptable, only a bounded stall is.
+  // Middle ground: readPixels into a PIXEL_PACK_BUFFER (still synchronous call) is measurably cheaper on
+  // most drivers than the default readPixels-into-a-typed-array path (avoids one extra host-side copy +
+  // lets the driver choose a faster DMA transfer), and a short (not 0ms) clientWaitSync poll spin gives
+  // the GPU a chance to finish the draw+copy before the CPU blocks, shrinking (not eliminating) the stall
+  // versus reading immediately after gl.flush(). This keeps the synchronous contract every caller
+  // (server collider bake, client placement lookup, both via __thcBakeReadback) already depends on.
+  let _bakePbo = null;
   function bakeTileReadback(face, ox, oy, l, level){
     if (!bakeProg){ ensureBake(); return null; }
     gl.bindFramebuffer(gl.FRAMEBUFFER, bakeFbo);
@@ -392,8 +409,25 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(BU('uBakeRes'), THC_BAKE_RES);
     gl.disable(gl.DEPTH_TEST);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
-    const buf = new Float32Array(THC_BAKE_RES*THC_BAKE_RES*4);
-    gl.readPixels(0,0,THC_BAKE_RES,THC_BAKE_RES, gl.RGBA, gl.FLOAT, buf);
+    const byteLen = THC_BAKE_RES*THC_BAKE_RES*4*4;   // RGBA float32
+    if (!_bakePbo) _bakePbo = gl.createBuffer();
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, _bakePbo);
+    gl.bufferData(gl.PIXEL_PACK_BUFFER, byteLen, gl.STREAM_READ);
+    gl.readPixels(0,0,THC_BAKE_RES,THC_BAKE_RES, gl.RGBA, gl.FLOAT, 0);   // into the PBO (driver-side DMA, no immediate host copy)
+    const fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    gl.flush();
+    // Bounded spin: give the GPU up to ~2ms to finish the draw+copy before falling through to the
+    // blocking getBufferSubData below. Shrinks the stall on the common case (bake already done by the
+    // time we poll) without changing the synchronous return contract every caller depends on.
+    const spinUntil = (typeof performance !== 'undefined' ? performance.now() : Date.now()) + 2;
+    let status = gl.clientWaitSync(fence, 0, 0);
+    while (status === gl.TIMEOUT_EXPIRED && (typeof performance !== 'undefined' ? performance.now() : Date.now()) < spinUntil) {
+      status = gl.clientWaitSync(fence, 0, 0);
+    }
+    gl.deleteSync(fence);
+    const buf = new Float32Array(byteLen / 4);
+    gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, buf);   // blocks only if the spin above didn't already observe completion
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.bindVertexArray(null);
     const out = new Float32Array(THC_BAKE_RES*THC_BAKE_RES);
@@ -403,11 +437,72 @@ export async function initMapspinnerRender(gl, opts = {}) {
       resRead: BU('uBakeRes')?gl.getUniform(bakeProg, BU('uBakeRes')):null }; }catch(e){ dbg={err:String(e)}; }
     return { heights: out, res: THC_BAKE_RES, dbg };
   }
+  // TRULY NON-BLOCKING variant (2026-07-02, evidence-driven follow-up): a live stack-trace CDP profile
+  // showed getBufferSubData -- the harvest inside bakeTileReadback above -- as the #1 measured cost even
+  // on the "async" client path (bakeTileAsync in patch-baker.js), because bakeTileAsync still called this
+  // SAME synchronous bakeTileReadback (only the outer RETRY loop was removed, not the inner readback's
+  // own bounded spin-then-block harvest). This pair (issue/poll) makes the readback itself non-blocking,
+  // matching sampleGroundM's already-proven pattern: issue() draws + starts the PBO read + fences and
+  // returns immediately (no wait at all); poll() is called on a LATER frame/tick to harvest a completed
+  // fence non-blockingly (clientWaitSync timeout 0). One in-flight bake at a time (a second issue() while
+  // one is pending is a no-op returning null) since one PBO/fence pair is reused; callers that need
+  // multiple tiles pending are the server-side blocking bakeTile() path (unaffected, still uses the
+  // original bakeTileReadback above verbatim).
+  let _bakeAsyncPbo = null, _bakeAsyncFence = null, _bakeAsyncPending = null;   // pending = {face,ox,oy,l,level}
+  function bakeTileIssueAsync(face, ox, oy, l, level){
+    if (!bakeProg){ ensureBake(); return false; }
+    if (_bakeAsyncFence) return false;   // one in flight at a time; caller polls first
+    gl.bindFramebuffer(gl.FRAMEBUFFER, bakeFbo);
+    gl.viewport(0,0,THC_BAKE_RES,THC_BAKE_RES);
+    gl.useProgram(bakeProg);
+    gl.bindVertexArray(bakeVao);
+    if (_hpfTex){ gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D_ARRAY,_hpfTex); gl.uniform1i(BU('hpfPool'),3); }
+    if (_hpfTex2){ gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D_ARRAY,_hpfTex2); gl.uniform1i(BU('hpfPool2'),5); }
+    gl.uniform1i(BU('hasHpf'), _hpfTex?1:0);
+    _octClampAlt = 0;
+    setComposeHeightUniforms(BU);
+    gl.uniform1f(BU('defRadius'), R);
+    gl.uniformMatrix3fv(BU('uBakeFrame'), false, new Float32Array(_faceFrames[face|0]));
+    gl.uniform4f(BU('uBakeOffset'), ox, oy, l, level);
+    gl.uniform1f(BU('uBakeRes'), THC_BAKE_RES);
+    gl.disable(gl.DEPTH_TEST);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    const byteLen = THC_BAKE_RES*THC_BAKE_RES*4*4;
+    if (!_bakeAsyncPbo) _bakeAsyncPbo = gl.createBuffer();
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, _bakeAsyncPbo);
+    gl.bufferData(gl.PIXEL_PACK_BUFFER, byteLen, gl.STREAM_READ);
+    gl.readPixels(0,0,THC_BAKE_RES,THC_BAKE_RES, gl.RGBA, gl.FLOAT, 0);
+    _bakeAsyncFence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    gl.flush();
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindVertexArray(null);
+    _bakeAsyncPending = { face, ox, oy, l, level };
+    return true;
+  }
+  function bakeTilePollAsync(){
+    if (!_bakeAsyncFence) return null;
+    const status = gl.clientWaitSync(_bakeAsyncFence, 0, 0);   // 0 timeout: never blocks
+    if (status !== gl.ALREADY_SIGNALED && status !== gl.CONDITION_SATISFIED) return null;   // still cooking, no stall
+    gl.deleteSync(_bakeAsyncFence); _bakeAsyncFence = null;
+    const byteLen = THC_BAKE_RES*THC_BAKE_RES*4*4;
+    const buf = new Float32Array(byteLen / 4);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, _bakeAsyncPbo);
+    gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, buf);   // fence already signaled -> this returns immediately, no stall
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    const out = new Float32Array(THC_BAKE_RES*THC_BAKE_RES);
+    for (let i=0;i<out.length;i++) out[i]=buf[i*4];
+    const meta = _bakeAsyncPending; _bakeAsyncPending = null;
+    return { heights: out, res: THC_BAKE_RES, face: meta.face, ox: meta.ox, oy: meta.oy, l: meta.l, level: meta.level };
+  }
   // Expose on globalThis (covers BOTH window and a Web Worker's self) so a headless/worker consumer --
   // e.g. a physics collider baking patches off the GPU in the singleplayer/host worker, which has
   // OffscreenCanvas WebGL2 but NO `window` -- can reach the THC bake. (Was `window`-only -> undefined in
   // a Worker, so the worker collider couldn't bake.)
-  if (typeof globalThis !== 'undefined') { globalThis.__thcBakeReadback = bakeTileReadback; globalThis.__thcEnsureBake = ensureBake; }
+  if (typeof globalThis !== 'undefined') {
+    globalThis.__thcBakeReadback = bakeTileReadback; globalThis.__thcEnsureBake = ensureBake;
+    globalThis.__thcBakeIssueAsync = bakeTileIssueAsync; globalThis.__thcBakePollAsync = bakeTilePollAsync;
+  }
 
   // ===== THC HEIGHT POOL + LRU (the VS-sample consumer; the FPS win) =====
   // The VS samples a baked per-tile height (O(1) texture fetch) instead of composeHeight 5x/vertex,
@@ -1098,9 +1193,6 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // cut. Read by setComposeHeightUniforms(U) below; the probe/bake leave _octClampAlt at 0 (full octaves)
     // so near-ground collision never diverges from the rendered surface. window.__altOctClamp===false rolls back.
     _octClampAlt = alt * (6360000.0 / R);
-    const proj = M4.perspective(cam.fovy||0.785, aspect, near, far);
-    const view = M4.lookAt(cam.eye, cam.center, cam.up||[0,1,0]);
-    const viewProj = M4.mul(proj, view);
     // CAMERA-RELATIVE projection path (fp32 precision fix). At close range the world
     // coords (~6.36e6 m) and the eye (~9.5e6 m) are huge & nearly equal; view*world
     // suffers catastrophic fp32 cancellation, throwing gl_Position off-screen and
@@ -1588,12 +1680,14 @@ export async function initMapspinnerRender(gl, opts = {}) {
             gl.enable(gl.CULL_FACE); gl.cullFace(gl.FRONT); gl.frontFace(gl.CCW);
             gl.uniform1f(U('uIsWater'), 1.0);
             gl.uniform1f(U('uOccludeDepth'), 0.0);   // no FS scene-depth occlusion in this depth-only pass
+            gl.uniform1f(U('uDepthOnly'), 1.0);      // skip the full water shading ALU -- colorMask is off, only depth matters
             gl.bindBuffer(gl.ARRAY_BUFFER, wvbo); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
             gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, wibo);
             gl.drawElementsInstanced(gl.TRIANGLES, waterIndices.length, gl.UNSIGNED_INT, 0, wn);
             gl.bindBuffer(gl.ARRAY_BUFFER, vbo); gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
             gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
             gl.uniform1f(U('uIsWater'), 0.0);
+            gl.uniform1f(U('uDepthOnly'), 0.0);
             gl.colorMask(true, true, true, true);
             if (typeof window !== 'undefined') window.__waterDepthShared = (window.__waterDepthShared|0) + 1;
           }

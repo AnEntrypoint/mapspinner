@@ -516,6 +516,7 @@ uniform float uWaterDbg;   // WATER-FS DEBUG READOUT (live via window.__waterDbg
                            // Set by window.__gpuTimer's measure frame (gl-render). 0 in normal render.
 uniform highp sampler2D uSceneDepth;  // full-res scene DEPTH texture; the half-res water FS samples it
 uniform float uOccludeDepth;          // for per-pixel terrain occlusion. 1 = occlude (half-res water pass).
+uniform float uDepthOnly;             // 1 = the shared-depth water re-draw pass (colorMask off): skip all shading ALU after the discard test, since the color is masked anyway.
 in vec4 vClimate;     // (seaBias, elevAmp, temp, humid) interpolated -- FS does NOT sample the HPF texture
 layout(location=0) out vec4 fragColor;
 
@@ -956,6 +957,11 @@ void main() {
     // none of the terrain material/atmosphere work below runs for water fragments.
     if (uIsWater > 0.5) {
         if (vH > 1.0) discard;                       // surface under land: depth test culls it anyway; discard kills shoreline shimmer
+        // Shared-depth re-draw pass: colorMask is already off (nothing written reads fragColor), so
+        // skip the whole water shading ALU below (Gerstner slope taps, fresnel/sky/glint/foam) --
+        // the rasterizer's depth write already happened via the discard test above, independent of
+        // fragColor. Preserves the exact discard set -> bit-identical depth output.
+        if (uDepthOnly > 0.5) { fragColor = vec4(0.0); return; }
         // FS DEPTH OCCLUSION (NVIDIA-portable): the half-res water has NO hardware depth test (the cross-
         // size depth blit was broken on NVIDIA/ANGLE). Sample the full-res scene depth at this fragment's
         // screen position and DISCARD where terrain is in front. gl_FragCoord.z and the sampled scene

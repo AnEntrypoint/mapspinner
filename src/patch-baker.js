@@ -57,6 +57,9 @@ export async function createPatchBaker(opts = {}) {
   // give the lazy bake-program build a moment (it compiles the _HEIGHTBAKE_ shader on first call).
   await new Promise(r => setTimeout(r, 200))
   let res = 130
+  // bakeTile: SYNCHRONOUS, blocking (bounded retry). Use for physics-collider-prep callers that need a
+  // resolved height NOW and cannot tolerate a stale/fallback value -- e.g. the server/host authoritative
+  // collider build, where a wrong or missing patch would desync physics for every connected player.
   function bakeTile(face, ox, oy, l, level = 0) {
     for (let k = 0; k < 12; k++) {
       const r = g.__thcBakeReadback(face | 0, ox, oy, l, level)
@@ -64,7 +67,44 @@ export async function createPatchBaker(opts = {}) {
     }
     return null
   }
-  return { bakeTile, dirToFace: (dir) => dirToFace(dir, opts.radius), res, planet }
+  // bakeTileAsync: TRULY NON-BLOCKING (2026-07-02, evidence-driven -- a live stack-trace CDP profile
+  // showed getBufferSubData, the harvest inside __thcBakeReadback, as the #1 measured cost even on THIS
+  // caller, because the prior version still called the same synchronous readback -- only the outer retry
+  // loop was removed, the inner bounded-spin-then-block harvest was not). Now issues via
+  // __thcBakeIssueAsync (draw + PBO read + fence, returns immediately, ZERO wait) and polls via
+  // __thcBakePollAsync (non-blocking clientWaitSync timeout 0) on each call -- first call for a tile
+  // issues the bake and returns null (caller's fallbackFn covers this frame); a LATER call for the same
+  // tile (once the fence has signaled, no CPU stall to check) harvests and returns the real heights.
+  // Falls back to the old one-shot synchronous __thcBakeReadback if the async pair isn't exposed (an
+  // older gl-render.js build without them) so this stays forward-compatible.
+  let _asyncTileKey = null
+  const _asyncDone = new Map()   // key -> heights, for a completed bake that belongs to a DIFFERENT call than the one that harvested it
+  const _ASYNC_DONE_MAX = 8      // small: bridges the one-call-behind race, not a real cache (createPatchHeightFn owns the real LRU)
+  function bakeTileAsync(face, ox, oy, l, level = 0) {
+    if (typeof g.__thcBakeIssueAsync !== 'function' || typeof g.__thcBakePollAsync !== 'function') {
+      const r = g.__thcBakeReadback(face | 0, ox, oy, l, level)
+      if (r && r.heights) { res = r.res; return r.heights }
+      return null
+    }
+    const key = face + ':' + ox + ':' + oy + ':' + l + ':' + level
+    if (_asyncDone.has(key)) { const h = _asyncDone.get(key); _asyncDone.delete(key); return h }   // a prior call already harvested this exact tile
+    // Harvest first: a completed bake from a prior issue() becomes available here, non-blocking.
+    const done = g.__thcBakePollAsync()
+    if (done) {
+      res = done.res
+      const doneKey = done.face + ':' + done.ox + ':' + done.oy + ':' + done.l + ':' + done.level
+      if (doneKey === key) return done.heights   // this call's own tile finished -- return it now
+      // A DIFFERENT tile finished than the one THIS call wants (the caller moved on since issuing it).
+      // Stash it rather than discard the completed GPU work -- the tile that requested it will very
+      // likely be re-queried again soon (patch-span-sized cells, revisited on the next lookup in that
+      // area) and will hit the stash above instead of re-issuing a redundant bake.
+      _asyncDone.set(doneKey, done.heights)
+      if (_asyncDone.size > _ASYNC_DONE_MAX) _asyncDone.delete(_asyncDone.keys().next().value)
+    }
+    if (_asyncTileKey !== key) { g.__thcBakeIssueAsync(face | 0, ox, oy, l, level); _asyncTileKey = key }
+    return null
+  }
+  return { bakeTile, bakeTileAsync, dirToFace: (dir) => dirToFace(dir, opts.radius), res, planet }
 }
 
 // Build a groundHeightLocal-compatible O(1) patch lookup over a baker, matching the FINEST display LOD
@@ -73,19 +113,35 @@ export async function createPatchBaker(opts = {}) {
 // and the per-candidate fractal (~0.4ms) becomes a per-chunk-amortized patch lookup. frame supplies
 // radius/anchorHeight/localToDir; tcfg supplies maxLevel/offsetY. Returns null if no baker.
 // fallbackFn(x,z) is used when a patch bake transiently fails (keeps determinism on a miss).
-export function createPatchHeightFn({ baker, frame, maxLevel = 11, offsetY = 0, fallbackFn }) {
+//
+// blocking (default true): the server/host authoritative collider MUST resolve to the real GPU-baked
+// height (never a stale/fallback value) since every connected player's physics derives from it -- keep
+// the bounded-retry bakeTile() there. A CLIENT-side placement/render caller should pass blocking:false:
+// veg/grass/rock placement is consumed at a distance/rate where a value resolved up to ~100 frames late
+// is indistinguishable, so bakeTileAsync's one-shot non-retried attempt (cache hit -> instant, cache miss
+// -> fallbackFn now, GPU bake completes in the background and the NEXT lookup at that cell hits cache)
+// removes the retry-loop's busy-spin GL cost from the hot placement path entirely.
+export function createPatchHeightFn({ baker, frame, maxLevel = 11, offsetY = 0, fallbackFn, blocking = true }) {
   if (!baker) return null
   const R = frame.radius, aH = frame.anchorHeight, res = baker.res, gridMeshSize = 11
   const finestLeaf = 2 * R / Math.pow(2, maxLevel)
   const visualSpacing = finestLeaf / (gridMeshSize - 1)
   const patchSpan = Math.max(8, visualSpacing * (res - 1))
-  const cache = new Map(); const MAX = 96
+  // MAX 384 (up from 96, ~2026-07-02 fps-drop investigation): a synchronous readPixels-bound cache MISS
+  // is the dominant frame cost (profiled ~3.3ms/frame, 48% of the 144Hz budget) -- during sustained
+  // movement (not a static profile snapshot) the player continuously enters new patch cells, evicting
+  // recently-baked neighbors from a too-small LRU before they're revisited, forcing needless re-bakes.
+  // 384 entries * ~67KB/patch (130^2 float32) = ~25MB, trivial against a modern GPU/heap budget, and
+  // covers a much larger contiguous streamed area before any eviction -- correctness unchanged (still an
+  // exact re-bake of the SAME deterministic GPU shader on a miss, just fewer misses).
+  const cache = new Map(); const MAX = 384
+  const _bakeFn = blocking ? baker.bakeTile : (baker.bakeTileAsync || baker.bakeTile)   // non-blocking callers fall back to bakeTile if an older baker lacks the async variant
   function patchFor(face, ox, oy) {
     const pi = Math.floor(ox / patchSpan), pj = Math.floor(oy / patchSpan)
     const key = face + ':' + pi + ':' + pj
     let p = cache.get(key)
     if (!p) {
-      const heights = baker.bakeTile(face, pi * patchSpan, pj * patchSpan, patchSpan, 0)
+      const heights = _bakeFn(face, pi * patchSpan, pj * patchSpan, patchSpan, 0)
       if (!heights) return null
       p = { heights, ox: pi * patchSpan, oy: pj * patchSpan }
       cache.set(key, p); if (cache.size > MAX) cache.delete(cache.keys().next().value)
