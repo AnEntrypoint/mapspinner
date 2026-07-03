@@ -4,6 +4,46 @@
 
 SDK changes must be validated against the test suite and verified in both the dev demo (planet.html) and external consumer examples. No changes ship without passing tests.
 
+## WebGPU: history + a scoped, unimplemented experiment (2026-07-03)
+
+mapspinner already tried a WebGPU compute-texture terrain pipeline once
+(`terrain-phase1/2/3.js` + `normal_producer.wgsl`, CHANGELOG 2026-05-23) and
+REMOVED it -- the current "GPU one-fractal" architecture (procedural
+`composeHeight` per-vertex, no tile producer, no atlas) won. The THC height
+pool above is the WebGL2 texture-cache alternative and was MEASURED
+net-negative. Because `composeHeight` already runs GPU-side, WebGPU's usual
+selling point (eliminating CPU<->GPU transfer for compute-heavy work) does not
+apply here -- there is no CPU-side cost to eliminate.
+
+The one WebGPU-specific mechanism NOT yet tried: a storage-buffer height
+cache with zero-copy compute-to-vertex sharing (WebGPURenderer + TSL
+`instancedArray`/`storageTexture`, compute pass writes directly into a buffer
+the vertex stage reads with no texture-sample indirection) MIGHT avoid the
+FS-cost-shift that sank the WebGL2 texture version -- a texture sampler still
+has to interpolate/resolve address+filter state per fetch; a raw storage
+buffer read does not. This is a real, different mechanism from the reverted
+phase1/2/3 pipeline and from THC, not a re-litigation -- but it is UNMEASURED
+and should not land without a real A/B number, matching this file's own
+"no changes ship without passing tests" / "measure, do not eyeball" rule.
+
+Scoped experiment for a session with real GPU profiling access:
+1. Build a WebGPURenderer-only path (three/webgpu import, automatic WebGL2
+   fallback for unsupported browsers per that build's documented behavior)
+   with a compute pass writing height into a `storageTexture` sized like the
+   existing THC pool (130-texel tiles, matching THC_BAKE_RES for an apples-
+   to-apples comparison).
+2. Vertex stage reads via `textureLoad` (sampler-less, matching the raw-buffer
+   read this experiment is testing) instead of THC's filtered `texture()`
+   sample.
+3. Profile identically to the 2026-06-15 THC measurement (same deck scene,
+   same `__diag.pxPerPoly()`/frame-timing methodology) and record VS-cost vs
+   FS-cost split, not just aggregate FPS -- THC's regression was specifically
+   a cost-SHIFT (VS cheaper, FS worse), so aggregate FPS alone would have
+   hidden it.
+4. Land only if the FS-cost-shift is smaller or absent; otherwise record the
+   negative result here (same discipline as the THC entry above) so a future
+   session does not re-attempt it blind.
+
 ## Architecture (GPU one-fractal)
 - LIVE height path = **procedural `composeHeight` per-vertex in the VS** (`terrain.glsl`): every vertex
   evaluates fractalTerrainH + carves directly. There is NO baked height pool on the default path.
