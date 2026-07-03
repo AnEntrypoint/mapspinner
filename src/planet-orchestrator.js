@@ -892,6 +892,31 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
           }
           continue;
         }
+        // HOST OCCLUSION HOOK (opt-in, default off): mapspinner has no THREE.js/depth-buffer-query
+        // machinery of its own, but a host embedding the planet (e.g. spoint, via TerrainBackdrop.js's
+        // shared-depth design) DOES own the real depth buffer + any occlusion-query state (walls/
+        // models drawn after terrain each frame -- see that host's own render-order comments). Rather
+        // than mapspinner owning GL query objects (which would require a THREE dependency this SDK
+        // deliberately has none of), the host supplies a predicate keyed by chunk id, populated from
+        // ITS previous frame's resolved occlusion verdicts (one-frame latency, same discipline as
+        // streaming-gltf's OcclusionQueryTier). Conservative fail-open: predicate absent or throwing
+        // keeps the quad. worldCenter/worldSize let the host build its own query box WITHOUT
+        // duplicating this file's tangent-warp face-local-to-world math (the same computation the
+        // _cullDbgOn on-screen check above already performs, factored out here since the predicate
+        // needs it unconditionally, not just under the debug flag).
+        if (opts.occlusionPredicate) {
+          try {
+            const _wk = Math.PI / 4.0;
+            const _ccx = R * Math.tan(((ox + l * 0.5) / R) * _wk), _ccy = R * Math.tan(((oy + l * 0.5) / R) * _wk);
+            const _cl = Math.hypot(_ccx, _ccy, R) || 1;
+            const wx = (_ccx / _cl) * F.u[0] + (_ccy / _cl) * F.v[0] + (R / _cl) * F.c[0];
+            const wy = (_ccx / _cl) * F.u[1] + (_ccy / _cl) * F.v[1] + (R / _cl) * F.c[1];
+            const wz = (_ccx / _cl) * F.u[2] + (_ccy / _cl) * F.v[2] + (R / _cl) * F.c[2];
+            const worldCenter = [wx * R, wy * R, wz * R];
+            const worldSize = l * 1.2;   // generous margin over the flat face-local span (deformed/elevated surface can exceed it slightly)
+            if (opts.occlusionPredicate(face, level, tx, ty, worldCenter, worldSize)) { culledCount++; continue; }
+          } catch (_) { /* fail-open: a throwing predicate never hides real terrain */ }
+        }
         // No atlas/tile generation: terrain shape is the GPU fractal evaluated per-vertex, so every
         // visible leaf just draws (no resident-tile allocation, no ancestor fallback, no gen budget).
         // POOLED quad emit (reuse the slot's compound object across frames; allocate only past the
