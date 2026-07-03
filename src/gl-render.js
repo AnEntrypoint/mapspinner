@@ -1086,6 +1086,10 @@ export async function initMapspinnerRender(gl, opts = {}) {
   function _ensureWaterScratch(n, FLOATS) {
     if (_scrWl.length < n * FLOATS) _scrWl = new Float32Array(n * FLOATS);
   }
+  // Reused across frames (perf 2026-07-03): the water dedup Set was `new Set()` every dirty frame.
+  // .clear() keeps the same backing store, avoiding a fresh hash-table alloc on the common
+  // (camera-moved) path.
+  const _waterSeen = new Set();
   const _camRotScratch = new Float32Array(9);   // sky-pass camRot uniform: was a fresh alloc every frame the sky pass runs (below 100km alt)
 
   // per-face local->world (cube face -> sphere local frame). Column-major mat3 packed
@@ -1629,14 +1633,24 @@ export async function initMapspinnerRender(gl, opts = {}) {
           // _ensureScratch's idiom -- output count is bounded by n so n*FLOATS is always sufficient.
           _ensureWaterScratch(n, FLOATS);
           const wl = _scrWl;
-          const seen = new Set(); let wc = 0;
+          const seen = _waterSeen; seen.clear(); let wc = 0;
+          // Packed-integer dedup key (perf 2026-07-03): was a string concat (`face:ox:oy:l`) per
+          // quad. Once snapped to the WCAP ancestor, ox/oy are exact multiples of the WCAP cell
+          // size `l` (root spans [-size,size], each level exactly halves, so l evenly divides
+          // 2*size) -- ox/l and oy/l are therefore exact integers in [-2^(WCAP-1), 2^(WCAP-1)-1]
+          // (WCAP=11 -> [-1024,1023]). WKEY_BIG=4096 comfortably covers that range (offset by
+          // WKEY_BIG>>1 to stay non-negative) with huge headroom (max packed value ~8.6e7, far
+          // under 2^53) even if WCAP is raised later.
+          const WKEY_BIG = 4096, WKEY_OFF = WKEY_BIG >> 1;
           for (let i = 0; i < n; i++) {
             const q = quads[i].quad; let ox = q.ox, oy = q.oy, l = q.l, lv = q.level;
-            if (lv > WCAP) { const A = l * Math.pow(2, lv - WCAP); ox = Math.floor(ox / A) * A; oy = Math.floor(oy / A) * A; l = A; lv = WCAP; }
-            const key = quads[i].face + ':' + ox + ':' + oy + ':' + l;
+            if (lv > WCAP) { const A = l * (1 << (lv - WCAP)); ox = Math.floor(ox / A) * A; oy = Math.floor(oy / A) * A; l = A; lv = WCAP; }
+            const face = quads[i].face;
+            const ix = Math.round(ox / l) + WKEY_OFF, iy = Math.round(oy / l) + WKEY_OFF;
+            const key = (face * WKEY_BIG + iy) * WKEY_BIG + ix;
             if (seen.has(key)) continue; seen.add(key);
             wl[wc*FLOATS+0]=ox; wl[wc*FLOATS+1]=oy; wl[wc*FLOATS+2]=l; wl[wc*FLOATS+3]=lv;
-            wl[wc*FLOATS+4]=quads[i].face; wl[wc*FLOATS+5]=0;   // iLayer unused for water (VS pins sea level)
+            wl[wc*FLOATS+4]=face; wl[wc*FLOATS+5]=0;   // iLayer unused for water (VS pins sea level)
             wc++;
           }
           _instWaterN = wc;
