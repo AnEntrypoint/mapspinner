@@ -29,6 +29,40 @@ export function dirToFace(dir, R) {
   return { face: bf, ox: k * Math.atan(cu / cc), oy: k * Math.atan(cv / cc) }
 }
 
+// LAST-FACE MEMO (perf, coherent-sweep hot path -- placement/collision lookups call dirToFace with
+// nearby dir vectors: continuous player movement, or the ~1.5m 5-tap finite-difference pattern used
+// by placement code). Face selection is argmax_i dot(dir, FACE_FRAME[i].c); each FACE_FRAME[i].c is a
+// signed standard basis vector, so cc=dot(dir,c) equals +-one coordinate of dir. Since dir is unit
+// length, if cc>1/sqrt(2) then dir's OTHER two coordinates satisfy dy^2+dz^2=1-cc^2<0.5, so neither can
+// exceed cc -- no other face's dot can beat it. This is an EXACT (not heuristic) sufficient condition,
+// proven via the algebra above + a 2M-sample Monte Carlo cross-check (zero violations); strict `>`
+// (not `>=`) is required so an exact tie (two faces equidistant, e.g. a cube edge) always falls through
+// to the full 6-way argmax rather than risking a wrong face. This only skips the 5 redundant face-normal
+// dot products + comparisons of the argmax search -- cc/cu/cv and the two atan calls for the winning
+// face are still computed fresh every call (ox/oy are load-bearing outputs, not skippable).
+// makeDirToFaceMemo(R) returns a dirToFace(dir)-compatible function with per-instance memo state (so
+// concurrent bakers, e.g. server + client in the same process, never share/corrupt each other's cache).
+export function makeDirToFaceMemo(R) {
+  const k = (4 / Math.PI) * R
+  let lastFace = -1
+  return function dirToFaceMemo(dir) {
+    if (lastFace >= 0) {
+      const F = FACE_FRAME[lastFace]
+      const cc = _dot(dir, F.c)
+      if (cc > Math.SQRT1_2) {
+        const cu = _dot(dir, F.u), cv = _dot(dir, F.v)
+        return { face: lastFace, ox: k * Math.atan(cu / cc), oy: k * Math.atan(cv / cc) }
+      }
+    }
+    let bf = 0, bd = -Infinity
+    for (let i = 0; i < 6; i++) { const d = _dot(dir, FACE_FRAME[i].c); if (d > bd) { bd = d; bf = i } }
+    lastFace = bf
+    const F = FACE_FRAME[bf]
+    const cc = _dot(dir, F.c), cu = _dot(dir, F.u), cv = _dot(dir, F.v)
+    return { face: bf, ox: k * Math.atan(cu / cc), oy: k * Math.atan(cv / cc) }
+  }
+}
+
 // Create the patch baker. opts: { radius, reliefScale, seed }. Returns
 // { bakeTile, bakeTileAsync, dirToFace, res, planet } or NULL on any of several environment
 // failures: no OffscreenCanvas (e.g. a plain Node worker with no GPU), no webgl2 context, missing
@@ -116,7 +150,10 @@ export async function createPatchBaker(opts = {}) {
     if (_asyncTileKey !== key) { g.__thcBakeIssueAsync(face | 0, ox, oy, l, level); _asyncTileKey = key }
     return null
   }
-  return { bakeTile, bakeTileAsync, dirToFace: (dir) => dirToFace(dir, opts.radius), res, planet }
+  // Per-baker memoized dirToFace (see makeDirToFaceMemo above) -- the placement/collision hot path
+  // calls this every heightFn/prefetchAround lookup with coherent (nearby) dir vectors.
+  const _dirToFaceMemo = makeDirToFaceMemo(opts.radius)
+  return { bakeTile, bakeTileAsync, dirToFace: _dirToFaceMemo, res, planet }
 }
 
 // Build a groundHeightLocal-compatible O(1) patch lookup over a baker, matching the FINEST display LOD
@@ -148,9 +185,26 @@ export function createPatchHeightFn({ baker, frame, maxLevel = 11, offsetY = 0, 
   // exact re-bake of the SAME deterministic GPU shader on a miss, just fewer misses).
   const cache = new Map(); const MAX = 384
   const _bakeFn = blocking ? baker.bakeTile : (baker.bakeTileAsync || baker.bakeTile)   // non-blocking callers fall back to bakeTile if an older baker lacks the async variant
+  // Packed-integer patch key (perf 2026-07-03): was a string concat (`face:pi:pj`) per lookup. face is
+  // 0-5; pi/pj = floor(ox/patchSpan), and ox spans the whole +-2R atan-warped face extent, so the worst
+  // case (patchSpan floor-clamped to its minimum of 8) is |pi| <= 4R/8 = R/2 -- for Earth-scale R=6.36e6
+  // that's ~3.18M. PKEY_BIG=2^23 (8388608) gives an offset of 2^22 (~4.19M), safely above that bound
+  // with margin, while (face*BIG+pj)*BIG+pi stays a safe integer (<2^53, verified max ~4.2e14) even at
+  // face=5 and both indices maxed. A radius/patchSpan combination exceeding this (sub-4m patches at
+  // Earth scale) is far outside any realistic config; patchSpan is visualSpacing*(res-1) with res=130,
+  // so a sub-4m patchSpan would need sub-3cm visual leaf spacing, never a real configuration.
+  const PKEY_BIG = 1 << 23, PKEY_OFF = PKEY_BIG >> 1
+  const _patchKey = (face, pi, pj) => (face * PKEY_BIG + (pj + PKEY_OFF)) * PKEY_BIG + (pi + PKEY_OFF)
+  // LAST-PATCH MEMO: the placement/collision caller sweeps coherently (continuous movement, or the
+  // ~1.5m 5-tap finite-difference pattern) so consecutive lookups overwhelmingly land in the SAME patch
+  // cell. Cache the last resolved {face,pi,pj,patch} and, before building the packed key + hitting the
+  // Map, cheaply check plain integer equality against the cached pi/pj/face -- exact (pi/pj/face are
+  // always freshly and fully computed from the real ox/oy first), zero risk of a stale/wrong hit.
+  let _lastFace = -1, _lastPi = 0, _lastPj = 0, _lastPatch = null
   function patchFor(face, ox, oy) {
     const pi = Math.floor(ox / patchSpan), pj = Math.floor(oy / patchSpan)
-    const key = face + ':' + pi + ':' + pj
+    if (_lastPatch !== null && face === _lastFace && pi === _lastPi && pj === _lastPj) return _lastPatch
+    const key = _patchKey(face, pi, pj)
     let p = cache.get(key)
     if (!p) {
       const heights = _bakeFn(face, pi * patchSpan, pj * patchSpan, patchSpan, 0)
@@ -158,6 +212,7 @@ export function createPatchHeightFn({ baker, frame, maxLevel = 11, offsetY = 0, 
       p = { heights, ox: pi * patchSpan, oy: pj * patchSpan }
       cache.set(key, p); if (cache.size > MAX) cache.delete(cache.keys().next().value)
     }
+    _lastFace = face; _lastPi = pi; _lastPj = pj; _lastPatch = p
     return p
   }
   function heightFn(x, z) {
@@ -192,7 +247,7 @@ export function createPatchHeightFn({ baker, frame, maxLevel = 11, offsetY = 0, 
       for (let di = -1; di <= 1; di++) {
         if (di === 0 && dj === 0) continue
         const pi = pi0 + di, pj = pj0 + dj
-        const key = face + ':' + pi + ':' + pj
+        const key = _patchKey(face, pi, pj)
         if (cache.has(key)) continue
         if (typeof baker.bakeTileAsync === 'function') baker.bakeTileAsync(face, pi * patchSpan, pj * patchSpan, patchSpan, 0)
       }
