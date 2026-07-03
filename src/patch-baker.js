@@ -183,6 +183,26 @@ export function createPatchHeightFn({ baker, frame, maxLevel = 11, offsetY = 0, 
   // 384 entries * ~67KB/patch (130^2 float32) = ~25MB, trivial against a modern GPU/heap budget, and
   // covers a much larger contiguous streamed area before any eviction -- correctness unchanged (still an
   // exact re-bake of the SAME deterministic GPU shader on a miss, just fewer misses).
+  // DECISION (ms-client-patchcache-quant, considered + declined): a sector-quantized u16+per-patch-
+  // min/max encoding (mirroring heightfield-codec.js's already-shipped sector-quant pattern) would
+  // shrink this cache from ~25MB (384 * 130^2 float32) to ~13MB. Declined for three compounding reasons:
+  // (1) heightFn (below) is the hottest call in the whole terrain pipeline -- 5 taps/candidate x 3
+  //     placement modules (veg/rock/grass) plus every server collider query -- and its bilinear read
+  //     already does 4 array reads + lerp math per call; quantized storage adds a dequant (2 FMA/corner,
+  //     8 extra flops/call) to EVERY read, which is precisely the fast-synchronous-lookup cost this cache
+  //     exists to avoid paying (the reason `createPatchHeightFn` exists at all is to replace a per-call
+  //     ~0.4ms CPU fractal with an O(1) lookup -- shaving allocation at the cost of slowing every lookup
+  //     works against that goal).
+  // (2) `cache`/`patchFor`/`heightFn` below are SHARED verbatim by the server-authoritative blocking path
+  //     (`blocking:true`, exact-float32-required for collider parity) and the client non-blocking path --
+  //     scoping quantization to "client only" would mean forking this cache/heightFn into two code paths
+  //     (or branching on `blocking` inside the hottest function), a real complexity/maintenance cost for
+  //     a 12MB saving against a heap budget where 25MB is already "trivial" per the MAX=384 comment above.
+  // (3) heightfield-codec.js's sector format (JSON header + per-sector min/max over a whole serialized
+  //     grid) is shaped for a monolithic on-disk/network artifact, not a per-tile (130x130) in-memory
+  //     cache entry -- reusing it here is not a drop-in, it is a from-scratch bespoke reimplementation of
+  //     the same idea at a different granularity, i.e. sub-item (2) plus new code with no shared tests.
+  // Net: the CPU-cost-per-read regression on the hottest lookup path outweighs the memory win. Declined.
   const cache = new Map(); const MAX = 384
   const _bakeFn = blocking ? baker.bakeTile : (baker.bakeTileAsync || baker.bakeTile)   // non-blocking callers fall back to bakeTile if an older baker lacks the async variant
   // Packed-integer patch key (perf 2026-07-03): was a string concat (`face:pi:pj`) per lookup. face is
