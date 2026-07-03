@@ -207,13 +207,16 @@ function nodeOutsideFrustum(cull, ox, oy, l) {
   // node-center world direction (same tan-warp + face frame as the VS and quadOutsideFrustum)
   const cwX = R * Math.tan(((ox + l * 0.5) / R) * WK), cwY = R * Math.tan(((oy + l * 0.5) / R) * WK);
   let ax = cwX * ux + cwY * vx + R * cx, ay = cwX * uy + cwY * vy + R * cy, az = cwX * uz + cwY * vz + R * cz;
-  let ln = Math.hypot(ax, ay, az) || 1;
+  // OPTIMIZATION (ms-hypot-to-sqrt): magnitudes here are world-meter direction vectors bounded by
+  // ~R (planet radius, far below float overflow range) -- Math.hypot's overflow/underflow guard is
+  // unneeded overhead per node visited; a direct sqrt-of-sum-of-squares is exact and faster.
+  let ln = Math.sqrt(ax * ax + ay * ay + az * az) || 1;
   const C0x = (ax / ln) * R, C0y = (ay / ln) * R, C0z = (az / ln) * R;   // sphere center (sea-level surface)
   let maxR2 = 0;
   for (let ci = 0; ci < 4; ci++) {
     const wx = (ci & 1) ? tX1 : tX0, wy = (ci & 2) ? tY1 : tY0;
     ax = wx * ux + wy * vx + R * cx; ay = wx * uy + wy * vy + R * cy; az = wx * uz + wy * vz + R * cz;
-    ln = Math.hypot(ax, ay, az) || 1;
+    ln = Math.sqrt(ax * ax + ay * ay + az * az) || 1;
     const dx = (ax / ln) * rr - C0x, dy = (ay / ln) * rr - C0y, dz = (az / ln) * rr - C0z;
     const d2 = dx * dx + dy * dy + dz * dz; if (d2 > maxR2) maxR2 = d2;
   }
