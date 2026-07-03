@@ -808,8 +808,14 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
       // LOD drive uses lodRefPos (aim-shifted, altitude preserved) so deepest LOD follows the
       // look point; the quad record keeps the TRUE-camera localCam (for the VS geomorph
       // defCamera uniform), and the cull below uses the TRUE camera (camDirX/Y/Z, camWorldPos).
-      const lodLocalCam = worldToFaceLocal(face, lodRefPos, R);
+      // OPTIMIZATION (ms-worldtofacelocal-alias): worldToFaceLocal(face, camWorld, R) is a pure
+      // function of its 3 args. When aimBias===0 (the default/common case, see the block above
+      // building lodRefPos), lodRefPos IS camWorldPos (same reference, never reassigned in that
+      // branch) -- so calling worldToFaceLocal twice for this face recomputes the identical
+      // atan/dot chain. Alias instead of recomputing; only diverges when aimBias>0 reassigns
+      // lodRefPos to a distinct aim-shifted vector.
       const localCam = worldToFaceLocal(face, camWorldPos, R);
+      const lodLocalCam = (lodRefPos === camWorldPos) ? localCam : worldToFaceLocal(face, lodRefPos, R);
       // pass the TRUE camera nadir (localCam x,y) so the far-LOD falloff protects the real foreground
       // (decoupled from the aim-shifted lodLocalCam) -- nearby stays fine while the far horizon trims.
       // ALSO pass the AIM ground point (face-local x,y) as a SECOND foreground-protect center so the
