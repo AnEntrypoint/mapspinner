@@ -251,13 +251,13 @@ export async function initMapspinnerRender(gl, opts = {}) {
       const nb = buildTerrainProgram(ns, na);
       await awaitProgramLink(nb.p, nb.vs, nb.fs, 'terrain');   // throws on compile/link error
       const newProg = nb.p;
-      const old = prog; prog = newProg; src = ns; atmoSrc = na; _uloc.clear();
+      const old = prog; prog = newProg; src = ns; atmoSrc = na; _uloc.clear(); _chuClear(_uloc);
       gl.deleteProgram(old);
       // invalidate the lazy debug program so it rebuilds from the new source on the next debug-mode frame.
-      if (debugProg) { gl.deleteProgram(debugProg); debugProg = null; _dbgUloc.clear(); }
+      if (debugProg) { gl.deleteProgram(debugProg); debugProg = null; _dbgUloc.clear(); _chuClear(_dbgUloc); }
       // invalidate the lazy probe program too (perf sweep 2026-06-11): it was leaked AND kept running
       // the OLD shader source after a hot-reload -- collision silently diverged from the new geometry.
-      if (probeProg) { gl.deleteProgram(probeProg); probeProg = null; _probeUloc.clear(); }
+      if (probeProg) { gl.deleteProgram(probeProg); probeProg = null; _probeUloc.clear(); _chuClear(PU); }
       return { ok: true };
     } catch (e) { return { ok: false, error: String(e.message || e) }; }
   }
@@ -286,7 +286,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
         const fbo = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        _probeUloc.clear();   // stale locations from any prior probe program are invalid for the new one
+        _probeUloc.clear(); _chuClear(PU);   // stale locations from any prior probe program are invalid for the new one
         probeTex = tex; probeFbo = fbo; probeProg = pp;   // assign LAST so a half-built probe is never used
       } catch(e){ probeProg = null; try { if(typeof window!=='undefined') window.__probeErr = String(e.message||e); } catch(_){} }
       finally { _probeBuilding = null; }
@@ -376,7 +376,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
         const fbo=gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        _bakeUloc.clear(); bakeTex=tex; bakeFbo=fbo; bakeProg=bp;
+        _bakeUloc.clear(); _chuClear(BU); bakeTex=tex; bakeFbo=fbo; bakeProg=bp;
       } catch(e){ bakeProg=null; try{ if(typeof window!=='undefined') window.__bakeErr=String(e.message||e); }catch(_){} }
       finally { _bakeBuilding=null; }
     })();
@@ -617,45 +617,72 @@ export async function initMapspinnerRender(gl, opts = {}) {
     else if (altKm > 80)   drop = 1;
     return Math.max(6, baseOcts - drop);
   }
+  // DIRTY-FLAG CACHE (perf 2026-07-03): bakeTileToLayer/bakeTileReadback/bakeTileIssueAsync call this
+  // once per tile bake, but only uBakeFrame/uBakeOffset (set by the CALLER after this returns) vary
+  // between tiles in the same batch -- the ~28 shape-control/HPF uniforms below are batch-constant.
+  // Cache the last-uploaded value per (locator-fn, uniform-name) and skip re-uploading when unchanged.
+  // Keyed on `loc` identity (BU/PU/U are distinct stable closures, one per program) so render/_PROBE_/
+  // bake caches never cross-contaminate. Invalidated wholesale whenever the target program is rebuilt:
+  // callers that rebuild a program already clear that program's uniform-LOCATION cache (_bakeUloc.clear()
+  // etc) -- piggyback on the same signal by clearing this cache next to every such clear() (see
+  // ensureBake/ensureProbe/render's program-(re)build sites).
+  const _chuCache = new Map();   // cacheKey -> Map(name -> lastValue)
+  function _chuClear(key){ _chuCache.delete(key); }
+  function _chuSet1f(loc, key, name, v){
+    let m = _chuCache.get(key); if (!m){ m=new Map(); _chuCache.set(key,m); }
+    if (m.get(name) === v) return;
+    m.set(name, v); gl.uniform1f(loc(name), v);
+  }
+  function _chuSet1i(loc, key, name, v){
+    let m = _chuCache.get(key); if (!m){ m=new Map(); _chuCache.set(key,m); }
+    if (m.get(name) === v) return;
+    m.set(name, v); gl.uniform1i(loc(name), v);
+  }
   // ONE SOURCE OF TRUTH for composeHeight's shape-control + HPF-sampler uniforms: every program that runs
   // composeHeight (render, _PROBE_) calls this with its own uniform-locator so they CANNOT diverge.
-  function setComposeHeightUniforms(loc) {
+  // `cacheKey` identifies which program's uniform state this call targets (BU/PU are each a single
+  // stable program so the locator itself is a safe key; U() is DYNAMIC -- it resolves against
+  // whichever program is active this frame (render prog or the debug prog), so callers through U()
+  // MUST pass the actual active uniform-location cache as cacheKey, not U itself, or a debug-mode
+  // frame would wrongly skip re-uploading onto a different real GL program).
+  function setComposeHeightUniforms(loc, cacheKey) {
+    if (cacheKey === undefined) cacheKey = loc;
     const g = (n,d)=> (typeof window!=='undefined' && window['__'+n]!=null) ? +window['__'+n] : d;
-    gl.uniform1f(loc('uHiFreqCut'),     g('hiFreqCut', TD.hiFreqCut));   // DECISIVE: ungated *= at terrain.glsl fine octaves; 0.5->0.25 (2026-06-10 'blotchy': the 4x fine band read as leopard dapple at altitude -- live-isolated, hiFreqCut=0 removed it entirely)
-    gl.uniform1f(loc('uDetailOverlay'), g('detailOverlay', TD.detailOverlay));  // perlin-everywhere ELEVATION term in composeHeight -- probe must match the VS or collision diverges
+    _chuSet1f(loc, cacheKey, 'uHiFreqCut',     g('hiFreqCut', TD.hiFreqCut));   // DECISIVE: ungated *= at terrain.glsl fine octaves; 0.5->0.25 (2026-06-10 'blotchy': the 4x fine band read as leopard dapple at altitude -- live-isolated, hiFreqCut=0 removed it entirely)
+    _chuSet1f(loc, cacheKey, 'uDetailOverlay', g('detailOverlay', TD.detailOverlay));  // perlin-everywhere ELEVATION term in composeHeight -- probe must match the VS or collision diverges
     // (vtxDetail probe setter removed 2026-06-18 -- vtxDisplace is a 0.0 stub, the uniform is gone.)
-    gl.uniform1f(loc('canyonDepthMul'), g('canyonDepth', TD.canyonDepth));   // TD.canyonDepth=1.0 (demo baked __canyonDepth=0 -> shader floors to 1.0). DEFAULT MUST MATCH the render set (line ~982) or the _PROBE_ collision carves shallower than the rendered geometry. Kept 2.0 so a warm tab (module-cached gl-render) and a fresh load are CONSISTENT -- the canyon-intensity cut now lives in CANYON_INCISE_DEPTH (terrain.glsl, cache-busted = reliably delivered; gl-render is NOT cache-busted on a soft reload). LIVE fine-tune via window.__canyonDepth.
-    gl.uniform1f(loc('uVsCheap'),       (typeof window!=='undefined' && window.__vsCheap) ? 1.0 : 0.0);   // VS carve-cost profiling A/B
-    gl.uniform1f(loc('uBeachShelfM'),   g('beachShelf', TD.beachShelf));   // land coastal shelf (geometry); probe MUST match render
-    gl.uniform1f(loc('uLandBias'),      g('landBias', TD.landBias));       // hypsometry bias = ~+30% land:sea (measured: landFrac 0.041 -> 0.054 over a 700-dir sphere grid, user 2026-06-14). window.__landBias dials it live.
-    gl.uniform1f(loc('cliffAmt'),       g('cliffAmt', TD.cliffAmt));
-    gl.uniform1i(loc('uFloatLinearOK'), _halfFloatLinearOK ? 1 : 0);
+    _chuSet1f(loc, cacheKey, 'canyonDepthMul', g('canyonDepth', TD.canyonDepth));   // TD.canyonDepth=1.0 (demo baked __canyonDepth=0 -> shader floors to 1.0). DEFAULT MUST MATCH the render set (line ~982) or the _PROBE_ collision carves shallower than the rendered geometry. Kept 2.0 so a warm tab (module-cached gl-render) and a fresh load are CONSISTENT -- the canyon-intensity cut now lives in CANYON_INCISE_DEPTH (terrain.glsl, cache-busted = reliably delivered; gl-render is NOT cache-busted on a soft reload). LIVE fine-tune via window.__canyonDepth.
+    _chuSet1f(loc, cacheKey, 'uVsCheap',       (typeof window!=='undefined' && window.__vsCheap) ? 1.0 : 0.0);   // VS carve-cost profiling A/B
+    _chuSet1f(loc, cacheKey, 'uBeachShelfM',   g('beachShelf', TD.beachShelf));   // land coastal shelf (geometry); probe MUST match render
+    _chuSet1f(loc, cacheKey, 'uLandBias',      g('landBias', TD.landBias));       // hypsometry bias = ~+30% land:sea (measured: landFrac 0.041 -> 0.054 over a 700-dir sphere grid, user 2026-06-14). window.__landBias dials it live.
+    _chuSet1f(loc, cacheKey, 'cliffAmt',       g('cliffAmt', TD.cliffAmt));
+    _chuSet1i(loc, cacheKey, 'uFloatLinearOK', _halfFloatLinearOK ? 1 : 0);
     // FXC unroll-defeat (2026-06-12 AMD d3d11 fix): runtime octave bound for broadShapeM; the shader
     // guards uOctMax<=0 -> 12, so this set is belt-and-braces. Live dial: window.__octMax.
-    gl.uniform1i(loc('uOctMax'),        (typeof window!=='undefined' && window.__octMax!=null) ? (window.__octMax|0) : _clampOcts(12));   // altitude-clamped (see _clampOcts); explicit window.__octMax still wins
-    gl.uniform1i(loc('uInciseRidgeOcts'), (typeof window!=='undefined' && window.__inciseRidgeOcts!=null) ? (window.__inciseRidgeOcts|0) : 4);
-    gl.uniform1i(loc('uBroadLowOcts'),    (typeof window!=='undefined' && window.__broadLowOcts!=null) ? (window.__broadLowOcts|0) : 2);   // 8->2 PERF (2026-06-15): MEASURED 0 visual error (mtn+space) -- broadShapeLowM only feeds the 2400m-FD-step mesa-flatness slope gate, which is low-freq so the high octaves do nothing (its elevation-AO consumer was removed).
-    gl.uniform1i(loc('uPeakOcts'),        (typeof window!=='undefined' && window.__peakOcts!=null) ? (window.__peakOcts|0) : 3);
+    _chuSet1i(loc, cacheKey, 'uOctMax',        (typeof window!=='undefined' && window.__octMax!=null) ? (window.__octMax|0) : _clampOcts(12));   // altitude-clamped (see _clampOcts); explicit window.__octMax still wins
+    _chuSet1i(loc, cacheKey, 'uInciseRidgeOcts', (typeof window!=='undefined' && window.__inciseRidgeOcts!=null) ? (window.__inciseRidgeOcts|0) : 4);
+    _chuSet1i(loc, cacheKey, 'uBroadLowOcts',    (typeof window!=='undefined' && window.__broadLowOcts!=null) ? (window.__broadLowOcts|0) : 2);   // 8->2 PERF (2026-06-15): MEASURED 0 visual error (mtn+space) -- broadShapeLowM only feeds the 2400m-FD-step mesa-flatness slope gate, which is low-freq so the high octaves do nothing (its elevation-AO consumer was removed).
+    _chuSet1i(loc, cacheKey, 'uPeakOcts',        (typeof window!=='undefined' && window.__peakOcts!=null) ? (window.__peakOcts|0) : 3);
     // (uVtxBaseOcts/uVtxErodeOcts probe setters removed 2026-06-18 -- vtxDisplace is a 0.0 stub, the uniforms are gone.)
-    gl.uniform1i(loc('uDetailFbmOcts'),   (typeof window!=='undefined' && window.__detailFbmOcts!=null) ? (window.__detailFbmOcts|0) : 3);
-    gl.uniform1i(loc('uFSDetailOcts'),    (typeof window!=='undefined' && window.__fsDetailOcts!=null) ? (window.__fsDetailOcts|0) : 3);
+    _chuSet1i(loc, cacheKey, 'uDetailFbmOcts',   (typeof window!=='undefined' && window.__detailFbmOcts!=null) ? (window.__detailFbmOcts|0) : 3);
+    _chuSet1i(loc, cacheKey, 'uFSDetailOcts',    (typeof window!=='undefined' && window.__fsDetailOcts!=null) ? (window.__fsDetailOcts|0) : 3);
     // FXC fold-defeat (2026-06-12, the rock-on-flat patches): the lit-normal FD step is uniform-fed
     // so d3d11/FXC cannot constant-fold the 150/R offset. Live dial: window.__nrmStepM.
-    gl.uniform1f(loc('uNrmStepM'),      g('nrmStepM', 300.0));
-    gl.uniform1f(loc('uGrid'),          GRID);
-    gl.uniform1f(loc('uHpfInset'),      (typeof window!=='undefined' && window.__hpfInset === false) ? 0.0 : 1.0);   // SEAM FIX: inset sampler is the permanent default (matches bakeFace fu=x/(RES-1)); window.__hpfInset===false rolls back
+    _chuSet1f(loc, cacheKey, 'uNrmStepM',      g('nrmStepM', 300.0));
+    _chuSet1f(loc, cacheKey, 'uGrid',          GRID);
+    _chuSet1f(loc, cacheKey, 'uHpfInset',      (typeof window!=='undefined' && window.__hpfInset === false) ? 0.0 : 1.0);   // SEAM FIX: inset sampler is the permanent default (matches bakeFace fu=x/(RES-1)); window.__hpfInset===false rolls back
     // ANCHOR-STEP A/B TOGGLES (per-area stairstep, wrxo0rr7a). Default 0 = current; set window.__<name>=1
     // to widen that anchor-keyed band. Set HERE so BOTH render and the _PROBE_ collision see them (parity).
-    gl.uniform1f(loc('uMtnBandWide'),   g('mtnBandWide', TD.mtnBandWide));
-    gl.uniform1f(loc('uClimateRelief'), g('climateRelief', TD.climateRelief));
-    gl.uniform1f(loc('uIsleWide'),      g('isleWide', TD.isleWide));
-    gl.uniform1f(loc('uCarveWide'),     g('carveWide', TD.carveWide));
+    _chuSet1f(loc, cacheKey, 'uMtnBandWide',   g('mtnBandWide', TD.mtnBandWide));
+    _chuSet1f(loc, cacheKey, 'uClimateRelief', g('climateRelief', TD.climateRelief));
+    _chuSet1f(loc, cacheKey, 'uIsleWide',      g('isleWide', TD.isleWide));
+    _chuSet1f(loc, cacheKey, 'uCarveWide',     g('carveWide', TD.carveWide));
     // SCALE-INVARIANT relief (2026-06-17): the fractal relief is tuned in absolute metres at the 6360km
     // DESIGN radius. Scale it by R/6360km so the GEOMETRY is proportional to whatever radius a consumer
     // passes -> any radius renders identically (the dev demo at 6360km => exactly 1.0 = no-op), while the
     // camera/LOD/collision use the real R. Set on BOTH render + _PROBE_ here so the rendered mesh and the
     // collision probe scale together (else the camera clamps to an unscaled surface).
-    gl.uniform1f(loc('uReliefScale'),   g('reliefScale', opts.reliefScale != null ? opts.reliefScale : R / 63600000.0));   // default R/63600000 (10x smaller than Earth-geometry default) gives ~350m peak relief at 6360m radius
+    _chuSet1f(loc, cacheKey, 'uReliefScale',   g('reliefScale', opts.reliefScale != null ? opts.reliefScale : R / 63600000.0));   // default R/63600000 (10x smaller than Earth-geometry default) gives ~350m peak relief at 6360m radius
   }
 
 
@@ -1384,7 +1411,10 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // the SAME function the probe/bake use -> render/probe can never diverge AND the octave-count levers
     // (uOctMax/uInciseRidgeOcts/uBroadLowOcts/uPeakOcts/uVtxBaseOcts) now affect the render so each fractal's
     // visual contribution can be measured live. (Inline sets below are now redundant-but-harmless duplicates.)
-    setComposeHeightUniforms(U);
+    // cacheKey = the actual active program's uniform-location cache (U() is dynamic, resolving
+    // against render-prog or debug-prog depending on displayMode) so the dirty-flag cache never
+    // conflates two different real GL programs under one key.
+    setComposeHeightUniforms(U, _activeUloc || _uloc);
     // (vtxDetail render setter removed 2026-06-18 -- vtxDisplace is a 0.0 stub, the uniform is gone.)
     // CLIFF / CANYON levers (live-tunable): canyon depth multiplier, cliff terrace strength (VS shape)
     // + strata band thickness and cliff-strata material strength (FS texturing). Defaults = the tuned
