@@ -48,6 +48,15 @@ const M4 = {
 };
 
 export async function initMapspinnerRender(gl, opts = {}) {
+  // GUARD (consumer-facing input validation): see the matching guard in planet-orchestrator.js
+  // initMapspinnerPlanet -- a degenerate radius/gridMeshSize here feeds straight into the shader
+  // uniforms (defRadius etc.) and mesh generation with no error, producing NaN/garbage geometry.
+  if (opts.radius != null && (!Number.isFinite(opts.radius) || opts.radius <= 0)) {
+    throw new TypeError(`mapspinner: opts.radius must be a positive finite number, got ${opts.radius}`);
+  }
+  if (opts.gridMeshSize != null && (!Number.isInteger(opts.gridMeshSize) || opts.gridMeshSize < 2)) {
+    throw new TypeError(`mapspinner: opts.gridMeshSize must be an integer >= 2, got ${opts.gridMeshSize}`);
+  }
   const R = opts.radius || 6360.0;  // default matches _planetScale=0.001
   // ===== PERF BOUND (ff-planet-fragment-bound-rootcause / terrain-one-two-drawcalls, 2026-06-19) =====
   // CONFIRMED by code analysis + the in-file measured comments: the planet render is VERTEX/TILE-COUNT
@@ -1820,5 +1829,30 @@ export async function initMapspinnerRender(gl, opts = {}) {
     return out;
   }
   function setHpf(tex, res, tex2) { _hpfTex = tex; _hpfRes = res|0; _hpfTex2 = tex2 || null; invalidatePool(); }   // tex2 = RG8(temp,humid) pack (W12); HPF change -> re-bake THC tiles
-  return { get prog(){ return prog; }, render, checkGlError, probe, sampleGroundM, cullMatrix, recompile, setHpf, GRID, indexCount: indices.length, M4 };
+
+  // CONTEXT LOSS (consumer-facing diagnostic hook): a GPU driver reset / OOM / tab-background
+  // eviction fires 'webglcontextlost' on the canvas, after which EVERY gl.* call becomes a
+  // spec-defined silent no-op -- render() keeps "succeeding" with no error, producing a frozen/
+  // black frame with zero diagnostic signal. Without a hook, a host app (e.g. spoint) has no way
+  // to know it needs to recreate the renderer; it just silently stops updating. isContextLost()
+  // lets a host poll cheaply (gl.isContextLost() is a fast native call); onContextLost(cb)
+  // subscribes to the event directly. Detection-only -- state RECOVERY (recreating buffers/
+  // textures/programs after 'webglcontextrestored') is intentionally left to the consumer, since
+  // the right recovery strategy (full renderer recreation vs in-place restore) is host-specific.
+  const _contextLostCbs = [];
+  let _canvasEl = null;
+  try { _canvasEl = (gl && typeof gl.canvas !== 'undefined') ? gl.canvas : null; } catch (_) {}
+  if (_canvasEl && typeof _canvasEl.addEventListener === 'function') {
+    _canvasEl.addEventListener('webglcontextlost', (e) => {
+      for (const cb of _contextLostCbs) { try { cb(e); } catch (_) {} }
+    });
+  }
+  function isContextLost() { try { return !!(gl && gl.isContextLost && gl.isContextLost()); } catch (_) { return false; } }
+  function onContextLost(cb) {
+    if (typeof cb !== 'function') return () => {};
+    _contextLostCbs.push(cb);
+    return () => { const i = _contextLostCbs.indexOf(cb); if (i >= 0) _contextLostCbs.splice(i, 1); };
+  }
+
+  return { get prog(){ return prog; }, render, checkGlError, probe, sampleGroundM, cullMatrix, recompile, setHpf, isContextLost, onContextLost, GRID, indexCount: indices.length, M4 };
 }

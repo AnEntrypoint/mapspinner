@@ -282,6 +282,22 @@ const parentKey = (k) => Math.floor(k / 4);
 // hat basis (tent): 1 at centre, 0 at +/-1, compact support -> C0 + local.
 const hat = (t) => { t = t < 0 ? -t : t; return t >= 1 ? 0 : 1 - t; };
 
+/**
+ * Create the hierarchical parameter field (HPF) -- world-direction climate/elevation
+ * modulation (continental bias, biome/temperature/humidity, roughness) sampled seamlessly
+ * across cube-sphere faces + poles, with an editable additive-overlay quadtree per band
+ * (terraforming edits). Consumed by both the GPU renderer (baked to a texture) and
+ * createHeightSampler (CPU parity path) so the same field drives both surfaces.
+ *
+ * @param {Object} [opts]
+ * @param {number} [opts.seed=1337] - Deterministic fractal seed for the base (unedited) field.
+ * @returns {Object} { BANDS, PARAM_KEYS, sampleUV(face,fu,fv,maxBandLevel), sampleTile(...),
+ *   sampleDir(dir), editNode(...), editAtDir(...), nodeParams(...), baseParams(...), rootKey(...),
+ *   dirToFaceUV(dir), serialize(), load(data), bandsInfo(), setBandScales(i,{seaBiasScale,
+ *   elevAmpScale,roughnessScale}), getBandScales(i), totalEdits (getter) }. sampleUV/sampleTile
+ *   return a shared mutable scratch object -- copy its fields if you need to retain a sample
+ *   across the next call.
+ */
 export function createAnchorField(opts = {}) {
   const seed = (opts.seed | 0) || 1337;
 

@@ -23,7 +23,7 @@ planet.frame();
 
 ## Integration Example
 
-For integration into external projects (e.g., spoint), see `examples/basic-sdk-usage.js` for a complete setup including peer dependencies, camera control, and WebGL context initialization.
+For integration into external projects (e.g., spoint), see `examples/basic-sdk-usage.html` for a complete setup including peer dependencies, camera control, and WebGL context initialization.
 
 ## Development
 

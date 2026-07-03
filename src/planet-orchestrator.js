@@ -175,6 +175,16 @@ function pickFace(camWorld) {
 }
 
 export async function initMapspinnerPlanet(gl, opts = {}) {
+  // GUARD (consumer-facing input validation): a degenerate radius/gridMeshSize propagates
+  // silently into Quadtree (which divides by `size` in _cameraDist/_recurse) and the terrain
+  // shader uniforms, producing NaN geometry or a divide-by-zero hang with no actionable error --
+  // e.g. a consumer accidentally passing an uninitialized variable as radius. Fail loud instead.
+  if (opts.radius != null && (!Number.isFinite(opts.radius) || opts.radius <= 0)) {
+    throw new TypeError(`mapspinner: opts.radius must be a positive finite number, got ${opts.radius}`);
+  }
+  if (opts.gridMeshSize != null && (!Number.isInteger(opts.gridMeshSize) || opts.gridMeshSize < 2)) {
+    throw new TypeError(`mapspinner: opts.gridMeshSize must be an integer >= 2, got ${opts.gridMeshSize}`);
+  }
   const R = opts.radius || 6360.0;  // default matches _planetScale=0.001 (WEBGL2_TERRAIN_R_M)
   // maxLevel default raised 12 -> 16: at 12 the quadtree hit its cap around ~300km altitude so
   // terrain detail froze on descent. 16 lets it keep refining toward first-person (texel ~7m at

@@ -33,6 +33,28 @@ export const HEIGHT_UNIFORM_DEFAULTS = {
   //  vtxDisplace became a 0.0 stub; they were never read here either.)
 }
 
+/**
+ * Create a headless (no GPU/DOM) CPU terrain-height sampler -- the server-side physics-collider
+ * counterpart to the GPU terrain.glsl fractal, kept in exact parity via the transpiled
+ * height-gen.js (see AGENTS.md project/cpu-gpu-height-parity-integer-hash).
+ *
+ * @param {Object} [opts]
+ * @param {number} [opts.radius=6360] - Planet radius, same internal unit as createPlanet's config.radius.
+ * @param {number} [opts.reliefScale] - Vertical relief scale; defaults to radius/63600000 (mirrors
+ *   the GPU's uReliefScale convention) so CPU heights match the rendered surface at any radius.
+ * @param {number} [opts.hpfTexRes=128] - Must match the renderer's HPF bake resolution (see
+ *   planet-orchestrator's HPF_RES) or CPU/GPU heights will diverge at fine detail.
+ * @param {Object} [opts.anchorField] - Reuse an existing createAnchorField() instance instead of
+ *   creating a new one (avoids double-baking the same field when a consumer already has one).
+ * @param {number} [opts.seed] - Anchor-field seed, only used if opts.anchorField is not passed.
+ * @param {Object} [opts.uniforms] - Per-field overrides merged over HEIGHT_UNIFORM_DEFAULTS.
+ * @returns {Object} { heightAt(dir), surfacePoint(dir), radius, anchorField, uniforms, _fns }.
+ *   heightAt(dir) accepts a NON-unit direction vector (internally normalized via glsl-rt's
+ *   normalize, which safely falls back to length=1 on a degenerate/zero-length input rather
+ *   than dividing by zero -- a zero vector returns a defined, if physically meaningless, height
+ *   rather than NaN or throwing). surfacePoint(dir) returns the world-space point on the terrain
+ *   surface along that direction.
+ */
 export function createHeightSampler(opts = {}) {
   const radius = opts.radius || 6360
   // SCALE-INVARIANT relief: mirror the GLSL composeHeight wrapper's uReliefScale (R/6360000,

@@ -29,8 +29,20 @@ export function dirToFace(dir, R) {
   return { face: bf, ox: k * Math.atan(cu / cc), oy: k * Math.atan(cv / cc) }
 }
 
-// Create the patch baker. opts: { radius, reliefScale, seed }. Returns { bakeTile, dirToFace, res } or
-// null if no GL2. bakeTile(face,ox,oy,l) -> Float32Array(res*res) of absolute composeHeight, or null.
+// Create the patch baker. opts: { radius, reliefScale, seed }. Returns
+// { bakeTile, bakeTileAsync, dirToFace, res, planet } or NULL on any of several environment
+// failures: no OffscreenCanvas (e.g. a plain Node worker with no GPU), no webgl2 context, missing
+// EXT_color_buffer_float/OES_texture_float_linear, or an init throw (each logs a
+// '[PatchBaker] unavailable: ...' warning naming the cause before returning null).
+// CONSUMER CONTRACT: this null is NOT itself thrown/guarded further down the chain --
+// createPatchHeightFn({baker: null, ...}) explicitly checks `if (!baker) return null` and
+// itself returns null rather than throwing, so a caller that destructures its result
+// (`const {heightFn} = createPatchHeightFn(...)`) WITHOUT checking for a null return will hit a
+// generic "Cannot destructure property 'heightFn' of null" TypeError with no PatchBaker-specific
+// context. Always check the createPatchBaker() result (or the createPatchHeightFn() result) for
+// null before use; on GPU-less environments (most game servers), skip the fast-path baker
+// entirely and use frame.groundHeightLocal / createHeightSampler's heightAt directly instead.
+// bakeTile(face,ox,oy,l) -> Float32Array(res*res) of absolute composeHeight, or null.
 export async function createPatchBaker(opts = {}) {
   const warn = (m) => { try { console.warn('[PatchBaker] unavailable: ' + m) } catch (_) {} }
   if (typeof OffscreenCanvas === 'undefined') { warn('no OffscreenCanvas (dedicated Node?)'); return null }
