@@ -1543,7 +1543,10 @@ export async function initMapspinnerRender(gl, opts = {}) {
           const q = quads[i].quad; const ff = _faceFrames[quads[i].face | 0];
           const cx = q.ox + q.l * 0.5, cy = q.oy + q.l * 0.5;
           const wx = R * Math.tan((cx / R) * WK), wy = R * Math.tan((cy / R) * WK);
-          const il = 1.0 / (Math.hypot(wx, wy, R) || 1);
+          // OPTIMIZATION (ms-hypot-to-sqrt): wx,wy,R are world-meter magnitudes bounded by the planet
+          // radius, far below float overflow range -- Math.hypot's overflow guard is unneeded overhead
+          // in this per-visible-tile sort-key computation; sqrt-of-sum-of-squares is exact and cheaper.
+          const il = 1.0 / (Math.sqrt(wx*wx + wy*wy + R*R) || 1);
           const dx = (wx*il)*ff[0] + (wy*il)*ff[3] + (R*il)*ff[6];
           const dy = (wx*il)*ff[1] + (wy*il)*ff[4] + (R*il)*ff[7];
           const dz = (wx*il)*ff[2] + (wy*il)*ff[5] + (R*il)*ff[8];
