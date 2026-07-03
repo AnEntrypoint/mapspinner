@@ -711,8 +711,11 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
       }
     }
     // diag: expose the LOD reference shift (angular separation from nadir) for live tuning.
+    // Diagnostic-only, zero consumers found in planet.html/src -- gated behind window.__glCheck
+    // (the established dev-diagnostic flag, see the render.checkGlError() gate below) so the
+    // Math.acos + trig doesn't run unconditionally every rebuild.
     try {
-      if (typeof window !== 'undefined') {
+      if (typeof window !== 'undefined' && window.__glCheck) {
         const sepDot = (lodRefPos[0]*camWorldPos[0] + lodRefPos[1]*camWorldPos[1] + lodRefPos[2]*camWorldPos[2]) / (camDist*camDist);
         window.__lodRefSepDeg = Math.acos(Math.max(-1, Math.min(1, sepDot))) * 57.29578;
       }
@@ -978,8 +981,18 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
     // cache the rebuilt set for static-camera re-render (PERF). fwdLen2 = |fwd|^2 is the
     // dot-product threshold reference for the "turned" check above. The per-vertex fractal has
     // no tiles to stream, so the cache is always complete in one frame.
-    _frameCache = { pos: [camWorldPos[0],camWorldPos[1],camWorldPos[2]], fwd, fwdLen2: fwd[0]*fwd[0]+fwd[1]*fwd[1]+fwd[2]*fwd[2],
-                    displayMode, quads, frontFace, fallbackCount, maxFallbackLevel, frontFallback };
+    // IN-PLACE REUSE (safe: `c` above is only read in the `!moved` early-return branch, which we did
+    // not take -- by the time we reach here `c`/_frameCache's old pos/fwd arrays are dead, so
+    // overwriting them avoids a fresh object + 2 fresh arrays every rebuild).
+    if (_frameCache && _frameCache.pos) {
+      _frameCache.pos[0]=camWorldPos[0]; _frameCache.pos[1]=camWorldPos[1]; _frameCache.pos[2]=camWorldPos[2];
+      _frameCache.fwd = fwd; _frameCache.fwdLen2 = fwd[0]*fwd[0]+fwd[1]*fwd[1]+fwd[2]*fwd[2];
+      _frameCache.displayMode = displayMode; _frameCache.quads = quads; _frameCache.frontFace = frontFace;
+      _frameCache.fallbackCount = fallbackCount; _frameCache.maxFallbackLevel = maxFallbackLevel; _frameCache.frontFallback = frontFallback;
+    } else {
+      _frameCache = { pos: [camWorldPos[0],camWorldPos[1],camWorldPos[2]], fwd, fwdLen2: fwd[0]*fwd[0]+fwd[1]*fwd[1]+fwd[2]*fwd[2],
+                      displayMode, quads, frontFace, fallbackCount, maxFallbackLevel, frontFallback };
+    }
     return { quadCount: quads.length, glError, face: frontFace, residentCount: 0, fallbackCount, maxFallbackLevel, frontFallback, culledCount, cached: false };
   }
 
