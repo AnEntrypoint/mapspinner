@@ -1058,6 +1058,26 @@ export async function initMapspinnerRender(gl, opts = {}) {
   // and just rebind+draw. Pure CPU/GC win (GPU is vertex-bound, the upload is off the critical path).
   const instBufWater=gl.createBuffer();
   let _instQuadsRef=null, _instWaterRef=null, _instWaterN=0, _lastThc=false;
+  // SCRATCH POOLS (perf 2026-07-03): the _dirty instanced-draw rebuild (fires every frame the camera
+  // moves, i.e. the common gameplay case -- NOT just on quad-set change, since the front-to-back sort
+  // and instance buffer must be rebuilt whenever camera position changes the sort order/layer values)
+  // used to allocate a fresh Float64Array(n)/Array(n)/Float32Array(n*FLOATS) EVERY such frame -- the
+  // exact steady-state-allocation class quadtree.js's _leaves pool already eliminated elsewhere in this
+  // codebase ('PERSISTENT leaf-object POOL ... reused across frames ... zero steady-state allocation').
+  // Grow-only capacity-tracked scratch, matching that established idiom: allocate once, reuse, only
+  // grow (never shrink) when a larger n is seen. GC-neutral on the common case (stable visible tile
+  // count); correctness unchanged (same values written, just into a persistent backing store).
+  let _scrD2 = new Float64Array(0), _scrOrd = new Int32Array(0), _scrInst = new Float32Array(0);
+  let _scrWl = new Float32Array(0);
+  function _ensureScratch(n, FLOATS) {
+    if (_scrD2.length < n) _scrD2 = new Float64Array(n);
+    if (_scrOrd.length < n) _scrOrd = new Int32Array(n);
+    if (_scrInst.length < n * FLOATS) _scrInst = new Float32Array(n * FLOATS);
+  }
+  function _ensureWaterScratch(n, FLOATS) {
+    if (_scrWl.length < n * FLOATS) _scrWl = new Float32Array(n * FLOATS);
+  }
+  const _camRotScratch = new Float32Array(9);   // sky-pass camRot uniform: was a fresh alloc every frame the sky pass runs (below 100km alt)
 
   // per-face local->world (cube face -> sphere local frame). Column-major mat3 packed
   // into a Float32Array(9). Matches localToWorld3 convention:
@@ -1271,11 +1291,10 @@ export async function initMapspinnerRender(gl, opts = {}) {
       const skyFade = Math.max(0.0, 1.0 - camAlt / 100000.0);
       if (skyFade > 0.001) {
         gl.useProgram(skyProg);
-        gl.uniformMatrix3fv(SU('camRot'), false, new Float32Array([
-          _cm.viewRel[0], _cm.viewRel[4], _cm.viewRel[8],
-          _cm.viewRel[1], _cm.viewRel[5], _cm.viewRel[9],
-          _cm.viewRel[2], _cm.viewRel[6], _cm.viewRel[10]
-        ]));
+        _camRotScratch[0]=_cm.viewRel[0]; _camRotScratch[1]=_cm.viewRel[4]; _camRotScratch[2]=_cm.viewRel[8];
+        _camRotScratch[3]=_cm.viewRel[1]; _camRotScratch[4]=_cm.viewRel[5]; _camRotScratch[5]=_cm.viewRel[9];
+        _camRotScratch[6]=_cm.viewRel[2]; _camRotScratch[7]=_cm.viewRel[6]; _camRotScratch[8]=_cm.viewRel[10];
+        gl.uniformMatrix3fv(SU('camRot'), false, _camRotScratch);
         gl.uniform2f(SU('projDiag'), _cm.proj[0], _cm.proj[5]);
         gl.uniform3f(SU('skyCamWorld'), eye[0], eye[1], eye[2]);
         gl.uniform3f(SU('skySunDir'), sunDir[0], sunDir[1], sunDir[2]);
@@ -1505,8 +1524,11 @@ export async function initMapspinnerRender(gl, opts = {}) {
         // discard, so early-Z is active). Pure draw-ORDER change -> the depth test owns correctness =
         // visual-neutral. CPU sort of n (~hundreds) on rebuild only (the static-frame cache skips it).
         // d2 = |cam.eye - quad sea-level world centre|^2; _faceFrames[face] = [u0..2,v0..2,c0..2] (col-major).
-        const _d2 = new Float64Array(n);
-        const ord = new Array(n);
+        // SCRATCH POOL (perf 2026-07-03): _d2/ord/inst reused across frames (grow-only), not reallocated
+        // every _dirty frame -- see _ensureScratch. Same values, same layout, zero steady-state GC churn
+        // while the camera moves (the common case: this branch fires whenever the sort order can change).
+        _ensureScratch(n, FLOATS);
+        const _d2 = _scrD2, ord = _scrOrd;
         const WK = Math.PI / 4.0;
         for (let i = 0; i < n; i++) {
           const q = quads[i].quad; const ff = _faceFrames[quads[i].face | 0];
@@ -1519,10 +1541,13 @@ export async function initMapspinnerRender(gl, opts = {}) {
           const ex = dx*R - cam.eye[0], ey = dy*R - cam.eye[1], ez = dz*R - cam.eye[2];
           _d2[i] = ex*ex + ey*ey + ez*ez; ord[i] = i;
         }
-        ord.sort((a, b) => _d2[a] - _d2[b]);
-        const inst = new Float32Array(n * FLOATS);
+        // subarray view over the live n (the backing store may be larger from a prior bigger frame);
+        // Int32Array.prototype.sort is available and numeric-comparator-safe like Array.sort here.
+        const ordN = (ord.length === n) ? ord : ord.subarray(0, n);
+        ordN.sort((a, b) => _d2[a] - _d2[b]);
+        const inst = (_scrInst.length === n * FLOATS) ? _scrInst : _scrInst.subarray(0, n * FLOATS);
         for (let k = 0; k < n; k++) {
-          const i = ord[k];
+          const i = ordN[k];
           const q = quads[i].quad;
           inst[k*FLOATS+0] = q.ox; inst[k*FLOATS+1] = q.oy; inst[k*FLOATS+2] = q.l; inst[k*FLOATS+3] = q.level;
           inst[k*FLOATS+4] = quads[i].face;
@@ -1585,16 +1610,26 @@ export async function initMapspinnerRender(gl, opts = {}) {
         // means the terrain pass never clobbers it (the prior water-as-terrain regression root).
         gl.bindBuffer(gl.ARRAY_BUFFER, instBufWater);
         if (_dirty || quads !== _instWaterRef) {
-          const seen = new Set(); const wl = [];
+          // SCRATCH POOL (perf 2026-07-03): wl was a plain push-based Array rebuilt (with a fresh Set)
+          // every _dirty frame -- reallocates every camera-moved frame, the common case. The dedup Set
+          // still allocates (its size is data-dependent, not a fixed capacity like the typed scratch
+          // above) but the OUTPUT float buffer is now a grow-only typed-array write by index, matching
+          // _ensureScratch's idiom -- output count is bounded by n so n*FLOATS is always sufficient.
+          _ensureWaterScratch(n, FLOATS);
+          const wl = _scrWl;
+          const seen = new Set(); let wc = 0;
           for (let i = 0; i < n; i++) {
             const q = quads[i].quad; let ox = q.ox, oy = q.oy, l = q.l, lv = q.level;
             if (lv > WCAP) { const A = l * Math.pow(2, lv - WCAP); ox = Math.floor(ox / A) * A; oy = Math.floor(oy / A) * A; l = A; lv = WCAP; }
             const key = quads[i].face + ':' + ox + ':' + oy + ':' + l;
             if (seen.has(key)) continue; seen.add(key);
-            wl.push(ox, oy, l, lv, quads[i].face, 0);   // iLayer unused for water (VS pins sea level)
+            wl[wc*FLOATS+0]=ox; wl[wc*FLOATS+1]=oy; wl[wc*FLOATS+2]=l; wl[wc*FLOATS+3]=lv;
+            wl[wc*FLOATS+4]=quads[i].face; wl[wc*FLOATS+5]=0;   // iLayer unused for water (VS pins sea level)
+            wc++;
           }
-          _instWaterN = wl.length / FLOATS;
-          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(wl), gl.DYNAMIC_DRAW);
+          _instWaterN = wc;
+          const wlView = (wl.length === wc * FLOATS) ? wl : wl.subarray(0, wc * FLOATS);
+          gl.bufferData(gl.ARRAY_BUFFER, wlView, gl.DYNAMIC_DRAW);
           _instWaterRef = quads;
         }
         const wn = _instWaterN;
