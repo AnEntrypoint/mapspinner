@@ -98,16 +98,17 @@ export function makeHeight(U, hpfSample) {
   }
 
   function sample_fractal_terrain(pCoords) {
-    let warpOff = g.mul(g.mul(pCoords, C_noiseLayer0.warpStr), eval_layer(pCoords, C_noiseLayer0));
-    let warped = g.add(pCoords, warpOff);
     let h0 = eval_layer(pCoords, C_noiseLayer0);
+    let warpOff = g.mul(g.mul(pCoords, C_noiseLayer0.warpStr), h0);
+    let warped = g.add(pCoords, warpOff);
     let h1 = eval_layer(warped, C_noiseLayer1);
     let h2 = eval_layer(warped, C_noiseLayer2);
     return (((h0 + h1) + h2) / 3.0);
   }
 
   function fractalTerrainH(dir0) {
-    let p = g.mul(g.normalize(dir0), 3.0);
+    let dirN = g.normalize(dir0);
+    let p = g.mul(dirN, 3.0);
     let raw = sample_fractal_terrain(p);
     let h = ((raw - 0.17) * 0.6);
     let pmix = ((snoise3(g.add(g.mul(p, 0.53), g.vec3(123.0, 456.0, 789.0))) * 0.5) + 0.5);
@@ -118,7 +119,7 @@ export function makeHeight(U, hpfSample) {
     else {
       h = (-g.pow((-h), (0.8 * vPower)));
     }
-    let cRatio = g.clamp(((snoise3(g.mul(g.normalize(dir0), 4.0)) * 0.5) + 0.7), 0.3, 1.0);
+    let cRatio = g.clamp(((snoise3(g.mul(dirN, 4.0)) * 0.5) + 0.7), 0.3, 1.0);
     h *= cRatio;
     return h;
   }

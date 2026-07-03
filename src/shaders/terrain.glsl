@@ -199,9 +199,9 @@ float eval_layer(highp vec3 pos, NoiseLayer L) {
 }
 // sample_fractal_terrain: 3-layer domain-warp terrain (warpLevel=3, one warp layer).
 float sample_fractal_terrain(highp vec3 pCoords) {
-    highp vec3 warpOff = pCoords * noiseLayer0.warpStr * eval_layer(pCoords, noiseLayer0);
+    float h0 = eval_layer(pCoords, noiseLayer0);   // CSE: was eval'd twice with byte-identical args (once inline for warpOff, once as h0)
+    highp vec3 warpOff = pCoords * noiseLayer0.warpStr * h0;
     highp vec3 warped  = pCoords + warpOff;
-    float h0 = eval_layer(pCoords,  noiseLayer0);
     float h1 = eval_layer(warped,   noiseLayer1);
     float h2 = eval_layer(warped,   noiseLayer2);
     return (h0 + h1 + h2) / 3.0;
@@ -209,7 +209,8 @@ float sample_fractal_terrain(highp vec3 pCoords) {
 const float PI = 3.14159265;
 // Planet terrain height. Returns approx [-0.6,0.6]; sea level at 0.
 highp float fractalTerrainH(vec3 dir0) {
-    highp vec3 p = normalize(dir0) * 3.0;
+    highp vec3 dirN = normalize(dir0);   // dedupe: normalize(dir0) was called twice below with identical dir0 (never mutated in this fn)
+    highp vec3 p = dirN * 3.0;
 
     // Use the full ridged+FBM layer stack (46 octaves, domain-warped) for sharp ridges and detail.
     // sample_fractal_terrain returns roughly [-1.33, 1.67]; normalise to [-1,1] by subtracting centre ~0.17 then dividing.
@@ -225,7 +226,7 @@ highp float fractalTerrainH(vec3 dir0) {
     else h = -pow(-h, 0.8 * vPower);
 
     // Continental ratio: suppresses fine detail in low-variation regions
-    float cRatio = clamp(snoise3(normalize(dir0) * 4.0) * 0.5 + 0.7, 0.3, 1.0);
+    float cRatio = clamp(snoise3(dirN * 4.0) * 0.5 + 0.7, 0.3, 1.0);
     h *= cRatio;
 
     return h;
