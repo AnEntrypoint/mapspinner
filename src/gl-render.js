@@ -1118,33 +1118,45 @@ export async function initMapspinnerRender(gl, opts = {}) {
   // SINGLE SOURCE OF TRUTH for the camera-relative clip matrix + near/far. Both render()
   // and the orchestrator's frustum cull use this so the cull can never disagree with the
   // draw (a divergence would cull on-screen quads or keep off-screen ones).
-  function cullMatrix(cam) {
-    const aspect = gl.drawingBufferWidth / gl.drawingBufferHeight;
-    const camDist = Math.hypot(cam.eye[0], cam.eye[1], cam.eye[2]);
-    const alt = Math.max(0.0, camDist - R);
-    const altAboveTerrain = Math.max(0.001, alt - R * (cam.surfElev || 0));
-    // FAR-PLANE HORIZON RADIUS = R - 500m (user 2026-06-14: 'nearby mountains disappear at water level;
-    // adjust that level to 500m under water'). The far plane tracks the sea-level horizon = sqrt(camDist^2
-    // - R^2), which at the deck (camDist~=R) collapses to a few hundred metres -> coastal mountains a km
-    // out fall beyond the far plane and vanish. Dropping the horizon reference radius 500m below sea level
-    // extends the horizon to tens of km at low altitude so near-shore relief stays in view (negligible
-    // depth-precision cost: 500m vs R~6.37e6). Both the cull and the draw use this (single source).
-    const RHORIZON = R - 150.0;   // far brought in 500->250 (user 2026-06-14 'bring far plane in a bit'): deck horizon ~80km->~56km = more z-precision; still clears coastal mountains
-    // UNDERWATER FAR-PLANE FIX (user 2026-06-14 'at -214m visible, at -500m it disappears'): when the
-    // camera is more than 500m below sea level, camDist < RHORIZON so the sea-level horizon is imaginary
-    // (-> 0) and alt is negative; the old max(horizon, alt*8) then collapsed the far plane to ~0 and the
-    // whole scene vanished past -500m deep (= the 'ocean looks shallow/empty' when exploring). Floor the
-    // far reach to 60km when submerged so the seabed + the underwater view stay visible.
-    const horizon = (camDist > RHORIZON) ? Math.sqrt(camDist*camDist - RHORIZON*RHORIZON) : 60000.0;
-    // MATCH render()'s near exactly (2026-06-14 jank fix): the cull frustum must use the SAME near
-    // as the draw frustum, else behind-limb/screen-AABB culling diverges from what is actually drawn
-    // at the deck (cull near was max(*0.1,0.1) while render used the <2m 0.05 branch).
-    const near = altAboveTerrain < 2.0 ? 0.5 : Math.max(altAboveTerrain * 0.1, 0.5);   // near nudged out 0.05->0.25 (user 2026-06-14 'improve on-ground'): more z-precision on the deck
-    // FAR PLANE: horizon distance tracks the visible ground edge; blends toward camDist
-    // above 500km for orbital views so the full planet is visible.
-    const _fBlend = Math.min(1.0, Math.max(0.0, (alt - 500000.0) / 4500000.0));
-    const farGround = Math.max(horizon, alt * 8.0);
-    const far = farGround * (1.0 - _fBlend) + camDist * _fBlend;
+  // scalarsIn (optional): {aspect,near,far} already computed by a caller (render() computes the
+  // identical altitude-tied near/far/aspect for its own octave-clamp/planetNearFar bookkeeping
+  // just before calling this) -- reuse them instead of re-deriving from cam.eye/surfElev, so a
+  // single render() frame does this scalar math exactly once instead of twice. Callers that only
+  // need the cull matrices (planet-orchestrator's per-frame cull pass, which runs BEFORE render()
+  // even builds its own scalars) omit scalarsIn and get the original self-contained derivation --
+  // behavior/output is byte-identical either way, this is purely a redundant-recompute removal.
+  function cullMatrix(cam, scalarsIn) {
+    let aspect, near, far;
+    if (scalarsIn) {
+      aspect = scalarsIn.aspect; near = scalarsIn.near; far = scalarsIn.far;
+    } else {
+      aspect = gl.drawingBufferWidth / gl.drawingBufferHeight;
+      const camDist = Math.hypot(cam.eye[0], cam.eye[1], cam.eye[2]);
+      const alt = Math.max(0.0, camDist - R);
+      const altAboveTerrain = Math.max(0.001, alt - R * (cam.surfElev || 0));
+      // FAR-PLANE HORIZON RADIUS = R - 500m (user 2026-06-14: 'nearby mountains disappear at water level;
+      // adjust that level to 500m under water'). The far plane tracks the sea-level horizon = sqrt(camDist^2
+      // - R^2), which at the deck (camDist~=R) collapses to a few hundred metres -> coastal mountains a km
+      // out fall beyond the far plane and vanish. Dropping the horizon reference radius 500m below sea level
+      // extends the horizon to tens of km at low altitude so near-shore relief stays in view (negligible
+      // depth-precision cost: 500m vs R~6.37e6). Both the cull and the draw use this (single source).
+      const RHORIZON = R - 150.0;   // far brought in 500->250 (user 2026-06-14 'bring far plane in a bit'): deck horizon ~80km->~56km = more z-precision; still clears coastal mountains
+      // UNDERWATER FAR-PLANE FIX (user 2026-06-14 'at -214m visible, at -500m it disappears'): when the
+      // camera is more than 500m below sea level, camDist < RHORIZON so the sea-level horizon is imaginary
+      // (-> 0) and alt is negative; the old max(horizon, alt*8) then collapsed the far plane to ~0 and the
+      // whole scene vanished past -500m deep (= the 'ocean looks shallow/empty' when exploring). Floor the
+      // far reach to 60km when submerged so the seabed + the underwater view stay visible.
+      const horizon = (camDist > RHORIZON) ? Math.sqrt(camDist*camDist - RHORIZON*RHORIZON) : 60000.0;
+      // MATCH render()'s near exactly (2026-06-14 jank fix): the cull frustum must use the SAME near
+      // as the draw frustum, else behind-limb/screen-AABB culling diverges from what is actually drawn
+      // at the deck (cull near was max(*0.1,0.1) while render used the <2m 0.05 branch).
+      near = altAboveTerrain < 2.0 ? 0.5 : Math.max(altAboveTerrain * 0.1, 0.5);   // near nudged out 0.05->0.25 (user 2026-06-14 'improve on-ground'): more z-precision on the deck
+      // FAR PLANE: horizon distance tracks the visible ground edge; blends toward camDist
+      // above 500km for orbital views so the full planet is visible.
+      const _fBlend = Math.min(1.0, Math.max(0.0, (alt - 500000.0) / 4500000.0));
+      const farGround = Math.max(horizon, alt * 8.0);
+      far = farGround * (1.0 - _fBlend) + camDist * _fBlend;
+    }
     const proj = M4.perspective(cam.fovy||0.785, aspect, near, far);
     const eye = cam.eye;
     const viewRel = M4.lookAt([0,0,0], [cam.center[0]-eye[0], cam.center[1]-eye[1], cam.center[2]-eye[2]], cam.up||[0,1,0]);
@@ -1203,7 +1215,10 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // atmosphere/lighting path (camWorld, vWorld) stays ABSOLUTE -- only gl_Position is
     // relative.
     const eye = cam.eye;
-    const _cm = cullMatrix(cam);
+    // reuse the near/far/aspect this function already derived above (identical formula
+    // cullMatrix would otherwise re-derive from cam.eye/surfElev) -- removes one redundant
+    // camDist/alt/altAboveTerrain/horizon/near/far scalar recompute per render() call.
+    const _cm = cullMatrix(cam, { aspect, near, far });
     const viewProjRel = _cm.viewProjRel;   // same matrix the frustum cull uses
     const viewProjNoEye = _cm.viewProjNoEye;   // proj*viewRel WITHOUT folded translate(-eye) -- for the
     // camera-relative VS path (vertex-jitter fix): the VS forms a SMALL camera-relative position so the

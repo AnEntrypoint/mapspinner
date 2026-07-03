@@ -44,6 +44,21 @@ Scoped experiment for a session with real GPU profiling access:
    negative result here (same discipline as the THC entry above) so a future
    session does not re-attempt it blind.
 
+DECISION (2026-07-03, feasibility check before attempting the experiment): NOT ATTEMPTED this
+session -- infeasible in-scope, not just unmeasured. Checked `package.json`: mapspinner has ZERO
+three.js/WebGPURenderer/TSL dependency of any kind; the only "WebGPU" references anywhere in src/
+(`gl-render.js:4`, `shaders/atmosphere.glsl:5-9`) are comments about an EXTERNAL offline tool that
+bakes the atmosphere scattering LUTs, unrelated to the runtime terrain render path. Confirmed
+`navigator.gpu` IS available in the project's own headless Chrome (149, `--no-sandbox`, no extra
+flag needed) -- so the browser-side capability isn't the blocker. The blocker is that "a scoped
+experiment" as written requires standing up an entire SECOND rendering backend from scratch (add
+three.js + TSL as new deps, hand-port composeHeight's ~2000-line 12-octave fractal/carve/anchor-field
+stack from GLSL into TSL compute-node form, wire a parallel WebGPURenderer path alongside the raw-GL
+one, build new VS/FS-cost-split profiling instrumentation since gpuTimer is WebGL2-EXT-specific) --
+multi-day scope, not a single-session A/B. Not re-litigating anything (this is genuinely the
+untried mechanism, not THC/phase1-3 again) -- just recording that "scoped" undersold the actual
+lift. A future session attempting this should budget for the port, not expect an afternoon A/B.
+
 ## Architecture (GPU one-fractal)
 - LIVE height path = **procedural `composeHeight` per-vertex in the VS** (`terrain.glsl`): every vertex
   evaluates fractalTerrainH + carves directly. There is NO baked height pool on the default path.
