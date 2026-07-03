@@ -460,14 +460,26 @@ export async function initMapspinnerRender(gl, opts = {}) {
   // own bounded spin-then-block harvest). This pair (issue/poll) makes the readback itself non-blocking,
   // matching sampleGroundM's already-proven pattern: issue() draws + starts the PBO read + fences and
   // returns immediately (no wait at all); poll() is called on a LATER frame/tick to harvest a completed
-  // fence non-blockingly (clientWaitSync timeout 0). One in-flight bake at a time (a second issue() while
-  // one is pending is a no-op returning null) since one PBO/fence pair is reused; callers that need
-  // multiple tiles pending are the server-side blocking bakeTile() path (unaffected, still uses the
-  // original bakeTileReadback above verbatim).
-  let _bakeAsyncPbo = null, _bakeAsyncFence = null, _bakeAsyncPending = null;   // pending = {face,ox,oy,l,level}
+  // fence non-blockingly (clientWaitSync timeout 0).
+  //
+  // SLOT RING (2026-07-03, ms-async-bake-slot-ring): the original design reused ONE PBO/fence pair, so
+  // a second issue() while one bake was in flight was a silent no-op -- patch-baker.js's prefetchAround
+  // issues up to 8 neighbor-tile bakes per call, but only the LAST one survived (each new issue() call
+  // that found a slot busy did nothing, so 7 of 8 prefetch requests were dropped on the floor every time
+  // prefetchAround ran with anything already in flight). Fix: N independent {pbo, fence, pending} slots,
+  // each an exact replica of the single-slot allocation pattern above. issueAsync scans for a FREE slot
+  // (fence null) instead of bailing when slot 0 is busy; pollAsync scans all slots and harvests the first
+  // one whose fence has signaled (non-blocking clientWaitSync timeout 0 on each, same as before -- this
+  // never blocks, it just checks up to N fences instead of 1). Bounded-latency/fallback-to-CPU-fractal
+  // semantics on a cache miss are UNCHANGED: a miss still returns null immediately from the caller's
+  // perspective (issue-then-return, or all slots busy -> return false) and the caller's own fallbackFn
+  // covers that frame, exactly as the single-slot version did.
+  const BAKE_ASYNC_SLOTS = 4;
+  const _bakeAsyncSlots = Array.from({ length: BAKE_ASYNC_SLOTS }, () => ({ pbo: null, fence: null, pending: null }));
   function bakeTileIssueAsync(face, ox, oy, l, level){
     if (!bakeProg){ ensureBake(); return false; }
-    if (_bakeAsyncFence) return false;   // one in flight at a time; caller polls first
+    const slot = _bakeAsyncSlots.find(s => !s.fence);
+    if (!slot) return false;   // all N slots in flight; caller polls first (was: the single slot busy)
     gl.bindFramebuffer(gl.FRAMEBUFFER, bakeFbo);
     gl.viewport(0,0,THC_BAKE_RES,THC_BAKE_RES);
     gl.useProgram(bakeProg);
@@ -484,30 +496,37 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.disable(gl.DEPTH_TEST);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     const byteLen = THC_BAKE_RES*THC_BAKE_RES*4;   // RED float32 (1 channel, matches the R32F bake FBO -- see bakeTileReadback's comment)
-    if (!_bakeAsyncPbo) _bakeAsyncPbo = gl.createBuffer();
-    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, _bakeAsyncPbo);
+    if (!slot.pbo) slot.pbo = gl.createBuffer();
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, slot.pbo);
     gl.bufferData(gl.PIXEL_PACK_BUFFER, byteLen, gl.STREAM_READ);
     gl.readPixels(0,0,THC_BAKE_RES,THC_BAKE_RES, gl.RED, gl.FLOAT, 0);
-    _bakeAsyncFence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    slot.fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
     gl.flush();
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.bindVertexArray(null);
-    _bakeAsyncPending = { face, ox, oy, l, level };
+    slot.pending = { face, ox, oy, l, level };
     return true;
   }
+  // Harvests the first slot whose fence has signaled (non-blocking; never waits). Callers that want to
+  // drain multiple completed slots in one tick call this in a loop until it returns null (patch-baker.js
+  // does not currently need that -- one harvest per patchFor/heightFn call is enough since a cache hit on
+  // the SAME tile the very next lookup is the common case -- but the API supports repeated draining).
   function bakeTilePollAsync(){
-    if (!_bakeAsyncFence) return null;
-    const status = gl.clientWaitSync(_bakeAsyncFence, 0, 0);   // 0 timeout: never blocks
-    if (status !== gl.ALREADY_SIGNALED && status !== gl.CONDITION_SATISFIED) return null;   // still cooking, no stall
-    gl.deleteSync(_bakeAsyncFence); _bakeAsyncFence = null;
-    const byteLen = THC_BAKE_RES*THC_BAKE_RES*4;   // RED float32 (1 channel)
-    const out = new Float32Array(byteLen / 4);   // RED/FLOAT: buf IS the height array directly, no de-interleave needed
-    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, _bakeAsyncPbo);
-    gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, out);   // fence already signaled -> this returns immediately, no stall
-    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
-    const meta = _bakeAsyncPending; _bakeAsyncPending = null;
-    return { heights: out, res: THC_BAKE_RES, face: meta.face, ox: meta.ox, oy: meta.oy, l: meta.l, level: meta.level };
+    for (const slot of _bakeAsyncSlots) {
+      if (!slot.fence) continue;
+      const status = gl.clientWaitSync(slot.fence, 0, 0);   // 0 timeout: never blocks
+      if (status !== gl.ALREADY_SIGNALED && status !== gl.CONDITION_SATISFIED) continue;   // still cooking, no stall
+      gl.deleteSync(slot.fence); slot.fence = null;
+      const byteLen = THC_BAKE_RES*THC_BAKE_RES*4;   // RED float32 (1 channel)
+      const out = new Float32Array(byteLen / 4);   // RED/FLOAT: buf IS the height array directly, no de-interleave needed
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, slot.pbo);
+      gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, out);   // fence already signaled -> this returns immediately, no stall
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+      const meta = slot.pending; slot.pending = null;
+      return { heights: out, res: THC_BAKE_RES, face: meta.face, ox: meta.ox, oy: meta.oy, l: meta.l, level: meta.level };
+    }
+    return null;   // nothing completed yet across any slot
   }
   // Expose on globalThis (covers BOTH window and a Web Worker's self) so a headless/worker consumer --
   // e.g. a physics collider baking patches off the GPU in the singleplayer/host worker, which has

@@ -123,7 +123,15 @@ export async function createPatchBaker(opts = {}) {
   // tile (once the fence has signaled, no CPU stall to check) harvests and returns the real heights.
   // Falls back to the old one-shot synchronous __thcBakeReadback if the async pair isn't exposed (an
   // older gl-render.js build without them) so this stays forward-compatible.
-  let _asyncTileKey = null
+  //
+  // SLOT RING (2026-07-03, ms-async-bake-slot-ring): __thcBakeIssueAsync now backs onto a small ring of
+  // N independent GPU slots (gl-render.js) instead of one -- prefetchAround below issues up to 8 neighbor
+  // bakes per call, and with only one slot every issue() after the first was a silent no-op (7 of 8
+  // prefetch requests dropped every time anything was already in flight). _asyncInFlight tracks EVERY key
+  // this caller has an outstanding issue() for (was a single _asyncTileKey), so bakeTileAsync knows not to
+  // re-issue a key that's already occupying one of the ring's slots, and drains the ring on every call
+  // (not just once) since several neighbor bakes can complete in the same tick.
+  const _asyncInFlight = new Set()
   const _asyncDone = new Map()   // key -> heights, for a completed bake that belongs to a DIFFERENT call than the one that harvested it
   const _ASYNC_DONE_MAX = 8      // small: bridges the one-call-behind race, not a real cache (createPatchHeightFn owns the real LRU)
   function bakeTileAsync(face, ox, oy, l, level = 0) {
@@ -134,20 +142,25 @@ export async function createPatchBaker(opts = {}) {
     }
     const key = face + ':' + ox + ':' + oy + ':' + l + ':' + level
     if (_asyncDone.has(key)) { const h = _asyncDone.get(key); _asyncDone.delete(key); return h }   // a prior call already harvested this exact tile
-    // Harvest first: a completed bake from a prior issue() becomes available here, non-blocking.
-    const done = g.__thcBakePollAsync()
-    if (done) {
+    // Harvest: drain every slot that has completed since the last call (non-blocking per slot; the ring
+    // may hold several finished bakes at once when prefetchAround issued a batch last frame).
+    let result = null
+    for (let guard = 0; guard < 8; guard++) {   // bounded: never more completions than slots exist
+      const done = g.__thcBakePollAsync()
+      if (!done) break
       res = done.res
       const doneKey = done.face + ':' + done.ox + ':' + done.oy + ':' + done.l + ':' + done.level
-      if (doneKey === key) return done.heights   // this call's own tile finished -- return it now
-      // A DIFFERENT tile finished than the one THIS call wants (the caller moved on since issuing it).
-      // Stash it rather than discard the completed GPU work -- the tile that requested it will very
-      // likely be re-queried again soon (patch-span-sized cells, revisited on the next lookup in that
-      // area) and will hit the stash above instead of re-issuing a redundant bake.
+      _asyncInFlight.delete(doneKey)
+      if (doneKey === key) { result = done.heights; continue }   // this call's own tile finished -- keep draining the rest, return it below
+      // A DIFFERENT tile finished than the one THIS call wants (the caller moved on since issuing it, or
+      // it was a prefetchAround neighbor). Stash it rather than discard the completed GPU work -- the
+      // tile that requested it will very likely be re-queried again soon (patch-span-sized cells,
+      // revisited on the next lookup in that area) and will hit the stash above instead of re-issuing.
       _asyncDone.set(doneKey, done.heights)
       if (_asyncDone.size > _ASYNC_DONE_MAX) _asyncDone.delete(_asyncDone.keys().next().value)
     }
-    if (_asyncTileKey !== key) { g.__thcBakeIssueAsync(face | 0, ox, oy, l, level); _asyncTileKey = key }
+    if (result) return result
+    if (!_asyncInFlight.has(key)) { if (g.__thcBakeIssueAsync(face | 0, ox, oy, l, level)) _asyncInFlight.add(key) }
     return null
   }
   // Per-baker memoized dirToFace (see makeDirToFaceMemo above) -- the placement/collision hot path
@@ -256,9 +269,13 @@ export function createPatchHeightFn({ baker, frame, maxLevel = 11, offsetY = 0, 
   // center cell, which heightFn's own call already covers) BEFORE the player's next placement/render
   // lookup needs them -- call once per frame from the moving entity's (or camera's) position. Each issue
   // is a single bakeTileAsync call (immediate return, no wait); a cell already cached is skipped, and
-  // re-issuing an already-in-flight cell just re-marks the same in-flight key (cheap, not wrong -- see
-  // bakeTileAsync's single _asyncTileKey slot). blocking:true bakers (server/host collider) never need
-  // this -- prefetch only pays off the async miss cost, which only exists on the non-blocking path.
+  // re-issuing an already-in-flight cell is a no-op against _asyncInFlight (cheap, not wrong). With the
+  // gl-render.js slot-ring backing __thcBakeIssueAsync (ms-async-bake-slot-ring, 2026-07-03), up to
+  // BAKE_ASYNC_SLOTS of these 8 neighbor requests actually land concurrently instead of only the most
+  // recent one surviving -- once the ring is full, further issues in this same call return false from
+  // __thcBakeIssueAsync and bakeTileAsync simply does not add them to _asyncInFlight, so they are retried
+  // on a later prefetchAround call once a slot frees up. blocking:true bakers (server/host collider) never
+  // need this -- prefetch only pays off the async miss cost, which only exists on the non-blocking path.
   function prefetchAround(x, z) {
     const d = frame.localToDir(x, z)
     const { face, ox, oy } = baker.dirToFace(d)
