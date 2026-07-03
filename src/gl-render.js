@@ -300,7 +300,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
   // only once the fence is signaled (non-blocking clientWaitSync(0)). Collision consumes the height
   // ~1 frame late -- negligible at deck movement speed (the move-step already caches __lastGpuM).
   let _probePbo = null, _probeSync = null, _probeLastM = null;
-  const _probeOut = new Float32Array(4);
+  const _probeOut = new Float32Array(1);   // RED/FLOAT readback is single-channel (was 4: RGBA over-read of the R32F source)
   // sampleGroundM(dir): rendered terrain height (metres) at world direction dir, ~1 frame stale.
   // Returns null until the first async read completes (caller falls back to the CPU mirror).
   function sampleGroundM(dir) {
@@ -318,7 +318,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     }
     // 2) Only issue a fresh read when none is in flight (else just return the last harvested value).
     if (!_probeSync) {
-      if (!_probePbo) { _probePbo = gl.createBuffer(); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, _probePbo); gl.bufferData(gl.PIXEL_PACK_BUFFER, 16, gl.STREAM_READ); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); }
+      if (!_probePbo) { _probePbo = gl.createBuffer(); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, _probePbo); gl.bufferData(gl.PIXEL_PACK_BUFFER, 4, gl.STREAM_READ); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); }   // 4 bytes: RED/FLOAT single-channel readback (was 16 for RGBA)
       const pl = Math.hypot(dir[0],dir[1],dir[2])||1;
       gl.bindFramebuffer(gl.FRAMEBUFFER, probeFbo);
       gl.viewport(0,0,1,1);
@@ -337,7 +337,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
       gl.disable(gl.DEPTH_TEST);
       gl.drawArrays(gl.POINTS, 0, 1);
       gl.bindBuffer(gl.PIXEL_PACK_BUFFER, _probePbo);
-      gl.readPixels(0,0,1,1, gl.RGBA, gl.FLOAT, 0);   // ASYNC: into the PBO at offset 0, returns immediately (no CPU<-GPU stall)
+      gl.readPixels(0,0,1,1, gl.RED, gl.FLOAT, 0);   // ASYNC: into the PBO at offset 0, returns immediately (no CPU<-GPU stall). RED/FLOAT matches the R32F source (1 channel, not RGBA's 4x bytes) -- WebGL2 core supports RED/FLOAT readback from an R32F FBO (same EXT_color_buffer_float already required above).
       gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
       _probeSync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
       gl.flush();   // push the commands + fence so the GPU starts now and the fence can signal by next call
@@ -422,11 +422,16 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(BU('uBakeRes'), THC_BAKE_RES);
     gl.disable(gl.DEPTH_TEST);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
-    const byteLen = THC_BAKE_RES*THC_BAKE_RES*4*4;   // RGBA float32
+    // RED/FLOAT (2026-07-03): the bake FBO is R32F (single channel) -- RGBA/FLOAT read 4x the bytes
+    // actually written by the driver and this code only ever kept buf[i*4] (R), discarding G/B/A.
+    // WebGL2 core supports RED/FLOAT readback from an R32F framebuffer (spec-compliant; the same
+    // EXT_color_buffer_float required for the R32F attachment itself covers float readback formats).
+    // Zero value change: same heights, 4x less PBO allocation + DMA + host copy bandwidth.
+    const byteLen = THC_BAKE_RES*THC_BAKE_RES*4;   // RED float32 (1 channel)
     if (!_bakePbo) _bakePbo = gl.createBuffer();
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, _bakePbo);
     gl.bufferData(gl.PIXEL_PACK_BUFFER, byteLen, gl.STREAM_READ);
-    gl.readPixels(0,0,THC_BAKE_RES,THC_BAKE_RES, gl.RGBA, gl.FLOAT, 0);   // into the PBO (driver-side DMA, no immediate host copy)
+    gl.readPixels(0,0,THC_BAKE_RES,THC_BAKE_RES, gl.RED, gl.FLOAT, 0);   // into the PBO (driver-side DMA, no immediate host copy)
     const fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
     gl.flush();
     // Bounded spin: give the GPU up to ~2ms to finish the draw+copy before falling through to the
@@ -438,13 +443,11 @@ export async function initMapspinnerRender(gl, opts = {}) {
       status = gl.clientWaitSync(fence, 0, 0);
     }
     gl.deleteSync(fence);
-    const buf = new Float32Array(byteLen / 4);
-    gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, buf);   // blocks only if the spin above didn't already observe completion
+    const out = new Float32Array(byteLen / 4);   // RED/FLOAT: buf IS the height array directly, no de-interleave needed
+    gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, out);   // blocks only if the spin above didn't already observe completion
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.bindVertexArray(null);
-    const out = new Float32Array(THC_BAKE_RES*THC_BAKE_RES);
-    for (let i=0;i<out.length;i++) out[i]=buf[i*4];
     let dbg=null; try{ dbg={ offLoc: BU('uBakeOffset')!=null, resLoc: BU('uBakeRes')!=null, frameLoc: BU('uBakeFrame')!=null,
       offRead: BU('uBakeOffset')?Array.from(gl.getUniform(bakeProg, BU('uBakeOffset'))):null,
       resRead: BU('uBakeRes')?gl.getUniform(bakeProg, BU('uBakeRes')):null }; }catch(e){ dbg={err:String(e)}; }
@@ -480,11 +483,11 @@ export async function initMapspinnerRender(gl, opts = {}) {
     gl.uniform1f(BU('uBakeRes'), THC_BAKE_RES);
     gl.disable(gl.DEPTH_TEST);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
-    const byteLen = THC_BAKE_RES*THC_BAKE_RES*4*4;
+    const byteLen = THC_BAKE_RES*THC_BAKE_RES*4;   // RED float32 (1 channel, matches the R32F bake FBO -- see bakeTileReadback's comment)
     if (!_bakeAsyncPbo) _bakeAsyncPbo = gl.createBuffer();
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, _bakeAsyncPbo);
     gl.bufferData(gl.PIXEL_PACK_BUFFER, byteLen, gl.STREAM_READ);
-    gl.readPixels(0,0,THC_BAKE_RES,THC_BAKE_RES, gl.RGBA, gl.FLOAT, 0);
+    gl.readPixels(0,0,THC_BAKE_RES,THC_BAKE_RES, gl.RED, gl.FLOAT, 0);
     _bakeAsyncFence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
     gl.flush();
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
@@ -498,13 +501,11 @@ export async function initMapspinnerRender(gl, opts = {}) {
     const status = gl.clientWaitSync(_bakeAsyncFence, 0, 0);   // 0 timeout: never blocks
     if (status !== gl.ALREADY_SIGNALED && status !== gl.CONDITION_SATISFIED) return null;   // still cooking, no stall
     gl.deleteSync(_bakeAsyncFence); _bakeAsyncFence = null;
-    const byteLen = THC_BAKE_RES*THC_BAKE_RES*4*4;
-    const buf = new Float32Array(byteLen / 4);
+    const byteLen = THC_BAKE_RES*THC_BAKE_RES*4;   // RED float32 (1 channel)
+    const out = new Float32Array(byteLen / 4);   // RED/FLOAT: buf IS the height array directly, no de-interleave needed
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, _bakeAsyncPbo);
-    gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, buf);   // fence already signaled -> this returns immediately, no stall
+    gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, out);   // fence already signaled -> this returns immediately, no stall
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
-    const out = new Float32Array(THC_BAKE_RES*THC_BAKE_RES);
-    for (let i=0;i<out.length;i++) out[i]=buf[i*4];
     const meta = _bakeAsyncPending; _bakeAsyncPending = null;
     return { heights: out, res: THC_BAKE_RES, face: meta.face, ox: meta.ox, oy: meta.oy, l: meta.l, level: meta.level };
   }
