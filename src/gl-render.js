@@ -358,6 +358,10 @@ export async function initMapspinnerRender(gl, opts = {}) {
     [1,0,0, 0,0,-1, 0,1,0], [1,0,0, 0,0,1, 0,-1,0],
     [1,0,0, 0,1,0, 0,0,1], [-1,0,0, 0,1,0, 0,0,-1],
   ];
+  // Pre-converted Float32Array per face, built once here instead of re-wrapping `new Float32Array(_faceFrames[face])`
+  // on every bake-uniform upload call (3 call sites, one per baked tile/frame) -- the source arrays never mutate,
+  // so the conversion is a pure one-time cost.
+  const _faceFramesF32 = _faceFrames.map(f => new Float32Array(f));
   let bakeProg=null, bakeTex=null, bakeFbo=null, _bakeBuilding=null; const _bakeUloc=new Map();
   const BU = n => { let l=_bakeUloc.get(n); if(l===undefined){ l=gl.getUniformLocation(bakeProg,n); _bakeUloc.set(n,l);} return l; };
   function ensureBake(){
@@ -413,7 +417,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     _octClampAlt = 0;   // height bake: full octaves (the baked tile is consumed at vertex rate near ground; match the surface)
     setComposeHeightUniforms(BU);
     gl.uniform1f(BU('defRadius'), R);
-    gl.uniformMatrix3fv(BU('uBakeFrame'), false, new Float32Array(_faceFrames[face|0]));
+    gl.uniformMatrix3fv(BU('uBakeFrame'), false, _faceFramesF32[face|0]);
     gl.uniform4f(BU('uBakeOffset'), ox, oy, l, level);
     gl.uniform1f(BU('uBakeRes'), THC_BAKE_RES);
     gl.disable(gl.DEPTH_TEST);
@@ -471,7 +475,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     _octClampAlt = 0;
     setComposeHeightUniforms(BU);
     gl.uniform1f(BU('defRadius'), R);
-    gl.uniformMatrix3fv(BU('uBakeFrame'), false, new Float32Array(_faceFrames[face|0]));
+    gl.uniformMatrix3fv(BU('uBakeFrame'), false, _faceFramesF32[face|0]);
     gl.uniform4f(BU('uBakeOffset'), ox, oy, l, level);
     gl.uniform1f(BU('uBakeRes'), THC_BAKE_RES);
     gl.disable(gl.DEPTH_TEST);
@@ -547,7 +551,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     _octClampAlt = 0;   // height bake: full octaves (the baked tile is consumed at vertex rate near ground; match the surface)
     setComposeHeightUniforms(BU);
     gl.uniform1f(BU('defRadius'), R);
-    gl.uniformMatrix3fv(BU('uBakeFrame'), false, new Float32Array(_faceFrames[face|0]));
+    gl.uniformMatrix3fv(BU('uBakeFrame'), false, _faceFramesF32[face|0]);
     gl.uniform4f(BU('uBakeOffset'), ox, oy, l, level);
     gl.uniform1f(BU('uBakeRes'), THC_BAKE_RES);
     gl.disable(gl.DEPTH_TEST);

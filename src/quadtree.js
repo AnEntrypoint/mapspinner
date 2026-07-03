@@ -5,6 +5,8 @@
 // run; call setConfig once, computeSplitDist when viewport/fov change, updateQuadtree per frame
 // with the camera in LOCAL (undeformed cube-face) space -> returns leaf quads [{level,tx,ty,ox,oy,l}].
 
+const TAN_40DEG = Math.tan(40.0 / 180.0 * Math.PI);
+
 export class Quadtree {
   constructor(size) {
     this.size = size || 6360000.0;   // root half-extent / planet radius (m). SCALE-INVARIANT: planet-orchestrator passes the configured R; was hardcoded 6360000 -> small-radius consumers got a broken (camAlt-negative) LOD mesh.
@@ -26,8 +28,11 @@ export class Quadtree {
   }
 
   // splitDist = splitFactor * viewportH/1024 * tan(40deg)/tan(fov/2), clamped >= 1.1.
+  // TAN_40DEG is a compile-time constant (Math.tan(40*PI/180)); const-folded once at module load
+  // instead of recomputed on every call (this runs once per viewport/fov change, not per frame, but
+  // the recompute was still pure waste -- tan(40deg) never varies).
   computeSplitDist(splitFactor, viewportH, fovRad) {
-    let sd = splitFactor * viewportH / 1024.0 * Math.tan(40.0 / 180.0 * Math.PI) / Math.tan(fovRad / 2.0);
+    let sd = splitFactor * viewportH / 1024.0 * TAN_40DEG / Math.tan(fovRad / 2.0);
     if (!(sd >= 1.1) || !isFinite(sd)) sd = 1.1;
     this.splitDist = sd;
     return sd;
