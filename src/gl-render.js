@@ -960,13 +960,19 @@ export async function initMapspinnerRender(gl, opts = {}) {
   // MSAA), so the previous blit silently failed and nothing was occluded -- this shader pass writes
   // per-fragment depth and is MSAA-safe. uDepthBias pushes depth away to avoid z-fight with geometry ON
   // the surface. Full-screen triangle reuses upVsSrc (vUv).
-  const dwFsSrc = '#version 300 es\nprecision highp float;\nuniform highp sampler2D uDepth;\nuniform float uDepthBias;\nin vec2 vUv;\nout vec4 fragColor;\nvoid main(){ gl_FragDepth = min(1.0, texture(uDepth, vUv).r + uDepthBias); fragColor = vec4(0.0); }';
+  // uUvScale MUST mirror the color upscale pass's subregion mapping (upFsSrc samples
+  // vUv*uUvScale): when VDRS flexes the viewport below full size (__vdrs===true, scale<1),
+  // _vdrsDepth's active content lives in the [0..scale] subregion -- sampling it with the raw
+  // full-range vUv stamped depth from the WRONG texels (stretched subregion + stale texels from
+  // frames when the viewport was larger), so a consumer scene depth-tested against garbage.
+  const dwFsSrc = '#version 300 es\nprecision highp float;\nuniform highp sampler2D uDepth;\nuniform float uDepthBias;\nuniform vec2 uUvScale;\nin vec2 vUv;\nout vec4 fragColor;\nvoid main(){ gl_FragDepth = min(1.0, texture(uDepth, vUv*uUvScale).r + uDepthBias); fragColor = vec4(0.0); }';
   const dwProg = gl.createProgram();
   gl.attachShader(dwProg, rawShader(gl.VERTEX_SHADER, upVsSrc));
   gl.attachShader(dwProg, rawShader(gl.FRAGMENT_SHADER, dwFsSrc));
   gl.linkProgram(dwProg);
   const dwUDepth = gl.getUniformLocation(dwProg, 'uDepth');
   const dwUBias = gl.getUniformLocation(dwProg, 'uDepthBias');
+  const dwUScale = gl.getUniformLocation(dwProg, 'uUvScale');
   // PREMULTIPLIED-ALPHA composite for the half-res water (perf 2026-06-24): the half-res FBO clears to
   // (0,0,0,0); at the waterline a straight-alpha LINEAR upsample mixes water-rgb toward the cleared
   // BLACK as alpha falls 1->0, then a SRC_ALPHA blend lays partial-black over land = a black fringe
@@ -1859,6 +1865,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
         gl.useProgram(dwProg);
         gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, _vdrsDepth); gl.uniform1i(dwUDepth, 0);
         gl.uniform1f(dwUBias, (typeof window.__planetDepthBias === 'number') ? window.__planetDepthBias : 0.0);
+        gl.uniform2f(dwUScale, _vdrsRsThisFrame, _vdrsRsThisFrame);   // same subregion mapping as the color upscale
         gl.bindVertexArray(upVao); gl.drawArrays(gl.TRIANGLES, 0, 3); gl.bindVertexArray(null);
         gl.colorMask(true, true, true, true); gl.depthFunc(gl.LESS);
       }
