@@ -37,6 +37,7 @@ const UNIFORMS = new Set([
   'uLandBias', 'uBeachShelfM', 'canyonDepthMul', 'uDetailOverlay', 'uHiFreqCut', 'uCarveWide',
   'uMtnBandWide', 'uClimateRelief', 'uIsleWide', 'uVsCheap', 'cliffAmt', 'vtxDetail', 'defRadius',
   'uOctMax', 'uInciseRidgeOcts', 'uBroadLowOcts', 'uPeakOcts', 'uDetailFbmOcts', 'uVtxBaseOcts', 'uVtxErodeOcts',
+  'uNoUnroll',   // FXC anti-unroll loop bound (value-neutral at the default 64; see terrain.glsl)
 ])
 // struct field order (for the HCache(...) constructor) -- parsed below but seeded here.
 const STRUCTS = {}

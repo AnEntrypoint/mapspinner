@@ -17,8 +17,9 @@ export function makeHeight(U, hpfSample) {
   }
 
   function snoise3(P) {
-    let i = g.ivec3(g.floor(P));
-    let f = g.fract(P);
+    let fl = g.floor(P);
+    let i = g.ivec3(fl);
+    let f = g.sub(P, fl);
     let u = g.mul(g.mul(g.mul(f, f), f), g.add(g.mul(f, g.sub(g.mul(f, 6.0), 15.0)), 10.0));
     let i0 = g.vec3(i);
     let i1 = g.add(g.vec3(i), g.vec3(1.0));
@@ -42,7 +43,8 @@ export function makeHeight(U, hpfSample) {
     let a = 1.0;
     let norm = 0.0;
     let p = x;
-    for (let i = 0; (i < numOctaves); i++) {
+    let nb = (numOctaves + ((U.uNoUnroll > 0) ? (U.uNoUnroll - 64) : 0));
+    for (let i = 0; (i < nb); i++) {
       v += (a * snoise3(p));
       norm += a;
       a *= gain;
@@ -67,7 +69,8 @@ export function makeHeight(U, hpfSample) {
     let norm = 0.0;
     let a = 1.0;
     let p = x_in;
-    for (let i = 0; (i < numOctaves); i++) {
+    let nb = (numOctaves + ((U.uNoUnroll > 0) ? (U.uNoUnroll - 64) : 0));
+    for (let i = 0; (i < nb); i++) {
       let signal = (offset - g.abs(snoise3(p)));
       signal = g.pow(g.max(signal, 0.0), exponent);
       v += ((signal * w) * a);
@@ -137,7 +140,7 @@ export function makeHeight(U, hpfSample) {
 
   function vnoise2(p) {
     let i = g.floor(p);
-    let f = g.fract(p);
+    let f = g.sub(p, i);
     let u = g.mul(g.mul(g.mul(f, f), f), g.add(g.mul(f, g.sub(g.mul(f, 6.0), 15.0)), 10.0));
     let a = vhash(i);
     let b = vhash(g.add(i, g.vec2(1, 0)));

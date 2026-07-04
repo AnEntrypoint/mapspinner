@@ -80,8 +80,8 @@ highp vec4 hpfSample(vec3 dir) {   // W7: R=seaBias is metres (~1600) -> highp s
     bool inset = uHpfInset > 0.5;
     vec2 denom = inset ? (sz - 1.0) : sz;
     vec2 t  = inset ? (uv * denom) : (uv * sz - 0.5);
-    vec2 f  = fract(t);
     vec2 t0 = floor(t);
+    vec2 f  = t - t0;   // one shared floor (FXC floor/fract consistency, see snoise3)
     vec2 hb = 0.5 / sz;                           // half-texel in uv (clamp band, centred case)
     vec2 c0 = inset ? (t0)              / denom : clamp((t0 + 0.5)        / sz, hb, 1.0 - hb);
     vec2 c1 = inset ? (t0 + vec2(1.0, 0.0)) / denom : clamp((t0 + vec2(1.5, 0.5)) / sz, hb, 1.0 - hb);
@@ -125,8 +125,17 @@ highp float h3(highp vec3 p) {
 }
 // Quintic value noise.
 float snoise3(highp vec3 P) {
-    highp ivec3 i = ivec3(floor(P));
-    highp vec3 f = fract(P);
+    // FXC CONSISTENCY (2026-07-04 needle fix): floor(P) and fract(P) computed INDEPENDENTLY let
+    // ANGLE/FXC's fast-math evaluate the expression feeding each with different roundings near a
+    // lattice boundary -- the cell index i and the in-cell fraction f then disagree (i from cell k,
+    // f relative to cell k+-1), so the corner hashes come from the WRONG cell: an O(1) noise jump at
+    // isolated points on lattice planes, surfacing as +30m single-texel height NEEDLES along a line
+    // (backend split: d3d11 5 needles, vulkan/swiftshader/CPU 0 -- scripts/needle-ab.mjs; bisected
+    // to a single 1-octave snoise3 call). Deriving f FROM the one shared floor result makes i/f
+    // consistent BY CONSTRUCTION on every translator; value-identical where fract already agreed.
+    highp vec3 fl = floor(P);
+    highp ivec3 i = ivec3(fl);
+    highp vec3 f = P - fl;
     highp vec3 u = f*f*f*(f*(f*6.0-15.0)+10.0);
     highp vec3 i0 = vec3(i), i1 = vec3(i) + vec3(1.0);
     float n000 = h3(i0);
@@ -141,11 +150,25 @@ float snoise3(highp vec3 P) {
     float x01=mix(n001,n101,u.x), x11=mix(n011,n111,u.x);
     return mix(mix(x00,x10,u.y), mix(x01,x11,u.y), u.z);   // [-1,1]
 }
+// FXC ANTI-UNROLL (2026-07-04, the documented d3d11/FXC mis-translation class returning): the
+// NoiseLayer const structs carry compile-time-constant numOct (10/18/18/23), so these loops had
+// CONSTANT bounds again -- FXC fully unrolled + cross-iteration reordered them, producing isolated
+// single-texel height NEEDLES (+30m on a smooth field; backend split proof: d3d11 5 needles,
+// vulkan/swiftshader 0 on the same RTX 3060, scripts/needle-ab.mjs). uNoUnroll (set 64 by
+// setComposeHeightUniforms, guarded: <=0 -> numOctaves) makes the bound RUNTIME-OPAQUE in every
+// branch so FXC cannot unroll; value semantics unchanged (64 > every layer's numOct). Same
+// solution as the original uOctMax de-unroll -- never reintroduce a constant fractal loop bound.
+uniform int uNoUnroll;
 // Standard FBM.
 float value_fbm(highp vec3 x, float gain, int numOctaves) {
     float v=0.0, a=1.0, norm=0.0;
     highp vec3 p=x;
-    for(int i=0;i<numOctaves;i++){ v+=a*snoise3(p); norm+=a; a*=gain; p*=2.0; }
+    // nb == numOctaves exactly when uNoUnroll==64 (the value setComposeHeightUniforms always sets),
+    // but FXC cannot prove (uNoUnroll-64)==0, so the trip count has no provable constant bound and
+    // the loop CANNOT be unrolled. min(numOctaves,uniform) was tried first and FAILED: it leaves a
+    // provable upper bound (numOctaves) that FXC still unrolls to with folded breaks.
+    int nb = numOctaves + ((uNoUnroll > 0) ? (uNoUnroll - 64) : 0);
+    for(int i=0;i<nb;i++){ v+=a*snoise3(p); norm+=a; a*=gain; p*=2.0; }
     return v/norm;
 }
 float value_fbm_scaled(highp vec3 x, float gain, int numOctaves, float lo, float hi) {
@@ -160,7 +183,8 @@ highp vec3 rotate_domain(highp vec3 pos, float angle) {
 float value_ridged_fbm_rot(highp vec3 x_in, float gain, int numOctaves, float offset, float exponent) {
     float v=0.0, w=1.0, norm=0.0, a=1.0;
     highp vec3 p=x_in;
-    for(int i=0;i<numOctaves;i++){
+    int nb = numOctaves + ((uNoUnroll > 0) ? (uNoUnroll - 64) : 0);   // FXC anti-unroll, see value_fbm
+    for(int i=0;i<nb;i++){
         float signal = offset - abs(snoise3(p));
         signal = pow(max(signal,0.0), exponent);
         v += signal * w * a;
@@ -239,7 +263,7 @@ highp float vhash(highp vec2 p){
   h ^= h >> 16; h *= 2654435769u; h ^= h >> 15; h *= 2246822519u; h ^= h >> 13;
   return float(h) * (1.0 / 4294967296.0);
 }
-float vnoise2(highp vec2 p){ highp vec2 i=floor(p),f=fract(p); vec2 u=f*f*f*(f*(f*6.0-15.0)+10.0);
+float vnoise2(highp vec2 p){ highp vec2 i=floor(p),f=p-i; vec2 u=f*f*f*(f*(f*6.0-15.0)+10.0);   // f from the one floor (FXC consistency, see snoise3)
   float a=vhash(i),b=vhash(i+vec2(1,0)),c=vhash(i+vec2(0,1)),d=vhash(i+vec2(1,1));
   return mix(mix(a,b,u.x),mix(c,d,u.x),u.y)*2.0-1.0; }
 highp vec2 faceWarp(highp vec2 p){ return defRadius * tan((p / defRadius) * 0.7853981634); }
@@ -286,7 +310,7 @@ float seaHash(vec2 p) {
     return float(n) * (1.0 / 4294967296.0);
 }
 float seaNoise(vec2 p) {
-    vec2 i = floor(p); vec2 f = fract(p);
+    vec2 i = floor(p); vec2 f = p - i;   // one shared floor (FXC consistency, see snoise3)
     f = f * f * (3.0 - 2.0 * f);
     return mix(mix(seaHash(i), seaHash(i+vec2(1,0)), f.x),
                mix(seaHash(i+vec2(0,1)), seaHash(i+vec2(1,1)), f.x), f.y);

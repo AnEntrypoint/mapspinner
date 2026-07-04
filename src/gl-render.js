@@ -684,6 +684,7 @@ export async function initMapspinnerRender(gl, opts = {}) {
     // FXC unroll-defeat (2026-06-12 AMD d3d11 fix): runtime octave bound for broadShapeM; the shader
     // guards uOctMax<=0 -> 12, so this set is belt-and-braces. Live dial: window.__octMax.
     _chuSet1i(loc, cacheKey, 'uOctMax',        (typeof window!=='undefined' && window.__octMax!=null) ? (window.__octMax|0) : _clampOcts(12));   // altitude-clamped (see _clampOcts); explicit window.__octMax still wins
+    _chuSet1i(loc, cacheKey, 'uNoUnroll',      64);   // FXC anti-unroll for the NoiseLayer const-numOct loops (value_fbm/value_ridged_fbm_rot); runtime-opaque bound, 64 > every layer's numOct so value semantics are unchanged. See terrain.glsl uNoUnroll comment + scripts/needle-ab.mjs.
     _chuSet1i(loc, cacheKey, 'uInciseRidgeOcts', (typeof window!=='undefined' && window.__inciseRidgeOcts!=null) ? (window.__inciseRidgeOcts|0) : 4);
     _chuSet1i(loc, cacheKey, 'uBroadLowOcts',    (typeof window!=='undefined' && window.__broadLowOcts!=null) ? (window.__broadLowOcts|0) : 2);   // 8->2 PERF (2026-06-15): MEASURED 0 visual error (mtn+space) -- broadShapeLowM only feeds the 2400m-FD-step mesa-flatness slope gate, which is low-freq so the high octaves do nothing (its elevation-AO consumer was removed).
     _chuSet1i(loc, cacheKey, 'uPeakOcts',        (typeof window!=='undefined' && window.__peakOcts!=null) ? (window.__peakOcts|0) : 3);
