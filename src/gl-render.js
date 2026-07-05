@@ -1125,6 +1125,20 @@ export async function initMapspinnerRender(gl, opts = {}) {
   // and just rebind+draw. Pure CPU/GC win (GPU is vertex-bound, the upload is off the critical path).
   const instBufWater=gl.createBuffer();
   let _instQuadsRef=null, _instWaterRef=null, _instWaterN=0, _lastThc=false;
+  // WATER VISIBILITY GATE (2026-07-05, iGPU perf): at an inland/no-water-visible pose the water
+  // pipeline still burned ~6ms/frame on a weak iGPU (measured fresh-page A/B, __waterSurface=false
+  // arm: 22.1 -> 15.8ms p50 @1080p AMD iGPU/ANGLE): a FULL-RES scene copyTexSubImage2D for
+  // refraction, the half-res water color pass (depth-test OFF -> every water-sphere fragment shades
+  // even when fully behind terrain), and a fullscreen composite -- all for zero visible pixels.
+  // The gate wraps the depth-only water stamp (which draws water depth-tested LESS against the
+  // just-rendered terrain depth in _vdrsFbo) in an ANY_SAMPLES_PASSED_CONSERVATIVE occlusion query:
+  // if the GPU proves no water fragment wins the depth test for 2 consecutive resolved queries, the
+  // scene copy + color pass + composite are SKIPPED. The stamp/probe itself still draws EVERY frame
+  // (it doubles as the shared-depth water stamp), so re-appearing water flips the verdict within
+  // 1-2 frames (~imperceptible at a horizon waterline; the CONSERVATIVE query only ever
+  // over-reports visibility = draws water when in doubt = look-preserving by construction).
+  // Off-switch: window.__waterVisGate = false. Witness: window.__waterVisSkips counts skipped frames.
+  let _waterVisQ = null, _waterVisQPending = false, _waterVisZeroRuns = 0;
   // SCRATCH POOLS (perf 2026-07-03): the _dirty instanced-draw rebuild (fires every frame the camera
   // moves, i.e. the common gameplay case -- NOT just on quad-set change, since the front-to-back sort
   // and instance buffer must be rebuilt whenever camera position changes the sort order/layer values)
@@ -1356,29 +1370,40 @@ export async function initMapspinnerRender(gl, opts = {}) {
     _vdrsRsThisFrame = _vrs;
     gl.clearColor(0.0,0.0,0.0,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
 
-    // SKY/ATMOSPHERE PASS: atmospheric limb/halo behind the terrain. Fades in below
-    // 100km (full at surface, transparent above 100km). Depth off so terrain overdraws.
-    {
+    // SKY/ATMOSPHERE PASS moved to AFTER terrain (see drawSky below, called at the two frame-exit
+    // points) -- drawing depth-test-off FIRST shaded every one of ~2M canvas pixels every frame,
+    // only for terrain to overdraw most of them. depthFunc(LEQUAL) + gl_Position.z=w (skyVsSrc
+    // already emits z=w=1.0, the standard "sky at the far plane" trick) means the sky FS now only
+    // runs where terrain (or water) left the depth buffer at its cleared/far value -- i.e. only
+    // actually-visible-sky pixels. Kept as a closure so both frame-exit paths (VDRS-upscale tail and
+    // the rare straight-to-canvas path) can call it once depth is final for that path.
+    // `depthTested`: true only when the CURRENTLY BOUND framebuffer's depth is guaranteed to be
+    // THIS frame's real terrain/water depth (straight-to-canvas path, or the VDRS path AFTER the
+    // depth-writeback stamp when __planetDepthToCanvas is on). Otherwise the canvas depth buffer
+    // may be stale (a previous frame's, or never written this frame) -- fall back to the original
+    // depth-test-OFF draw so the look never regresses (fail-open, matches pre-existing behavior).
+    function drawSky(depthTested) {
       const skyFade = Math.max(0.0, 1.0 - camAlt / 100000.0);
-      if (skyFade > 0.001) {
-        gl.useProgram(skyProg);
-        _camRotScratch[0]=_cm.viewRel[0]; _camRotScratch[1]=_cm.viewRel[4]; _camRotScratch[2]=_cm.viewRel[8];
-        _camRotScratch[3]=_cm.viewRel[1]; _camRotScratch[4]=_cm.viewRel[5]; _camRotScratch[5]=_cm.viewRel[9];
-        _camRotScratch[6]=_cm.viewRel[2]; _camRotScratch[7]=_cm.viewRel[6]; _camRotScratch[8]=_cm.viewRel[10];
-        gl.uniformMatrix3fv(SU('camRot'), false, _camRotScratch);
-        gl.uniform2f(SU('projDiag'), _cm.proj[0], _cm.proj[5]);
-        gl.uniform3f(SU('skyCamWorld'), eye[0], eye[1], eye[2]);
-        gl.uniform3f(SU('skySunDir'), sunDir[0], sunDir[1], sunDir[2]);
-        gl.uniform1f(SU('skyR'), R);
-        gl.uniform1f(SU('uSkyFade'), skyFade);
-        gl.disable(gl.DEPTH_TEST);
-        gl.disable(gl.CULL_FACE);   // the sky is a fullscreen triangle -- NEVER cull it. The terrain cull
-        // state (frontFace/cullFace) persists from the previous frame's draw, so without this the sky
-        // triangle inherits whatever winding was culled and VANISHES (user 2026-06-17 'the sky disappears').
-        gl.bindVertexArray(skyVao);
-        gl.drawArrays(gl.TRIANGLES, 0, 3);
-        gl.enable(gl.DEPTH_TEST);
-      }
+      if (skyFade <= 0.001) return;
+      gl.useProgram(skyProg);
+      _camRotScratch[0]=_cm.viewRel[0]; _camRotScratch[1]=_cm.viewRel[4]; _camRotScratch[2]=_cm.viewRel[8];
+      _camRotScratch[3]=_cm.viewRel[1]; _camRotScratch[4]=_cm.viewRel[5]; _camRotScratch[5]=_cm.viewRel[9];
+      _camRotScratch[6]=_cm.viewRel[2]; _camRotScratch[7]=_cm.viewRel[6]; _camRotScratch[8]=_cm.viewRel[10];
+      gl.uniformMatrix3fv(SU('camRot'), false, _camRotScratch);
+      gl.uniform2f(SU('projDiag'), _cm.proj[0], _cm.proj[5]);
+      gl.uniform3f(SU('skyCamWorld'), eye[0], eye[1], eye[2]);
+      gl.uniform3f(SU('skySunDir'), sunDir[0], sunDir[1], sunDir[2]);
+      gl.uniform1f(SU('skyR'), R);
+      gl.uniform1f(SU('uSkyFade'), skyFade);
+      if (depthTested) { gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.depthMask(false); }
+      else { gl.disable(gl.DEPTH_TEST); }
+      gl.disable(gl.CULL_FACE);   // the sky is a fullscreen triangle -- NEVER cull it. The terrain cull
+      // state (frontFace/cullFace) persists from the previous frame's draw, so without this the sky
+      // triangle inherits whatever winding was culled and VANISHES (user 2026-06-17 'the sky disappears').
+      gl.bindVertexArray(skyVao);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.bindVertexArray(null);
+      gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LESS); gl.depthMask(true);
     }
 
     gl.enable(gl.DEPTH_TEST);
@@ -1646,16 +1671,9 @@ export async function initMapspinnerRender(gl, opts = {}) {
       const _uw = camDist < R - 2.0;
       gl.uniform1f(U('uUnderwater'), _uw ? 1.0 : 0.0);
       gl.drawElementsInstanced(gl.TRIANGLES, indices.length, gl.UNSIGNED_INT, 0, n);
-      // SCENE-COPY for water refraction: snapshot the rendered terrain into _sceneCopyTex so the
-      // water FS can sample it with a wave-normal UV offset. copyTexSubImage2D is a GPU-side blit
-      // (no CPU readback, no allocation). Only done when a water draw will follow.
-      if (typeof window === 'undefined' || window.__waterSurface !== false) {
-        ensureSceneCopy(_vW, _vH);
-        gl.activeTexture(gl.TEXTURE9); gl.bindTexture(gl.TEXTURE_2D, _sceneCopyTex);
-        gl.copyTexSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 0, 0, _vW, _vH);
-        gl.uniform1i(U('uSceneTex'), 9);
-        gl.uniform2f(U('uResolution'), _vW, _vH);
-      }
+      // (SCENE-COPY for water refraction moved INSIDE the water block below, 2026-07-05: it is
+      // consumed only by the water FS, and the water-visibility gate must be able to skip it --
+      // the full-res copyTexSubImage2D was a fixed per-frame cost even with zero water pixels.)
       // SEPARATE WATER SURFACE (user 2026-06-11): second instanced draw with uIsWater=1 -- the VS
       // pins the mesh to sea level, the FS shades animated water and alpha-blends it over the
       // just-rendered seabed. Depth test keeps it behind land; depthMask off so the transparent
@@ -1731,6 +1749,51 @@ export async function initMapspinnerRender(gl, opts = {}) {
         // half-res there left the water un-occluded for that frame = the intermittent terrain-over-water
         // FLASH (user 2026-06-24). Tying _hrw to _sceneFbo keeps the two in lockstep, no per-frame race.
         const _hrw = (typeof window==='undefined' || window.__halfResWater!==false) && !_uw && _sceneFbo === _vdrsFbo;
+        // ---- WATER VISIBILITY PROBE + SHARED-DEPTH STAMP (see _waterVisQ declaration for the design).
+        // Draws the water surface depth-only into _vdrsFbo (depth test LESS against the terrain just
+        // drawn, depth writes ON = this IS the shared-depth water stamp, now issued BEFORE the color
+        // passes) wrapped in a conservative occlusion query. The previous frame's resolved query
+        // decides whether the expensive color pipeline below runs at all this frame.
+        let _waterHidden = false, _stampedThisFrame = false;
+        if (_hrw && typeof window !== 'undefined' && window.__planetDepthToCanvas === true
+            && window.__waterDepthShareOff !== true && window.__waterVisGate !== false) {
+          if (!_waterVisQ) _waterVisQ = gl.createQuery();
+          if (_waterVisQPending && gl.getQueryParameter(_waterVisQ, gl.QUERY_RESULT_AVAILABLE)) {
+            _waterVisZeroRuns = gl.getQueryParameter(_waterVisQ, gl.QUERY_RESULT) ? 0 : _waterVisZeroRuns + 1;
+            _waterVisQPending = false;
+          }
+          _waterHidden = _waterVisZeroRuns >= 2;   // 2-frame hysteresis before gating off
+          gl.colorMask(false, false, false, false);
+          gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LESS); gl.depthMask(true); gl.disable(gl.BLEND);
+          gl.enable(gl.CULL_FACE); gl.cullFace(gl.FRONT); gl.frontFace(gl.CCW);
+          gl.uniform1f(U('uIsWater'), 1.0);
+          gl.uniform1f(U('uOccludeDepth'), 0.0);
+          gl.uniform1f(U('uDepthOnly'), 1.0);      // cheap FS: only the vH>1 land discard, no shading ALU
+          gl.bindBuffer(gl.ARRAY_BUFFER, wvbo); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
+          gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, wibo);
+          const _issueQ = !_waterVisQPending;
+          if (_issueQ) gl.beginQuery(gl.ANY_SAMPLES_PASSED_CONSERVATIVE, _waterVisQ);
+          gl.drawElementsInstanced(gl.TRIANGLES, waterIndices.length, gl.UNSIGNED_INT, 0, wn);
+          if (_issueQ) { gl.endQuery(gl.ANY_SAMPLES_PASSED_CONSERVATIVE); _waterVisQPending = true; }
+          gl.bindBuffer(gl.ARRAY_BUFFER, vbo); gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
+          gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+          gl.uniform1f(U('uIsWater'), 0.0);
+          gl.uniform1f(U('uDepthOnly'), 0.0);
+          gl.colorMask(true, true, true, true);
+          _stampedThisFrame = true;
+          window.__waterDepthShared = (window.__waterDepthShared|0) + 1;
+          if (_waterHidden) window.__waterVisSkips = (window.__waterVisSkips|0) + 1;
+        }
+        if (!_waterHidden) {
+        // SCENE-COPY for water refraction: snapshot the rendered terrain into _sceneCopyTex so the
+        // water FS can sample it with a wave-normal UV offset. copyTexSubImage2D is a GPU-side blit
+        // (no CPU readback, no allocation). Reads the CURRENTLY BOUND framebuffer (_vdrsFbo on hrw
+        // frames, canvas otherwise) -- skipped entirely when the visibility gate proved no water.
+        ensureSceneCopy(_vW, _vH);
+        gl.activeTexture(gl.TEXTURE9); gl.bindTexture(gl.TEXTURE_2D, _sceneCopyTex);
+        gl.copyTexSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 0, 0, _vW, _vH);
+        gl.uniform1i(U('uSceneTex'), 9);
+        gl.uniform2f(U('uResolution'), _vW, _vH);
         let _hrwVW=0, _hrwVH=0;
         if (_hrw) {
           _hrwVW = Math.max(1, _vW>>1); _hrwVH = Math.max(1, _vH>>1);
@@ -1826,7 +1889,9 @@ export async function initMapspinnerRender(gl, opts = {}) {
           // occluded. VS pins the mesh to sea level (uIsWater=1); the FS's vH>1 discard drops water directly
           // under land so land-fronting terrain still wins. Gated on the consumer opting into shared depth.
           // (Depth-only, no color, no blend -> cheap; reuses the coarse water mesh already resident.)
-          if (typeof window !== 'undefined' && window.__planetDepthToCanvas === true && window.__waterDepthShareOff !== true && _vdrsDepth) {
+          // _stampedThisFrame: the visibility probe above already IS this stamp (issued pre-color);
+          // only run here when the probe/gate was disabled (__waterVisGate=false or no depth share).
+          if (!_stampedThisFrame && typeof window !== 'undefined' && window.__planetDepthToCanvas === true && window.__waterDepthShareOff !== true && _vdrsDepth) {
             gl.bindFramebuffer(gl.FRAMEBUFFER, _vdrsFbo);
             gl.viewport(0, 0, Math.max(1, Math.round(_vW*_vrs)), Math.max(1, Math.round(_vH*_vrs)));
             gl.colorMask(false, false, false, false);
@@ -1846,12 +1911,17 @@ export async function initMapspinnerRender(gl, opts = {}) {
             if (typeof window !== 'undefined') window.__waterDepthShared = (window.__waterDepthShared|0) + 1;
           }
         }
+        }   // end if (!_waterHidden) -- water color pipeline (scene copy / color pass / composite)
         if (typeof window !== 'undefined') window.__lastWaterQuads = wn;
       }
       _instQuadsRef = quads;   // mark this quad set uploaded; next frame with the same array skips the rebuild
       if (typeof window !== 'undefined') window.__instUploads = (window.__instUploads | 0) + (_dirty ? 1 : 0);
     }
     if (typeof window !== 'undefined') window.__lastDrawCalls = (n > 0) ? 2 : 0;
+    // Straight-to-canvas path (no VDRS/half-res-water upscale this frame): terrain+water already
+    // drew directly into the canvas depth buffer, so it holds THIS frame's real depth -- draw sky
+    // depth-tested now (see drawSky's depthTested contract above).
+    if (_vdrsRsThisFrame === 0) drawSky(true);
     // VIEWPORT-DRS UPSCALE: blit the flexed-viewport FBO to the canvas via a fullscreen-quad LINEAR sample
     // of the rendered [0,rs] sub-rect. No canvas realloc occurred this frame -> the resolution change is
     // hitch-free. preserveDrawingBuffer witness reads + page screenshots capture this final canvas image.
@@ -1886,6 +1956,9 @@ export async function initMapspinnerRender(gl, opts = {}) {
         gl.uniform2f(dwUScale, _vdrsRsThisFrame, _vdrsRsThisFrame);   // same subregion mapping as the color upscale
         gl.bindVertexArray(upVao); gl.drawArrays(gl.TRIANGLES, 0, 3); gl.bindVertexArray(null);
         gl.colorMask(true, true, true, true); gl.depthFunc(gl.LESS);
+        drawSky(true);    // canvas depth was just stamped with this frame's real terrain depth
+      } else {
+        drawSky(false);   // no depth-writeback this frame -- canvas depth is not this frame's; fail open (depth-test off, matches pre-existing behavior)
       }
       gl.useProgram(_activeProg);   // restore the terrain program for the next frame's uniform sets
     }
