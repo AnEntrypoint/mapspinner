@@ -1772,6 +1772,23 @@ export async function initMapspinnerRender(gl, opts = {}) {
         gl.bindBuffer(gl.ARRAY_BUFFER, wvbo); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, wibo);
         gl.drawElementsInstanced(gl.TRIANGLES, waterIndices.length, gl.UNSIGNED_INT, 0, wn);
+        // DIRECT-PATH WATER DEPTH STAMP (2026-07-05, iGPU perf): with half-res water DISABLED
+        // (__halfResWater=false) the scene renders straight into the canvas, so the canvas depth buffer
+        // already carries terrain depth natively -- but the above-water color draw ran with
+        // depthMask(false), so the WATER surface left no depth and a consumer object BELOW the surface
+        // would draw OVER the water (the exact bug the _hrw path's _vdrsFbo depth-only redraw fixes).
+        // Stamp the water depth here with the SAME depth-only trick (colorMask off, uDepthOnly=1 skips
+        // the water shading ALU; the FS vH>1 discard keeps land-fronting terrain winning). Water mesh +
+        // attribs are still bound from the color draw. Gated on the consumer's shared-depth opt-in.
+        if (!_hrw && !_uw && typeof window !== 'undefined' && window.__planetDepthToCanvas === true && window.__waterDepthShareOff !== true) {
+          gl.colorMask(false, false, false, false);
+          gl.depthMask(true); gl.disable(gl.BLEND);
+          gl.uniform1f(U('uDepthOnly'), 1.0);
+          gl.drawElementsInstanced(gl.TRIANGLES, waterIndices.length, gl.UNSIGNED_INT, 0, wn);
+          gl.uniform1f(U('uDepthOnly'), 0.0);
+          gl.colorMask(true, true, true, true);
+          window.__waterDepthShared = (window.__waterDepthShared|0) + 1;
+        }
         gl.bindBuffer(gl.ARRAY_BUFFER, vbo); gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
         gl.uniform1f(U('uIsWater'), 0.0);
