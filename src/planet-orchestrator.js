@@ -897,7 +897,14 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
             const px = vpr[0]*dX+vpr[4]*dY+vpr[8]*dZ+vpr[12];
             const py = vpr[1]*dX+vpr[5]*dY+vpr[9]*dZ+vpr[13];
             const pw = vpr[3]*dX+vpr[7]*dY+vpr[11]*dZ+vpr[15];
-            if (pw > 1e-3 && Math.abs(px/pw) < 1 && Math.abs(py/pw) < 1) _cullDbgOnScreen++;
+            const pz = vpr[2]*dX+vpr[6]*dY+vpr[10]*dZ+vpr[14];
+            // pz<=pw (in front of the far plane) added to the on-screen test: perspective division
+            // does not clip X/Y by depth, so a quad genuinely beyond the far plane can still project
+            // to an in-range NDC x/y at its center -- without this the false-cull counter over-counts
+            // correctly-culled distant geometry as a false-cull (confirmed via a live investigation:
+            // every prior "false cull" candidate turned out to project on-screen X/Y while its actual
+            // nearest world-space point was 10-15km away, past a ~5.7km far plane).
+            if (pw > 1e-3 && Math.abs(px/pw) < 1 && Math.abs(py/pw) < 1 && pz <= pw) _cullDbgOnScreen++;
           }
           continue;
         }
