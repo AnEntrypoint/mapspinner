@@ -551,6 +551,45 @@ uniform highp vec3 camWorld;     // W7: world-space camera position ~6.4e6 m -> 
 uniform highp float terrainR;    // W7: sphere radius ~6.4e6 m -> highp
 uniform sampler2D uSceneTex;   // snapshot of terrain pass color buffer for refraction
 uniform vec2 uResolution;      // viewport size in pixels (for uSceneTex UV)
+
+// HOST-ENGINE SHADOW BRIDGE (terrain-shadow-bridge-never-wired): the host (spoint) owns a real
+// THREE.js DirectionalLight shadow map (PCFShadowMap) that terrain -- raw WebGL2 outside THREE's
+// mesh graph -- can never receive through WebGLShadowMap. The host threads its live shadow depth
+// texture + light-space matrix in here per frame (see gl-render.js's shadowInfo upload, called from
+// planet-orchestrator.js's frame() 9th arg, built by TerrainBackdrop.js's _buildShadowInfo). uShadowMap
+// is a sampler2DShadow bound to THREE's shadow.map.depthTexture, which THREE itself configures with
+// COMPARE_REF_TO_TEXTURE for PCFShadowMap -- sampling it here returns the SAME hardware-filtered
+// 0..1 visibility THREE's own onBeforeCompile shadow shader would compute, no re-implementation of
+// PCF taps needed. uHasShadow gates the whole path off (no shadow yet this frame / host has no
+// caster) so the function degrades to fully-lit, matching the pre-bridge look exactly.
+uniform highp float uHasShadow;      // 0 = no shadow data this frame (fail-open to fully lit)
+uniform highp mat4  uShadowMatrix;   // world -> shadow-map [0,1] NDC (THREE's light.shadow.matrix)
+uniform highp sampler2DShadow uShadowMap;  // THREE's shadow.map.depthTexture (COMPARE_REF_TO_TEXTURE)
+uniform highp float uShadowBias;     // THREE's light.shadow.bias (applied host-side into the matrix's z already; kept for an optional manual nudge)
+uniform highp float uShadowTexelSize; // 1/mapSize, for the 3x3 PCF offset taps
+
+// Returns sun visibility [0,1] at a world-space point: 1 = fully lit, 0 = fully shadowed. Fails
+// open to 1.0 (no darkening) whenever the host has no valid shadow data this frame, or the point
+// falls outside the shadow camera's frustum (its own fixed +-60m player-following box, far=200 --
+// see spoint's updateSunShadow) -- a terrain fragment far from the shadow camera's tracked region
+// must never be wrongly darkened by an out-of-range projection.
+highp float sampleHostShadow(highp vec3 worldPos) {
+    if (uHasShadow < 0.5) return 1.0;
+    highp vec4 sc = uShadowMatrix * vec4(worldPos, 1.0);
+    if (sc.w <= 0.0) return 1.0;
+    highp vec3 proj = sc.xyz / sc.w;                 // already in [0,1] NDC (THREE's shadow matrix bakes the 0.5*x+0.5 bias)
+    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0 || proj.z < 0.0 || proj.z > 1.0) return 1.0;
+    // 3x3 PCF: hardware COMPARE_REF_TO_TEXTURE per tap (each returns 0/1, or filtered if the driver
+    // supports linear compare-mode filtering), averaged -- matches THREE's own PCFShadowMap kernel size.
+    highp float sum = 0.0;
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            vec2 o = vec2(float(x), float(y)) * uShadowTexelSize;
+            sum += texture(uShadowMap, vec3(proj.xy + o, proj.z));
+        }
+    }
+    return sum / 9.0;
+}
 // Returns height h at point p for use in FD normal computation.
 // SEA_AMP_M: physical wave amplitude in world-metres; slope = amp/wavelength must be visible.
 // At SEA_FREQ=0.0004 wavelength=15km; 200m amplitude gives max slope ~0.08 (visible from orbit).
@@ -1725,6 +1764,12 @@ void main() {
     } else {
         sunIrr = atm_sunSkyIrradiance(pAtm, nAtm, sunDir, skyIrr);
     }
+    // HOST-ENGINE SHADOW BRIDGE: darken the DIRECT sun term only (skyIrr ambient stays, matching real
+    // shadow physics -- a shadowed patch still gets sky-fill light, just not direct sun) by the host's
+    // THREE shadow-map visibility. Applied uniformly to both the underwater and above-water sunIrr
+    // branches, before any other consumer reads sunIrr. Fails open to 1.0 (unchanged look) when the
+    // host has no shadow data this frame.
+    sunIrr *= sampleHostShadow(vWorld);
     // The Rayleigh sky irradiance is strongly blue; at full strength it tints the lit
     // CONTINENTS blue-grey from orbit (witnessed: lit mean [83,95,112] vs warm albedo
     // [90,83,74] at 2000km -- the blue is the sky-irradiance term, NOT aerial inscatter).

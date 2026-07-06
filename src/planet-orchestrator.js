@@ -429,8 +429,12 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
   // ---- per-frame quadtree drive --------------------------------------------------
   // camWorldPos: [x,y,z] world meters (sphere centered at origin).
   // camTarget:   [x,y,z] world look-at point. fovy in radians. displayMode int.
+  // shadowInfo (9th arg, optional): host-supplied {hasShadow,texture,matrix,bias,normalBias,...} --
+  // see TerrainBackdrop.js's _buildShadowInfo. Threaded onto `cam` (below) so render.render's single
+  // cam-bag parameter carries it straight to gl-render.js's per-frame uniform upload, matching how
+  // eye/center/up/fovy/displayMode/surfElev already travel -- no new render() parameter needed.
   // Returns { quadCount, glError, face }.
-  function frame(camWorldPos, camTarget, fovy = 0.7, displayMode = 0, sunDir, time = 0, up, surfElev = 0) {
+  function frame(camWorldPos, camTarget, fovy = 0.7, displayMode = 0, sunDir, time = 0, up, surfElev = 0, shadowInfo) {
     const sun = sunDir || (() => { const s = [0.4, 0.5, 0.75]; const sl = Math.hypot(...s); return [s[0]/sl, s[1]/sl, s[2]/sl]; })();
     // Use the caller's up if given (planet.html keeps an orthonormal free-fly up); only
     // fall back to [0,1,0] when none supplied. Hardcoding [0,1,0] broke the +Y pole view
@@ -463,7 +467,7 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
       || (fwd[0]*c.fwd[0]+fwd[1]*c.fwd[1]+fwd[2]*c.fwd[2]) < c.fwdLen2*0.99999
       || displayMode !== c.displayMode;
     if (!moved) {
-      const cam2 = { eye: camWorldPos, center: camTarget, up: camUp, fovy, displayMode, surfElev };
+      const cam2 = { eye: camWorldPos, center: camTarget, up: camUp, fovy, displayMode, surfElev, shadowInfo };
       render.render(c.quads, cam2, sun, time);
       // gl.getError() forces a full GPU pipeline flush/sync; this STATIC-frame branch runs every frame
       // the camera holds still (the planet caches its quad set), so an unconditional check stalled ~5.5%
@@ -803,7 +807,7 @@ export async function initMapspinnerPlanet(gl, opts = {}) {
     // build actually overlap. Previously this draw sat AFTER the build loop (no overlap -- the
     // CPU work had already finished before the draw was issued). cam carries THIS frame's view
     // (1-frame geometry latency, standard pipelining). First frame (no cache) draws after build.
-    const cam = { eye: camWorldPos, center: camTarget, up: camUp, fovy, displayMode, surfElev };
+    const cam = { eye: camWorldPos, center: camTarget, up: camUp, fovy, displayMode, surfElev, shadowInfo };
     if (_pipelineQuads) {
       render.render(_pipelineQuads, cam, sun, time);
     }

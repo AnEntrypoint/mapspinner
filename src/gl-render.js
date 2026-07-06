@@ -1613,6 +1613,25 @@ export async function initMapspinnerRender(gl, opts = {}) {
       const sr=C('slopeRock',TD.slopeRock); _chuSet2f(U, _cck, 'slopeRock', sr[0],sr[1]); }   // [0.25,0.55] USER-SET 2026-06-12 (matches terrain-gen-controls persisted default)
     gl.uniform3f(U('sunDir'), sunDir[0],sunDir[1],sunDir[2]);
     gl.uniform1i(U('displayMode'), cam.displayMode||0);
+    // HOST-ENGINE SHADOW BRIDGE (terrain-shadow-bridge-never-wired): cam.shadowInfo threads from
+    // planet-orchestrator.js's frame() 9th arg (TerrainBackdrop.js's _buildShadowInfo). undefined/
+    // hasShadow-false -> uHasShadow=0, terrain.glsl's sampleHostShadow fails open to fully-lit (no
+    // regression to the pre-bridge look). TEXTURE1 (free: 0,3,4,5,6,7,8,9 already claimed by hpf/
+    // surf/height-pool/scene-copy/vdrs-depth). The depth texture already carries THREE's own
+    // COMPARE_REF_TO_TEXTURE mode (set once by WebGLShadowMap for PCFShadowMap) -- bind-only, no
+    // texParameteri here, so this never fights THREE's own shadow-map texture state.
+    const _si = cam.shadowInfo;
+    if (_si && _si.hasShadow && _si.texture) {
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, _si.texture);
+      gl.uniform1i(U('uShadowMap'), 1);
+      gl.uniformMatrix4fv(U('uShadowMatrix'), false, _si.matrix);
+      gl.uniform1f(U('uHasShadow'), 1.0);
+      gl.uniform1f(U('uShadowTexelSize'), 1.0 / (_si.mapSize || 1024));
+      gl.uniform1f(U('uShadowBias'), _si.bias || 0.0);
+    } else {
+      gl.uniform1f(U('uHasShadow'), 0.0);
+    }
     // ---- animated ocean uniforms. time advances the Gerstner waves; amp/choppy read
     // from the HUD ocean sliders (window.__cam) with sane defaults for v1.
     const oc = (typeof window !== 'undefined' && window.__cam) || {};
