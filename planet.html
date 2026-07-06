@@ -591,7 +591,24 @@ function frameLoop(){
   const eyeHeight = 2.0 / WEBGL2_M_PER_UNIT;   // EXACTLY 2.0 m above ground (km-units = 2m / m-per-unit)
   const minR = RADIUS * (1.0 + surfElev) + eyeHeight;
   if (doClamp && r < minR) { const s = minR/r; cam.pos[0]*=s; cam.pos[1]*=s; cam.pos[2]*=s; }
-  const maxR = RADIUS * 50;
+  // MAX-ALTITUDE CEILING (ocean/terrain-tile flicker at ~500km fix): this free-fly runaway guard
+  // was RADIUS*50 (~318.55km real-size altitude) -- FAR below altitudes the demo's own harness
+  // treats as normal exploration (window.__dbg.RUNGS.orbit=2000km, .space=35000km, both ~6x-110x
+  // past the old ceiling). A user (or an agent script) flying to/holding ~500km real altitude was
+  // ABOVE this ceiling every frame: gotoDown/WASD would push cam.pos out past maxR, and this clamp
+  // silently snapped it back down to maxR (~312km reported altitude, not the requested 500km) EVERY
+  // FRAME -- so "flying to 500km" never actually held 500km, it oscillated at the clamp boundary
+  // instead. Two live-witnessed effects: (1) altitude reads ~312km instead of the requested 500km,
+  // permanently unable to reach the real target; (2) whenever an external mover (drag/orbit/agent)
+  // straddles the boundary frame-to-frame, the true camDist alternates being clamped vs unclamped,
+  // and planet-orchestrator.js's frame() cache-vs-rebuild decision (moveTol keyed off camDist) can
+  // disagree between frames even though the user's intended motion is small -- terrain AND water
+  // quads (drawn from the SAME per-frame quad set, see gl-render.js render()) are rebuilt against a
+  // camera position that doesn't match the requested altitude, reading as tiles flickering in/out
+  // while "moving the camera" at ~500km. Raised to RADIUS*6000 (~38,226km real-size) so it sits
+  // comfortably past the harness's own 'space' rung (35,000km) -- still a real safety bound against
+  // an unbounded free-fly drift, just no longer inside the demo's own advertised altitude range.
+  const maxR = RADIUS * 6000;
   if (r > maxR) { const s = maxR/r; cam.pos[0]*=s; cam.pos[1]*=s; cam.pos[2]*=s; }
 
   // height of the eye above the local ground, in metres (for the HUD readout).
