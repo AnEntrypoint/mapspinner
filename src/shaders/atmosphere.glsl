@@ -80,6 +80,16 @@ float atm_distToGround(highp float r, float mu) {
     highp float d = -r*mu - sqrt(disc);
     return d >= 0.0 ? d : -1.0;
 }
+// ANALYTIC-CONTINUATION ground distance for the atm_skyRadiance horizon blend: clamps the
+// discriminant to >=0 instead of early-returning a -1 sentinel, so the result varies smoothly
+// THROUGH the geometric tangent (matches the true atm_distToGround from both sides at disc==0,
+// peaking at the tangent's horizon distance) rather than jumping to unrelated sentinel handling.
+// Only meaningful/used within the small horizon blend band in atm_skyRadiance -- NOT a general
+// replacement for atm_distToGround (which every other call site keeps using unchanged).
+float atm_distToGround_continuous(highp float r, float mu) {
+    highp float disc = max(r*r*(mu*mu - 1.0) + ATM_BOTTOM2, 0.0);
+    return -r*mu - sqrt(disc);
+}
 
 // Analytic densities at radius r (altitude above ATM_BOTTOM).
 // W7: r ~6360 (km-scale planet radius) and the (r - ATM_BOTTOM) altitude cancellation are highp -- at
@@ -137,29 +147,11 @@ vec3 atm_transmittanceToSun(highp vec3 p, vec3 sun) {   // W7: km-scale p -> hig
     return atm_transmittanceSeg(p, sun, d) * soft;
 }
 
-// Sky in-scatter radiance + view transmittance along a view ray from cameraIn.
-// camera/view in atmosphere-space km. Single-scatter Rayleigh+Mie integration.
-vec3 atm_skyRadiance(highp vec3 cameraIn, vec3 viewRay, vec3 sun, out vec3 transmittance) {   // W7: km-scale camera -> highp
-    highp vec3 camera = cameraIn;
-    highp float r = length(camera);
-    float mu = dot(camera, viewRay) / r;
-
-    // March-start: if outside the atmosphere, advance to the top shell.
-    if (r > ATM_TOP) {
-        float dt = atm_distToTop(r, mu);
-        if (dt < 0.0) { transmittance = vec3(1.0); return vec3(0.0); } // misses atmosphere
-        camera = camera + viewRay * dt;
-        r = length(camera);
-        mu = dot(camera, viewRay) / r;
-    }
-
-    // March-end: ground hit, else exit at top shell.
-    float dGround = atm_distToGround(r, mu);
-    float dTop = atm_distToTop(r, mu);
-    bool ground = dGround > 0.0;
-    float dEnd = ground ? dGround : max(dTop, 0.0);
-    if (dEnd <= 0.0) { transmittance = vec3(1.0); return vec3(0.0); }
-
+// Single-scatter Rayleigh+Mie march from `camera` along `viewRay` out to distance `dEnd`.
+// Factored out of atm_skyRadiance so the ground-hit and sky-miss cases can be marched
+// separately and blended (see atm_skyRadiance below) instead of hard-branching on which
+// endpoint to use -- extracting this avoids duplicating the march loop for the blend.
+vec3 atm_marchRadiance(highp vec3 camera, vec3 viewRay, vec3 sun, float dEnd, out vec3 transmittance) {
     const int N = 8;   // FPS: 16->8 single-scatter march steps (2026-06-15). With opticalDepth at 4 the inner cost is 4x lower per step; the sky gradient is a smooth analytic integral so 8 steps is visually negligible (witnessed). Nested cost 16*8=128 -> 8*4=32 (-75%).
     float dt = dEnd / float(N);
     vec3 inscatR = vec3(0.0);
@@ -183,12 +175,64 @@ vec3 atm_skyRadiance(highp vec3 cameraIn, vec3 viewRay, vec3 sun, out vec3 trans
     }
     float nu = dot(viewRay, sun);
     transmittance = tView;   // A-4: == exp(-(tau)) of the last sample, no recompute
-    if (ground) transmittance = vec3(0.0);
-
-    vec3 radiance = ATM_SOLAR_IRRADIANCE * (
+    return ATM_SOLAR_IRRADIANCE * (
         inscatR * ATM_RAYLEIGH * atm_rayleighPhase(nu) +
         inscatM * ATM_MIE      * atm_miePhase(nu));
-    return radiance;
+}
+
+// Sky in-scatter radiance + view transmittance along a view ray from cameraIn.
+// camera/view in atmosphere-space km. Single-scatter Rayleigh+Mie integration.
+//
+// GROUND/SKY HORIZON SEAM FIX (consumer report: a bright ~1px-wide horizontal streak at the
+// water/terrain horizon line at grazing view angles). Root cause: the old code hard-branched
+// march distance on `ground = dGround > 0.0` -- a ray a fraction of a degree from the exact
+// geometric tangent that still (barely) hits the ATM_BOTTOM sphere marched only ~dGround (a
+// few km, since a near-tangent ground hit is close by construction: d -> sqrt(2*ATM_BOTTOM*alt)
+// at the tangent), while the immediately adjacent ray that (barely) MISSES marched all the way
+// to dTop (~1000+ km, the far side of the shell) -- a >100x jump in path length one ray-step
+// apart, and thus in accumulated in-scatter radiance (witnessed numerically: >2x luminance
+// jump within 0.005 degrees of view angle, collapsing to a single screen row at typical FOV).
+// Fix: (1) atm_distToGround now clamps its discriminant to >=0 instead of returning a sentinel
+// -1, so the ground distance itself is an ANALYTIC CONTINUATION that varies smoothly through
+// the tangent (matches from both sides at disc=0, peaking at the true horizon distance) rather
+// than jumping to unrelated sentinel handling; (2) blend the ground-path and sky-path radiance
+// with a smoothstep window in mu centered on the analytic tangent mu, the same horizon-softening
+// pattern atm_transmittanceToSun already uses a few lines up for the sun-visibility test. Window
+// width is a fixed small band in mu-space (not tied to display resolution) so the blend is
+// physically continuous everywhere, not just less-visibly-discontinuous.
+const float ATM_HORIZON_BLEND_MU = 0.006;
+vec3 atm_skyRadiance(highp vec3 cameraIn, vec3 viewRay, vec3 sun, out vec3 transmittance) {   // W7: km-scale camera -> highp
+    highp vec3 camera = cameraIn;
+    highp float r = length(camera);
+    float mu = dot(camera, viewRay) / r;
+
+    // March-start: if outside the atmosphere, advance to the top shell.
+    if (r > ATM_TOP) {
+        float dt = atm_distToTop(r, mu);
+        if (dt < 0.0) { transmittance = vec3(1.0); return vec3(0.0); } // misses atmosphere
+        camera = camera + viewRay * dt;
+        r = length(camera);
+        mu = dot(camera, viewRay) / r;
+    }
+
+    float dTop = atm_distToTop(r, mu);
+    if (dTop <= 0.0) { transmittance = vec3(1.0); return vec3(0.0); }
+
+    // Analytic tangent mu (disc==0 for the ground sphere) -- the exact geometric horizon.
+    float muTangent = -sqrt(max(0.0, 1.0 - ATM_BOTTOM2 / (r * r)));
+    float wSky = smoothstep(muTangent - ATM_HORIZON_BLEND_MU, muTangent + ATM_HORIZON_BLEND_MU, mu);
+
+    vec3 transSky;
+    vec3 radSky = atm_marchRadiance(camera, viewRay, sun, dTop, transSky);
+    if (wSky >= 1.0) { transmittance = transSky; return radSky; }   // well clear of the horizon: sky-only, no extra march cost
+
+    float dGround = max(atm_distToGround_continuous(r, mu), 1e-3);
+    vec3 transGround;
+    vec3 radGround = atm_marchRadiance(camera, viewRay, sun, dGround, transGround);
+    if (wSky <= 0.0) { transmittance = vec3(0.0); return radGround; }   // well inside the ground hit: fully occluded, as before
+
+    transmittance = mix(vec3(0.0), transSky, wSky);
+    return mix(radGround, radSky, wSky);
 }
 
 // Sun + sky irradiance reaching a surface point with given normal.
