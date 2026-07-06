@@ -92,7 +92,7 @@ export async function createPatchBaker(opts = {}) {
   try { ({ initMapspinnerPlanet } = await import('./planet-orchestrator.js')) }
   catch (e) { warn('orchestrator import threw: ' + (e && e.message)); return null }
   let planet
-  try { planet = await initMapspinnerPlanet(gl, { radius: opts.radius, gridMeshSize: 11, reliefScale: opts.reliefScale, hpfSeed: opts.seed }) }
+  try { planet = await initMapspinnerPlanet(gl, { radius: opts.radius, gridMeshSize: 9, reliefScale: opts.reliefScale, hpfSeed: opts.seed }) }
   catch (e) { warn('initMapspinnerPlanet threw: ' + (e && e.message)); return null }
   // bakeTileReadback is exposed on self (window in worker) after init; ensure the bake program is built.
   const g = (typeof self !== 'undefined') ? self : (typeof window !== 'undefined' ? window : globalThis)
@@ -185,7 +185,7 @@ export async function createPatchBaker(opts = {}) {
 // removes the retry-loop's busy-spin GL cost from the hot placement path entirely.
 export function createPatchHeightFn({ baker, frame, maxLevel = 11, offsetY = 0, fallbackFn, blocking = true }) {
   if (!baker) return null
-  const R = frame.radius, aH = frame.anchorHeight, res = baker.res, gridMeshSize = 11
+  const R = frame.radius, aH = frame.anchorHeight, res = baker.res, gridMeshSize = 9
   const finestLeaf = 2 * R / Math.pow(2, maxLevel)
   const visualSpacing = finestLeaf / (gridMeshSize - 1)
   const patchSpan = Math.max(8, visualSpacing * (res - 1))
