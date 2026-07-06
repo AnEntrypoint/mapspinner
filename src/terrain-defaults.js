@@ -18,6 +18,18 @@
 export const TERRAIN_DEFAULTS = {
   // ---- LOD ----
   splitFactor: 0.25,        // blessed mesh density (0.30->0.25, user 2026-06-23: LOD tightening reduces visible quads ~17, ~2ms speedup)
+  // mesh quads per edge (gl-render.js's GRID). 16->11->9 (user 2026-06-23): FPS TRIANGLE-THROUGHPUT
+  // lever. SINGLE SOURCE for every reader that must match the render mesh's actual tessellation
+  // density (patch-baker.js's visualSpacing calc) -- was independently re-hardcoded as a bare `9` in
+  // both gl-render.js and patch-baker.js (twice), all three silently required to agree with no
+  // enforcement. See gl-render.js:86 for the full tuning history/rationale.
+  gridMeshSize: 9,
+  // quadtree LOD depth cap (planet-orchestrator.js's live-tunable render subdivision ceiling,
+  // window.__maxLevel-overridable). patch-baker.js's createPatchHeightFn accepts its own maxLevel
+  // (tcfg.maxLevel) to compute the finest-leaf collider spacing -- its default here exists so a
+  // caller that omits tcfg.maxLevel still matches the render's OWN default depth instead of a second
+  // independently-hardcoded copy of the same number.
+  maxLevel: 11,
 
   // ---- SHAPE (composeHeight; mirrored in SHAPE_UNIFORM_DEFAULTS for the CPU height path) ----
   landBias: -100000.0,            // bias for ~40% land at scale 750000 with the domain-warp FBM
