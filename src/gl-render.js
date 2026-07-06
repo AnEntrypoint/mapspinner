@@ -1755,7 +1755,21 @@ export async function initMapspinnerRender(gl, opts = {}) {
         // passes) wrapped in a conservative occlusion query. The previous frame's resolved query
         // decides whether the expensive color pipeline below runs at all this frame.
         let _waterHidden = false, _stampedThisFrame = false;
-        if (_hrw && typeof window !== 'undefined' && window.__planetDepthToCanvas === true
+        // GRAZING-ANGLE PROBE UNRELIABILITY (fix: water streaks to a 1px line / flashes+re-appears near
+        // the surface): the visibility probe draws the COARSE flat wvbo/wibo mesh (~400m WCAP=11 cells,
+        // only the 0.8m swell displacement applied) -- at low camera altitude the probe is viewed almost
+        // edge-on, so its screen footprint is a sub-pixel-thin silhouette that straddles the rasterizer's
+        // sample-or-not boundary FRAME TO FRAME even with the camera perfectly still (witnessed live:
+        // gl.getQueryParameter(QUERY_RESULT) toggling 0/1 on a static grazing pose over open water, no
+        // camera motion). The actual COLOR pass is not this flat mesh -- it raymarches the animated wave
+        // surface per-pixel (see the raymarch block above) and covers far more of the screen than the
+        // flat probe at grazing incidence, so the probe's "conservative" guarantee (documented above as
+        // "only ever over-reports visibility") does NOT hold here: it under-reports, and the 2-frame
+        // hysteresis hides a color pass that would in fact have covered most of the view. Bypass the gate
+        // (treat as always-visible) below a safe altitude margin -- comfortably above the deck (~1.5-2m
+        // eye height) where this was witnessed collapsing the water to a streak / flashing it on and off.
+        const _waterProbeReliable = alt >= 5.0;
+        if (_hrw && _waterProbeReliable && typeof window !== 'undefined' && window.__planetDepthToCanvas === true
             && window.__waterDepthShareOff !== true && window.__waterVisGate !== false) {
           if (!_waterVisQ) _waterVisQ = gl.createQuery();
           if (_waterVisQPending && gl.getQueryParameter(_waterVisQ, gl.QUERY_RESULT_AVAILABLE)) {
