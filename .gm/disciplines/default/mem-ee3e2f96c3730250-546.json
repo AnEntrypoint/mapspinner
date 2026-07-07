@@ -1,0 +1,3 @@
+## Resolved mutable: mut-1783079688316
+
+git show 5ab1161 -- src/patch-baker.js: same-day commit adds JSDoc documenting createPatchBaker's CONSUMER CONTRACT explicitly for external/server-side SDK consumers (GPU-less Node workers use createHeightSampler instead; patch-baker is the fast-path for GPU-having external consumers). Zero internal call sites is expected -- it is public SDK surface (package.json exports['./patch-baker']) for consumers outside this repo's own demo, not leftover atlas-apparatus dead code. Resolution: keep, not deleted.

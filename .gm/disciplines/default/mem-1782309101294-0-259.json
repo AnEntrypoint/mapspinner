@@ -1,0 +1,3 @@
+## Resolved mutable: tab-foregrounded-witness
+
+cmd-result id:173 returned {pageErr:null,hasDiag:true} and id:172 executed -- the tab IS draining /cmd; frame tail shows live 60fps quads:155 glError:0 groundM:-15. Tab is foregrounded/executing, mutable refuted.

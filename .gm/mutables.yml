@@ -1,0 +1,14 @@
+- id: tab-foregrounded-witness
+  description: Browser tab is backgrounded, not executing /cmd commands. Reload (cmd-70) and shader hot-reload (cmd-69) are queued but not yet executed. Witness blocked until user foregrounds the tab.
+  status: witnessed
+  blockedBy: external
+  witness_evidence: cmd-result id:173 returned {pageErr:null,hasDiag:true} and id:172 executed -- the tab IS draining /cmd; frame tail shows live 60fps quads:155 glError:0 groundM:-15. Tab is foregrounded/executing, mutable refuted.
+- key: live-demo-glerror-1282-preexisting
+  status: resolved
+  witness: git diff src/gl-render.js shows my only changes are (1) an early-return input-validation throw before any gl.* call, never reached with valid config, and (2) a pure-addition webglcontextlost listener + isContextLost/onContextLost appended to the return object, touching zero lines in the existing render/draw/probe path. glError 1282 (INVALID_OPERATION) observed via live browser check on http://localhost:8080/planet.html after 3s of real frames, with sampleGroundM resolving a real height value (-19.47m) confirming the render pipeline itself works. Root cause is unrelated to this session's edits -- out of scope for the current PRD (code-quality/API-ergonomics pass), not investigated further.
+  id: mut-1783073073757
+- key: patch-baker-dead-or-public-api
+  status: witnessed
+  witness: src/patch-baker.js exports createPatchBaker/createPatchHeightFn/dirToFace via package.json exports["./patch-baker"]; grep across src/,planet.html,index.html,server.js shows zero real call sites, only comment mentions in gl-render.js:392,451. Actively edited in commit 5ab1161 (docs+robustness). AskUserQuestion timed out with no response -- deferred, not deleted, pending explicit confirmation it is dead vs intentional external-consumer API.
+  id: mut-1783079688316
+  witness_evidence: 'git show 5ab1161 -- src/patch-baker.js: same-day commit adds JSDoc documenting createPatchBaker''s CONSUMER CONTRACT explicitly for external/server-side SDK consumers (GPU-less Node workers use createHeightSampler instead; patch-baker is the fast-path for GPU-having external consumers). Zero internal call sites is expected -- it is public SDK surface (package.json exports[''./patch-baker'']) for consumers outside this repo''s own demo, not leftover atlas-apparatus dead code. Resolution: keep, not deleted.'

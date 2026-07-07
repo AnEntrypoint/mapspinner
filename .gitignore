@@ -1,18 +1,35 @@
-.gm/
 node_modules/
 capture/stream.ndjson
 capture/diag.ndjson
 *.log
 *.png
-.gm/browser-profile/
-.gm/browser-profile-*/
 --session-id
 --wait
 .claude/*
 !.claude/workflows/
 .claude/workflows/*
 !.claude/workflows/*.js
+# >>> plugkit managed
+.gm/exec-spool/
+.gm/turn-state.json
+.gm/rs-learn.db-shm
+.gm/rs-learn.db-wal
+.gm/residual-check-fired
+.gm/witness/
+.gm/browser-profile/
+.gm/browser-profile-*/
+.gm/browser-profile-default/
+.gm/browser-state/
 .gm/pw-sock-*/
+.gm/.cdp-profile/
+.gm/.cdp-profile2/
+.gm/.cdp-profile3/
+.gm/last-dispatch-ts
+.gm/last-instruction-ts
+.gm/last-prompt.txt
+.gm/long-gap-retry-state
+.gm/spool-boot.log
+# <<< plugkit managed
 
 # GLSL tooling: glslang validator binary is fetched via scripts/fetch-glslang.mjs (not committed)
 tools/glslang/bin/
