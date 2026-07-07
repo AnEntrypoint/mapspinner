@@ -988,7 +988,17 @@ export async function initMapspinnerRender(gl, opts = {}) {
   // _vdrsDepth's active content lives in the [0..scale] subregion -- sampling it with the raw
   // full-range vUv stamped depth from the WRONG texels (stretched subregion + stale texels from
   // frames when the viewport was larger), so a consumer scene depth-tested against garbage.
-  const dwFsSrc = '#version 300 es\nprecision highp float;\nuniform highp sampler2D uDepth;\nuniform float uDepthBias;\nuniform vec2 uUvScale;\nin vec2 vUv;\nout vec4 fragColor;\nvoid main(){ gl_FragDepth = min(1.0, texture(uDepth, vUv*uUvScale).r + uDepthBias); fragColor = vec4(0.0); }';
+  // RE-ENCODE, not a raw copy: a non-linear GL depth value is only meaningful under the near/far pair
+  // that produced it (z_ndc = (f+n)/(f-n) + (1/z_eye)*(-2fn)/(f-n)) -- if the consumer (THREE) uses a
+  // DIFFERENT near/far for its own projection/depth-test than the one this depth was encoded with
+  // (uSrcNear/uSrcFar), comparing the two directly is comparing values on two different curves, not
+  // two distances. Linearize with the SOURCE near/far, then re-project with the CONSUMER's (uDstNear/
+  // uDstFar) so the stamped value means the same eye-space distance under whichever projection THREE
+  // is actually using this frame. (Bug: THREE's camera.near/far decoupled from mapspinner's own
+  // terrain-horizon near/far, see decouple-vegetation-visibility-from-horizon-far-plane -- without
+  // this re-encode, "terrain cutting off trees and GLBs" -- confirmed live: raw-copy stamped a value
+  // meaningful under mapspinner's (0.5,4591.6) while THREE compared under its own (0.1,500).)
+  const dwFsSrc = '#version 300 es\nprecision highp float;\nuniform highp sampler2D uDepth;\nuniform float uDepthBias;\nuniform vec2 uUvScale;\nuniform float uSrcNear;\nuniform float uSrcFar;\nuniform float uDstNear;\nuniform float uDstFar;\nin vec2 vUv;\nout vec4 fragColor;\nvoid main(){\n  float zNdcSrc = texture(uDepth, vUv*uUvScale).r * 2.0 - 1.0;\n  float zEye = (2.0*uSrcNear*uSrcFar) / (uSrcFar+uSrcNear - zNdcSrc*(uSrcFar-uSrcNear));\n  float zNdcDst = (uDstFar+uDstNear)/(uDstFar-uDstNear) + (1.0/zEye)*((-2.0*uDstFar*uDstNear)/(uDstFar-uDstNear));\n  float depth01 = clamp(zNdcDst * 0.5 + 0.5, 0.0, 1.0);\n  gl_FragDepth = min(1.0, depth01 + uDepthBias);\n  fragColor = vec4(0.0);\n}';
   const dwProg = gl.createProgram();
   gl.attachShader(dwProg, rawShader(gl.VERTEX_SHADER, upVsSrc));
   gl.attachShader(dwProg, rawShader(gl.FRAGMENT_SHADER, dwFsSrc));
@@ -996,6 +1006,10 @@ export async function initMapspinnerRender(gl, opts = {}) {
   const dwUDepth = gl.getUniformLocation(dwProg, 'uDepth');
   const dwUBias = gl.getUniformLocation(dwProg, 'uDepthBias');
   const dwUScale = gl.getUniformLocation(dwProg, 'uUvScale');
+  const dwUSrcNear = gl.getUniformLocation(dwProg, 'uSrcNear');
+  const dwUSrcFar = gl.getUniformLocation(dwProg, 'uSrcFar');
+  const dwUDstNear = gl.getUniformLocation(dwProg, 'uDstNear');
+  const dwUDstFar = gl.getUniformLocation(dwProg, 'uDstFar');
   // PREMULTIPLIED-ALPHA composite for the half-res water (perf 2026-06-24): the half-res FBO clears to
   // (0,0,0,0); at the waterline a straight-alpha LINEAR upsample mixes water-rgb toward the cleared
   // BLACK as alpha falls 1->0, then a SRC_ALPHA blend lays partial-black over land = a black fringe
@@ -2021,6 +2035,14 @@ export async function initMapspinnerRender(gl, opts = {}) {
         gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, _vdrsDepth); gl.uniform1i(dwUDepth, 0);
         gl.uniform1f(dwUBias, (typeof window.__planetDepthBias === 'number') ? window.__planetDepthBias : 0.0);
         gl.uniform2f(dwUScale, _vdrsRsThisFrame, _vdrsRsThisFrame);   // same subregion mapping as the color upscale
+        // Consumer (THREE) near/far may legitimately differ from this frame's own near/far (window.__hostNearFar,
+        // set by the host once per frame if it decouples its projection from ours) -- fall back to this frame's
+        // own near/far (a no-op re-encode) when the host hasn't published one, preserving existing behavior.
+        const _hostNF = (typeof window !== 'undefined') ? window.__hostNearFar : null
+        const _dstNear = (_hostNF && Number.isFinite(_hostNF.near)) ? _hostNF.near : near
+        const _dstFar = (_hostNF && Number.isFinite(_hostNF.far)) ? _hostNF.far : far
+        gl.uniform1f(dwUSrcNear, near); gl.uniform1f(dwUSrcFar, far)
+        gl.uniform1f(dwUDstNear, _dstNear); gl.uniform1f(dwUDstFar, _dstFar)
         gl.bindVertexArray(upVao); gl.drawArrays(gl.TRIANGLES, 0, 3); gl.bindVertexArray(null);
         gl.colorMask(true, true, true, true); gl.depthFunc(gl.LESS);
         drawSky(true);    // canvas depth was just stamped with this frame's real terrain depth
